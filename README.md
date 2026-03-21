@@ -13,7 +13,7 @@
 
 [![Watch the demo](https://img.youtube.com/vi/IA02YB8mInM/hqdefault.jpg)](https://youtu.be/IA02YB8mInM?si=WoWpNE9QZEKEukvZ)
 
-> **Cross-platform local runtime:** macOS works out of the box. Linux and Windows now support the core local/web app flow, but semantic/vector search still depends on either sqlite-vec for your platform or a later Qdrant setup.
+> **Cross-platform local runtime:** macOS works out of the box. Windows and Linux are now being hardened for the core local/web app flow, but semantic/vector search still depends on either sqlite-vec for your platform or a later Qdrant setup.
 
 **Full documentation:** [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source)
 
@@ -33,7 +33,7 @@ Your data stays on your machine. Nothing is sent anywhere unless you configure a
 
 - **Node.js 20.18.1+** — [nodejs.org](https://nodejs.org/)
 - **macOS** — Works out of the box
-- **Linux/Windows** — Core app works; vector search requires sqlite-vec for your platform (see below)
+- **Windows/Linux** — Core app flow is being validated; vector search still requires sqlite-vec for your platform (see below)
 
 ---
 
@@ -186,34 +186,41 @@ See [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source) for full sche
 
 ---
 
-## Linux/Windows
+## Windows
 
-The app itself can run on Linux and Windows now. The remaining platform-specific piece is vector search.
+Windows support is now being validated against real user setups.
 
-RA-H OS ships with a macOS sqlite-vec binary by default (`vendor/sqlite-extensions/vec0.dylib`). On Linux or Windows you need to swap it for your platform's version if you want semantic/vector search.
+The latest runtime update is intended to make the core local/web app work on Windows even if vector search is not configured yet:
+- the app should still start
+- nodes, UI, and keyword/FTS search should still work
+- `/api/health/vectors` should report vector search as unavailable instead of crashing
 
-**Linux:**
-
+For semantic/vector search on Windows:
 1. Go to [sqlite-vec releases](https://github.com/asg017/sqlite-vec/releases)
-2. Download the release matching your architecture (e.g. `sqlite-vec-0.1.6-loadable-linux-x86_64.tar.gz`)
-3. Extract `vec0.so` from the archive
-4. Copy it to `vendor/sqlite-extensions/vec0.so` in this repo
-5. Run the normal install steps above
-
-**Windows:**
-
-1. Go to [sqlite-vec releases](https://github.com/asg017/sqlite-vec/releases)
-2. Download the Windows release (e.g. `sqlite-vec-0.1.6-loadable-windows-x86_64.zip`)
-3. Extract `vec0.dll` from the archive
+2. Download the Windows x64 release (for example `sqlite-vec-0.1.6-loadable-windows-x86_64.zip`)
+3. Extract `vec0.dll`
 4. Copy it to `vendor/sqlite-extensions/vec0.dll` in this repo
-5. Run the normal install steps above
+5. Re-run the normal local setup steps
 
-Without sqlite-vec, everything works except semantic/vector search.
+Without `vec0.dll`, the core app should still work, but semantic/vector search will be unavailable.
 
-If sqlite-vec is missing or fails to load:
-- the app still starts
-- nodes, UI, and keyword/FTS search still work
-- `/api/health/vectors` reports vector search as unavailable instead of crashing
+## Linux
+
+Linux support depends on which Linux environment you are running.
+
+For standard Linux x64 distributions that use glibc (Ubuntu, Debian, Fedora, etc.), the core app should work and sqlite-vec can be added like this:
+1. Go to [sqlite-vec releases](https://github.com/asg017/sqlite-vec/releases)
+2. Download the Linux release matching your architecture (for example `sqlite-vec-0.1.6-loadable-linux-x86_64.tar.gz`)
+3. Extract `vec0.so`
+4. Copy it to `vendor/sqlite-extensions/vec0.so` in this repo
+5. Re-run the normal local setup steps
+
+For Alpine/musl environments, sqlite-vec is the problem case. The core app may still run, but sqlite-vec is not the reliable path there. Qdrant is the intended backend for that deployment target.
+
+Without sqlite-vec:
+- the core app should still start
+- nodes, UI, and keyword/FTS search should still work
+- `/api/health/vectors` should report vector search as unavailable instead of crashing
 
 ---
 
