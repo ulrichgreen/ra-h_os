@@ -25,12 +25,12 @@ export default function SourceChip({ url, domain }: SourceChipProps) {
         display: 'inline-flex',
         alignItems: 'center',
         gap: 6,
-        background: '#1a1a1a',
-        border: '1px solid #2a2a2a',
+        background: 'var(--rah-bg-panel)',
+        border: '1px solid var(--rah-border)',
         borderRadius: 999,
         padding: '2px 8px',
         fontSize: 11,
-        color: '#bdbdbd',
+        color: 'var(--rah-text-secondary)',
         lineHeight: 1
       }}
     >

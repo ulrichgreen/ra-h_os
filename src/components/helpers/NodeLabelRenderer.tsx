@@ -51,7 +51,7 @@ function NodeLabel({ id, title, dimensions, onNodeClick }: NodeLabelProps) {
       <span style={{
         fontWeight: 'bold',
         textDecoration: 'underline',
-        color: '#e5e5e5'
+        color: 'var(--rah-text-base)'
       }}>
         {truncatedTitle}
       </span>

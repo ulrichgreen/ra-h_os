@@ -188,7 +188,7 @@ export default function DimensionTags({
         {dimensions.length === 0 && !disabled && (
           <span style={{
             fontSize: '11px',
-            color: '#555',
+            color: 'var(--rah-text-muted)',
             fontStyle: 'italic',
             display: 'flex',
             alignItems: 'center',
@@ -211,9 +211,9 @@ export default function DimensionTags({
                 alignItems: 'center',
                 gap: '3px',
                 fontSize: '10px',
-                color: '#d1d5db',
-                background: '#1a1a1a',
-                border: '1px solid #333',
+                color: 'var(--rah-text-base)',
+                background: 'var(--rah-bg-active)',
+                border: '1px solid var(--rah-border-strong)',
                 borderRadius: '8px',
                 padding: '2px 6px',
                 cursor: disabled ? 'default' : 'grab',
@@ -222,11 +222,11 @@ export default function DimensionTags({
               }}
               onMouseEnter={(e) => {
                 if (!disabled) {
-                  e.currentTarget.style.borderColor = '#555';
+                  e.currentTarget.style.borderColor = 'var(--rah-border-stronger)';
                 }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = '#333';
+                e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
               }}
             >
               <span>{dimension}</span>
@@ -243,14 +243,14 @@ export default function DimensionTags({
                   style={{
                     padding: '0 2px',
                     fontSize: '14px',
-                    color: '#666',
+                    color: 'var(--rah-text-muted)',
                     background: 'transparent',
                     border: 'none',
                     cursor: 'pointer',
                     marginLeft: '2px'
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.color = '#ff6b6b'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = '#666'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--rah-text-muted)'; }}
                 >
                   ×
                 </button>
@@ -270,21 +270,21 @@ export default function DimensionTags({
               display: 'inline-flex',
               alignItems: 'center',
               fontSize: '11px',
-              color: '#666',
+              color: 'var(--rah-text-muted)',
               background: 'transparent',
-              border: '1px dashed #333',
+              border: '1px dashed var(--rah-border-strong)',
               borderRadius: '12px',
               padding: '2px 8px',
               cursor: 'pointer',
               transition: 'all 0.2s'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#999';
-              e.currentTarget.style.borderColor = '#444';
+              e.currentTarget.style.color = 'var(--rah-text-soft)';
+              e.currentTarget.style.borderColor = 'var(--rah-border-stronger)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#666';
-              e.currentTarget.style.borderColor = '#333';
+              e.currentTarget.style.color = 'var(--rah-text-muted)';
+              e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
             }}
           >
             +{hiddenCount} more
@@ -302,21 +302,21 @@ export default function DimensionTags({
               display: 'inline-flex',
               alignItems: 'center',
               fontSize: '11px',
-              color: '#666',
+              color: 'var(--rah-text-muted)',
               background: 'transparent',
-              border: '1px dashed #333',
+              border: '1px dashed var(--rah-border-strong)',
               borderRadius: '12px',
               padding: '2px 8px',
               cursor: 'pointer',
               transition: 'all 0.2s'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#999';
-              e.currentTarget.style.borderColor = '#444';
+              e.currentTarget.style.color = 'var(--rah-text-soft)';
+              e.currentTarget.style.borderColor = 'var(--rah-border-stronger)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#666';
-              e.currentTarget.style.borderColor = '#333';
+              e.currentTarget.style.color = 'var(--rah-text-muted)';
+              e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
             }}
           >
             show less
@@ -340,18 +340,18 @@ export default function DimensionTags({
               lineHeight: 1,
               color: 'var(--rah-text-muted)',
               background: 'transparent',
-              border: '1px dashed #333',
+              border: '1px dashed var(--rah-border-strong)',
               borderRadius: '4px',
               cursor: 'pointer',
               transition: 'color 120ms ease, border-color 120ms ease',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.color = 'var(--rah-text-soft)';
-              e.currentTarget.style.borderColor = '#555';
+              e.currentTarget.style.borderColor = 'var(--rah-border-stronger)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.color = 'var(--rah-text-muted)';
-              e.currentTarget.style.borderColor = '#333';
+              e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
             }}
             title="Add dimension"
           >

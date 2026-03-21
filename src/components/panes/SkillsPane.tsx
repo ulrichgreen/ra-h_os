@@ -126,29 +126,29 @@ export default function SkillsPane({
             >
               <ArrowLeft size={16} />
             </button>
-            <span style={{ color: '#ccc', fontSize: '13px', fontWeight: 500 }}>{selectedSkill.name}</span>
+            <span style={{ color: 'var(--rah-text-base)', fontSize: '13px', fontWeight: 500 }}>{selectedSkill.name}</span>
           </div>
         ) : (
-          <span style={{ color: '#666', fontSize: '11px' }}>{skills.length} skills</span>
+          <span style={{ color: 'var(--rah-text-muted)', fontSize: '11px' }}>{skills.length} skills</span>
         )}
       </PaneHeader>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px' }} ref={detailScrollRef}>
         {loading ? (
-          <div style={{ color: '#555', fontSize: '13px', textAlign: 'center', paddingTop: '24px' }}>Loading...</div>
+          <div style={{ color: 'var(--rah-text-muted)', fontSize: '13px', textAlign: 'center', paddingTop: '24px' }}>Loading...</div>
         ) : selectedSkill ? (
           <div style={{ width: '100%', maxWidth: '980px', margin: '0 auto' }}>
             <div style={{ marginBottom: '12px' }}>
-              <div style={{ color: '#eee', fontSize: '16px', fontWeight: 600 }}>{selectedSkill.name}</div>
-              <div style={{ color: '#888', fontSize: '13px', lineHeight: 1.4, marginTop: '6px' }}>{selectedSkill.description}</div>
+              <div style={{ color: 'var(--rah-text-active)', fontSize: '16px', fontWeight: 600 }}>{selectedSkill.name}</div>
+              <div style={{ color: 'var(--rah-text-soft)', fontSize: '13px', lineHeight: 1.4, marginTop: '6px' }}>{selectedSkill.description}</div>
             </div>
-            <div style={{ borderTop: '1px solid #222', margin: '12px 0' }} />
+            <div style={{ borderTop: '1px solid var(--rah-border)', margin: '12px 0' }} />
             <SkillMarkdown content={selectedSkill.content} />
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {skills.length === 0 ? (
-              <div style={{ color: '#555', fontSize: '13px', textAlign: 'center', paddingTop: '24px' }}>
+              <div style={{ color: 'var(--rah-text-muted)', fontSize: '13px', textAlign: 'center', paddingTop: '24px' }}>
                 No skills found
               </div>
             ) : (
