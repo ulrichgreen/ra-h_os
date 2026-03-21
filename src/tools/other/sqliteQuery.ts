@@ -2,17 +2,9 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import path from 'path';
+import { getDatabasePath } from '@/services/database/sqlite-runtime';
 
 const execAsync = promisify(exec);
-
-// Get database path (same logic as sqlite-client.ts)
-function getDatabasePath(): string {
-  return process.env.SQLITE_DB_PATH || path.join(
-    process.env.HOME || '~',
-    'Library/Application Support/RA-H/db/rah.sqlite'
-  );
-}
 
 // Security: Only allow SELECT statements
 function isReadOnlyQuery(sql: string): boolean {

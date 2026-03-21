@@ -5,6 +5,7 @@ import { chunkService } from '@/services/database/chunks';
 export async function GET() {
   try {
     const sqlite = getSQLiteClient();
+    const vectorCapability = sqlite.getVectorCapability();
     
     // Test basic database connection
     const connectionTest = await sqlite.testConnection();
@@ -18,30 +19,33 @@ export async function GET() {
 
     // Check if vector extension is loaded
     const vectorExtensionTest = await sqlite.checkVectorExtension();
-    
     let vectorStats = null;
     let chunkStats = null;
-    let vectorHealth = 'unknown';
+    let vectorHealth = vectorCapability.available ? 'healthy' : 'unavailable';
 
     try {
-      // Get chunk counts
       const totalChunks = await chunkService.getChunkCount();
-      const chunksWithoutEmbeddings = await chunkService.getChunksWithoutEmbeddings();
-      const vectorizedCount = totalChunks - chunksWithoutEmbeddings.length;
-
       chunkStats = {
         total_chunks: totalChunks,
-        vectorized_chunks: vectorizedCount,
-        missing_embeddings: chunksWithoutEmbeddings.length,
-        coverage_percentage: totalChunks > 0 ? Math.round((vectorizedCount / totalChunks) * 100) : 0
+        vectorized_chunks: null,
+        missing_embeddings: null,
+        coverage_percentage: null,
       };
 
-      // Test vector table health by attempting a simple query
-      if (vectorExtensionTest) {
+      if (vectorCapability.available && vectorExtensionTest) {
         try {
+          const chunksWithoutEmbeddings = await chunkService.getChunksWithoutEmbeddings();
+          const vectorizedCount = totalChunks - chunksWithoutEmbeddings.length;
           const result = sqlite.query('SELECT COUNT(*) as count FROM vec_chunks');
           const vecCount = Number(result.rows[0].count);
-          
+
+          chunkStats = {
+            total_chunks: totalChunks,
+            vectorized_chunks: vectorizedCount,
+            missing_embeddings: chunksWithoutEmbeddings.length,
+            coverage_percentage: totalChunks > 0 ? Math.round((vectorizedCount / totalChunks) * 100) : 0
+          };
+
           vectorStats = {
             vec_chunks_count: vecCount,
             matches_chunk_embeddings: vecCount === vectorizedCount
@@ -56,7 +60,12 @@ export async function GET() {
           };
         }
       } else {
-        vectorHealth = 'extension_unavailable';
+        vectorHealth = 'unavailable';
+        vectorStats = {
+          backend: vectorCapability.backend,
+          extension_path: vectorCapability.extensionPath,
+          reason: vectorCapability.available ? null : vectorCapability.reason,
+        };
       }
 
     } catch (error: any) {
@@ -72,6 +81,7 @@ export async function GET() {
       data: {
         database_connected: connectionTest,
         vector_extension_loaded: vectorExtensionTest,
+        vector_capability: vectorCapability,
         vector_health: vectorHealth,
         chunk_stats: chunkStats,
         vector_stats: vectorStats,
@@ -100,11 +110,11 @@ function generateRecommendations(
     recommendations.push('Vector tables are corrupted - restart the application to trigger automatic healing');
   }
 
-  if (vectorHealth === 'extension_unavailable') {
-    recommendations.push('Vector extension not loaded - check sqlite-vec installation');
+  if (vectorHealth === 'unavailable') {
+    recommendations.push('Semantic/vector search is unavailable. Install sqlite-vec for your platform or switch to Qdrant.');
   }
 
-  if (chunkStats && chunkStats.coverage_percentage < 95) {
+  if (chunkStats && typeof chunkStats.coverage_percentage === 'number' && chunkStats.coverage_percentage < 95) {
     recommendations.push(`${chunkStats.missing_embeddings} chunks missing embeddings - consider running embedding generation`);
   }
 

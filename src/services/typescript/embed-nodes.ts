@@ -8,10 +8,12 @@ import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { 
   createDatabaseConnection, 
+  getDbVectorCapability,
   serializeFloat32Vector,
   formatEmbeddingText,
   batchProcess 
 } from './sqlite-vec';
+import type { VectorCapability } from '@/services/database/sqlite-runtime';
 
 interface NodeRecord {
   id: number;
@@ -35,6 +37,7 @@ export class NodeEmbedder {
   private openaiClient: OpenAI;
   private openaiProvider: ReturnType<typeof createOpenAI>;
   private db: ReturnType<typeof createDatabaseConnection>;
+  private readonly vectorCapability: VectorCapability;
   private processedCount: number = 0;
   private failedCount: number = 0;
 
@@ -47,6 +50,7 @@ export class NodeEmbedder {
     this.openaiClient = new OpenAI({ apiKey });
     this.openaiProvider = createOpenAI({ apiKey });
     this.db = createDatabaseConnection();
+    this.vectorCapability = getDbVectorCapability(this.db);
   }
 
   /**
@@ -138,23 +142,18 @@ Focus on the main concepts, key relationships, and practical implications.`;
       const now = new Date().toISOString();
       updateStmt.run(embeddingBlob, now, embeddingText, node.id);
       
-      // Update vec_nodes virtual table
-      try {
-        // Determine correct column name for primary key (node_id vs id)
-        // Use declared PK column from your DB schema (confirmed: node_id)
-        const pkCol = 'node_id';
+      if (this.vectorCapability.available) {
+        try {
+          const pkCol = 'node_id';
+          const deleteStmt = this.db.prepare(`DELETE FROM vec_nodes WHERE ${pkCol} = ?`);
+          deleteStmt.run(BigInt(node.id));
 
-        // Delete existing entry if any
-        const deleteStmt = this.db.prepare(`DELETE FROM vec_nodes WHERE ${pkCol} = ?`);
-        deleteStmt.run(BigInt(node.id));
-        
-        // Insert new entry (use bracketed string format compatible with sqlite-vec)
-        const vectorString = `[${embedding.join(',')}]`;
-        const insertStmt = this.db.prepare(`INSERT INTO vec_nodes (${pkCol}, embedding) VALUES (?, ?)`);
-        insertStmt.run(BigInt(node.id), vectorString);
-      } catch (vecError) {
-        console.warn(`Could not update vec_nodes for node ${node.id}:`, vecError);
-        // Continue - main embedding is still saved
+          const vectorString = `[${embedding.join(',')}]`;
+          const insertStmt = this.db.prepare(`INSERT INTO vec_nodes (${pkCol}, embedding) VALUES (?, ?)`);
+          insertStmt.run(BigInt(node.id), vectorString);
+        } catch (vecError) {
+          console.warn(`Could not update vec_nodes for node ${node.id}:`, vecError);
+        }
       }
       
       this.processedCount++;

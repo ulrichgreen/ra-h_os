@@ -33,7 +33,17 @@ else
 fi
 
 SQLITE_DB_PATH_LINE=$(grep -E '^SQLITE_DB_PATH=' "$TARGET_ENV" | tail -n 1 || true)
-DEFAULT_DB_PATH="$HOME/Library/Application Support/RA-H/db/rah.sqlite"
+case "$(uname -s)" in
+  Darwin)
+    DEFAULT_DB_PATH="$HOME/Library/Application Support/RA-H/db/rah.sqlite"
+    ;;
+  Linux)
+    DEFAULT_DB_PATH="${XDG_DATA_HOME:-$HOME/.local/share}/RA-H/db/rah.sqlite"
+    ;;
+  *)
+    DEFAULT_DB_PATH="$HOME/Library/Application Support/RA-H/db/rah.sqlite"
+    ;;
+esac
 if [ -z "$SQLITE_DB_PATH_LINE" ]; then
   SQLITE_DB_PATH="$DEFAULT_DB_PATH"
 else

@@ -1,7 +1,12 @@
 import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
 import { DatabaseError } from '@/types/database';
+import {
+  ensureDatabaseDirectory,
+  getDatabasePath,
+  getVecExtensionPath,
+  loadVecExtension,
+  type VectorCapability,
+} from './sqlite-runtime';
 
 export interface SQLiteConfig {
   dbPath: string;
@@ -19,27 +24,26 @@ class SQLiteClient {
   private db: Database.Database;
   private config: SQLiteConfig;
   private readonly readOnly: boolean;
+  private readonly vectorCapability: VectorCapability;
 
   private constructor() {
     this.config = this.getSQLiteConfig();
     this.readOnly = process.env.SQLITE_READONLY === 'true';
     
     // Initialize database connection
-    const dbDirectory = path.dirname(this.config.dbPath);
-    if (!this.readOnly && !fs.existsSync(dbDirectory)) {
-      fs.mkdirSync(dbDirectory, { recursive: true });
+    if (!this.readOnly) {
+      ensureDatabaseDirectory(this.config.dbPath);
     }
     this.db = this.readOnly
       ? new Database(this.config.dbPath, { readonly: true, fileMustExist: true })
       : new Database(this.config.dbPath);
     
     // Load sqlite-vec extension
-    try {
-      this.db.loadExtension(this.config.vecExtensionPath);
+    this.vectorCapability = loadVecExtension(this.db, this.config.vecExtensionPath);
+    if (this.vectorCapability.available) {
       console.log('SQLite vector extension loaded successfully');
-    } catch (error) {
-      // Do not fail hard — allow the app to run without vector features
-      console.error('Warning: Failed to load vector extension:', error);
+    } else {
+      console.warn(`Warning: ${this.vectorCapability.reason}`);
     }
 
     // Configure SQLite settings
@@ -58,8 +62,10 @@ class SQLiteClient {
       this.db.pragma('busy_timeout = 5000');
 
       // Ensure vector virtual tables are present and healthy
-      this.ensureVectorTables();
-      this.healVectorTablesIfCorrupt();
+      if (this.vectorCapability.available) {
+        this.ensureVectorTables();
+        this.healVectorTablesIfCorrupt();
+      }
 
       // Ensure logging schema (rename memory->logs if needed, create triggers/views)
       this.ensureLoggingAndMemorySchema();
@@ -69,17 +75,9 @@ class SQLiteClient {
   }
 
   private getSQLiteConfig(): SQLiteConfig {
-    const dbPath = process.env.SQLITE_DB_PATH || path.join(
-      process.env.HOME || '~', 
-      'Library/Application Support/RA-H/db/rah.sqlite'
-    );
-    
-    const vecExtensionPath = process.env.SQLITE_VEC_EXTENSION_PATH || 
-      './vendor/sqlite-extensions/vec0.dylib';
-
     return {
-      dbPath,
-      vecExtensionPath
+      dbPath: getDatabasePath(),
+      vecExtensionPath: getVecExtensionPath(),
     };
   }
 
@@ -134,7 +132,9 @@ class SQLiteClient {
       } as DatabaseError;
     }
     // Proactively validate/repair vec vtables before any write transaction
-    this.healVectorTablesIfCorrupt();
+    if (this.vectorCapability.available) {
+      this.healVectorTablesIfCorrupt();
+    }
     const txn = this.db.transaction(callback);
     try {
       return txn();
@@ -154,13 +154,11 @@ class SQLiteClient {
   }
 
   public async checkVectorExtension(): Promise<boolean> {
-    try {
-      const result = this.query('SELECT vec_version() as version');
-      return result.rows.length > 0;
-    } catch (error) {
-      console.error('Vector extension check failed:', error);
-      return false;
-    }
+    return this.vectorCapability.available;
+  }
+
+  public getVectorCapability(): VectorCapability {
+    return this.vectorCapability;
   }
 
   public async checkTables(): Promise<string[]> {
@@ -176,6 +174,10 @@ class SQLiteClient {
   }
 
   public ensureVectorExtensions(): void {
+    if (!this.vectorCapability.available) {
+      return;
+    }
+
     try {
       // Test for vec_nodes and vec_chunks; create them if missing
       const hasVecNodes = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get('vec_nodes');
@@ -205,7 +207,7 @@ class SQLiteClient {
   }
 
   private ensureVectorTables(): void {
-    if (this.readOnly) {
+    if (this.readOnly || !this.vectorCapability.available) {
       return;
     }
     // Wrapper to keep existing public API stable
@@ -739,7 +741,7 @@ class SQLiteClient {
   }
 
   private healVectorTablesIfCorrupt(): void {
-    if (this.readOnly) {
+    if (this.readOnly || !this.vectorCapability.available) {
       return;
     }
     // Attempt lightweight reads to detect CORRUPT_VTAB; if detected, drop/recreate vtables

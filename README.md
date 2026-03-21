@@ -13,7 +13,7 @@
 
 [![Watch the demo](https://img.youtube.com/vi/IA02YB8mInM/hqdefault.jpg)](https://youtu.be/IA02YB8mInM?si=WoWpNE9QZEKEukvZ)
 
-> **Currently macOS only.** Linux and Windows support is coming. If you want to run it on Linux/Windows now, see [instructions at the bottom](#linuxwindows).
+> **Cross-platform local runtime:** macOS works out of the box. Linux and Windows now support the core local/web app flow, but semantic/vector search still depends on either sqlite-vec for your platform or a later Qdrant setup.
 
 **Full documentation:** [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source)
 
@@ -33,7 +33,7 @@ Your data stays on your machine. Nothing is sent anywhere unless you configure a
 
 - **Node.js 20.18.1+** — [nodejs.org](https://nodejs.org/)
 - **macOS** — Works out of the box
-- **Linux/Windows** — Requires building sqlite-vec manually (see below)
+- **Linux/Windows** — Core app works; vector search requires sqlite-vec for your platform (see below)
 
 ---
 
@@ -44,7 +44,7 @@ git clone https://github.com/bradwmorris/ra-h_os.git
 cd ra-h_os
 npm install
 npm rebuild better-sqlite3
-./scripts/dev/bootstrap-local.sh
+npm run bootstrap:local
 npm run dev
 ```
 
@@ -178,7 +178,9 @@ See [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source) for full sche
 
 | Command | What it does |
 |---------|--------------|
+| `npm run bootstrap:local` | Create `.env.local`, create the SQLite DB, and seed the base schema |
 | `npm run dev` | Start the app at localhost:3000 |
+| `npm run dev:local` | Alias for `npm run dev` |
 | `npm run build` | Production build |
 | `npm run type-check` | Check TypeScript |
 
@@ -186,7 +188,9 @@ See [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source) for full sche
 
 ## Linux/Windows
 
-The repo ships with a macOS binary for sqlite-vec (`vendor/sqlite-extensions/vec0.dylib`). On Linux or Windows you need to swap it for your platform's version.
+The app itself can run on Linux and Windows now. The remaining platform-specific piece is vector search.
+
+RA-H OS ships with a macOS sqlite-vec binary by default (`vendor/sqlite-extensions/vec0.dylib`). On Linux or Windows you need to swap it for your platform's version if you want semantic/vector search.
 
 **Linux:**
 
@@ -205,6 +209,11 @@ The repo ships with a macOS binary for sqlite-vec (`vendor/sqlite-extensions/vec
 5. Run the normal install steps above
 
 Without sqlite-vec, everything works except semantic/vector search.
+
+If sqlite-vec is missing or fails to load:
+- the app still starts
+- nodes, UI, and keyword/FTS search still work
+- `/api/health/vectors` reports vector search as unavailable instead of crashing
 
 ---
 

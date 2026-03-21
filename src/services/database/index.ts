@@ -38,6 +38,7 @@ async function checkSQLiteDatabaseHealth(): Promise<{
     const sqlite = getSQLiteClient();
     
     const connected = await sqlite.testConnection();
+    const vectorCapability = sqlite.getVectorCapability();
     if (!connected) {
       return {
         connected: false,
@@ -47,7 +48,7 @@ async function checkSQLiteDatabaseHealth(): Promise<{
       };
     }
 
-    const vectorExtension = await sqlite.checkVectorExtension();
+    const vectorExtension = vectorCapability.available;
     
     // Check if main tables exist
     const tables = await sqlite.checkTables();

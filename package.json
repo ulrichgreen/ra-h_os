@@ -6,12 +6,14 @@
   "license": "MIT",
   "author": "Bradley Morris",
   "scripts": {
-    "dev": "NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=\"--dns-result-order=ipv4first\" next dev",
-    "dev:evals": "RAH_EVALS_LOG=1 NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=\"--dns-result-order=ipv4first\" next dev",
+    "bootstrap:local": "node ./scripts/dev/bootstrap-local.mjs",
+    "dev": "cross-env NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=--dns-result-order=ipv4first next dev",
+    "dev:local": "npm run dev",
+    "dev:evals": "cross-env RAH_EVALS_LOG=1 NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=--dns-result-order=ipv4first next dev",
     "clean:local": "bash ./scripts/dev/clean-local-artifacts.sh",
     "audit:repo": "bash ./scripts/dev/audit-repo.sh",
-    "build": "NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=\"--dns-result-order=ipv4first\" next build",
-    "start": "NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=\"--dns-result-order=ipv4first\" next start",
+    "build": "cross-env NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=--dns-result-order=ipv4first next build",
+    "start": "cross-env NEXT_PUBLIC_DEPLOYMENT_MODE=local NEXT_PUBLIC_ENABLE_SUBSCRIPTION_BACKEND=false NODE_OPTIONS=--dns-result-order=ipv4first next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "setup": "npm install",
@@ -19,7 +21,7 @@
     "sqlite:restore": "bash scripts/database/sqlite-restore.sh",
     "test": "vitest run",
     "test:watch": "vitest",
-    "evals": "RAH_EVALS_LOG=1 RAH_EVALS_TIMEOUT_MS=60000 tsx tests/evals/runner.ts"
+    "evals": "cross-env RAH_EVALS_LOG=1 RAH_EVALS_TIMEOUT_MS=60000 tsx tests/evals/runner.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.7",
@@ -53,6 +55,7 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "19.0.2",
     "autoprefixer": "^10.4.20",
+    "cross-env": "^10.0.0",
     "esbuild": "^0.23.1",
     "eslint": "^8.57.0",
     "eslint-config-next": "^15.1.12",
