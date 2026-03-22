@@ -66,6 +66,9 @@ function buildInstructions() {
 Proactively offer to save valuable information when insights, decisions, or references surface.
 Propose: "I'd add this as: [title] in [dimensions] — want me to?"
 Always search before creating to avoid duplicates.
+Use only existing dimensions returned by getContext or queryDimensions.
+Do not invent new dimensions from node titles, concepts, or phrasing.
+Only call createDimension when the user explicitly instructs you to create a new dimension.
 
 ## Available skills
 ${skillIndex}
@@ -81,7 +84,7 @@ const addNodeInputSchema = {
   source: z.string().max(50000).optional().describe('Full source text'),
   link: z.string().url().optional().describe('Source URL'),
   description: z.string().min(24).max(280).describe('REQUIRED. One-sentence summary: WHAT this is (explicit, concrete) + WHY it matters. No weak verbs (discusses, explores, examines). Example: "Podcast — Lex Fridman interviews Sam Altman on AGI timelines. First public comments since board drama."'),
-  dimensions: z.array(z.string()).min(1).max(5).describe('1-5 categories. Call queryDimensions first to use existing ones.'),
+  dimensions: z.array(z.string()).min(1).max(5).describe('1-5 existing categories. Call queryDimensions first to use existing ones. Do not invent new dimensions.'),
   metadata: z.record(z.any()).optional().describe('Additional metadata'),
   chunk: z.string().max(50000).optional().describe('Full source text')
 };
@@ -351,7 +354,7 @@ async function main() {
     'createNode',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. Title: max 160 chars, clear and descriptive. Description is REQUIRED and must be explicit about what the thing is and why it matters for contextual grounding. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility. Assign 1-5 dimensions — call queryDimensions first to use existing ones.',
+      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. Title: max 160 chars, clear and descriptive. Description is REQUIRED and must be explicit about what the thing is and why it matters for contextual grounding. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility. Assign 1-5 existing dimensions — call queryDimensions first to use existing ones. Do not invent new dimensions.',
       inputSchema: addNodeInputSchema
     },
     async ({ title, content, source, link, description, dimensions, metadata, chunk }) => {
@@ -716,7 +719,7 @@ async function main() {
     'queryDimensions',
     {
       title: 'List RA-H dimensions',
-      description: 'Get all dimensions with node counts. Call before creating nodes (to assign existing dimensions) or before creating new dimensions (to avoid duplicates). Shows priority/locked status.',
+      description: 'Get all existing canonical dimensions with node counts. Call before creating nodes to assign existing dimensions. Only create a new dimension if the user explicitly instructs you to do so.',
       inputSchema: listDimensionsInputSchema
     },
     async () => {
@@ -736,7 +739,7 @@ async function main() {
     'createDimension',
     {
       title: 'Create RA-H dimension',
-      description: 'Create a new dimension/category. Use lowercase, singular form (e.g. "biology" not "Biology" or "biologies"). Set isPriority=true to lock it for automatic assignment to new nodes. Always include a description.',
+      description: 'Create a new dimension/category only when the user explicitly instructs you to do so. Use lowercase, singular form (e.g. "biology" not "Biology" or "biologies"). Set isPriority=true to lock it for automatic assignment to new nodes. Always include a description.',
       inputSchema: createDimensionInputSchema
     },
     async ({ name, description, isPriority }) => {

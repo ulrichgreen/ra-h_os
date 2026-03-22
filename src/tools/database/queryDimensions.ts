@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getInternalApiBaseUrl } from '@/services/runtime/apiBase';
 
 export const queryDimensionsTool = tool({
-  description: 'List dimensions with node counts. Use this to inspect the user\'s organizational categories.',
+  description: 'List the existing canonical dimensions with node counts. Use this before assigning dimensions to nodes. Do not invent new dimensions without explicit user instruction.',
   inputSchema: z.object({
     filters: z.object({
       search: z.string().describe('Search term to match against dimension names').optional(),

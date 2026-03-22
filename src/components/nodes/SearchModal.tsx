@@ -104,7 +104,7 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
 
     const fetchSuggestions = async () => {
       try {
-        const response = await fetch(`/api/nodes/search?q=${encodeURIComponent(searchQuery)}&limit=10`);
+        const response = await fetch(`/api/nodes/search?q=${encodeURIComponent(searchQuery)}&limit=20`);
         const result = await response.json();
         
         if (result.success) {
@@ -305,7 +305,9 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           background: var(--rah-bg-panel);
           border: 1px solid var(--rah-border-strong);
           border-radius: 16px;
-          overflow: hidden;
+          overflow-x: hidden;
+          overflow-y: auto;
+          max-height: min(60vh, 560px);
           box-shadow: 
             0 0 0 1px rgba(255, 255, 255, 0.04),
             0 24px 48px -12px rgba(0, 0, 0, 0.6);

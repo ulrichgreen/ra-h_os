@@ -3,6 +3,7 @@ import { nodeService } from '@/services/database';
 import { autoEmbedQueue } from '@/services/embedding/autoEmbedQueue';
 import { hasSufficientContent } from '@/services/embedding/constants';
 import { normalizeDimensions, validateExplicitDescription } from '@/services/database/quality';
+import { formatUnknownDimensionsError, getUnknownDimensions } from '@/services/database/dimensionValidation';
 
 export const runtime = 'nodejs';
 
@@ -83,6 +84,13 @@ export async function PUT(
 
     if (Array.isArray(body.dimensions)) {
       updates.dimensions = normalizeDimensions(body.dimensions, 5);
+      const unknownDimensions = getUnknownDimensions(updates.dimensions as string[]);
+      if (unknownDimensions.length > 0) {
+        return NextResponse.json({
+          success: false,
+          error: formatUnknownDimensionsError(unknownDimensions)
+        }, { status: 400 });
+      }
     }
 
     delete updates.notes;

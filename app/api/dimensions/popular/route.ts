@@ -26,20 +26,13 @@ async function getPopularDimensionsSQLite() {
       SELECT nd.dimension, COUNT(*) AS count 
       FROM node_dimensions nd 
       GROUP BY nd.dimension
-    ),
-    all_dimensions AS (
-      SELECT DISTINCT dimension AS name FROM node_dimensions
-      UNION
-      SELECT name FROM dimensions
     )
-    SELECT ad.name AS dimension, 
+    SELECT d.name AS dimension, 
            COALESCE(dc.count, 0) AS count, 
-           dim.description
-    FROM all_dimensions ad
-    LEFT JOIN dimension_counts dc ON dc.dimension = ad.name
-    LEFT JOIN dimensions dim ON dim.name = ad.name
-    WHERE ad.name IS NOT NULL
-    ORDER BY LOWER(ad.name) ASC
+           d.description
+    FROM dimensions d
+    LEFT JOIN dimension_counts dc ON dc.dimension = d.name
+    ORDER BY LOWER(d.name) ASC
   `);
 
   return NextResponse.json({

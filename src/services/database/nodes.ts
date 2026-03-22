@@ -2,6 +2,7 @@ import { getSQLiteClient } from './sqlite-client';
 import { Node, NodeFilters } from '@/types/database';
 import { eventBroadcaster } from '../events';
 import { EmbeddingService } from '@/services/embeddings';
+import { scoreNodeSearchMatch } from './searchRanking';
 
 type NodeRow = Node & { dimensions_json: string };
 type NodeSearchRow = NodeRow & { rank?: number; similarity?: number };
@@ -496,16 +497,22 @@ export class NodeService {
       return [];
     }
 
-    const searchLimit = Math.max(limit + offset, Math.min(limit * 5, 100));
-    let rankedRows = this.searchNodesFts(sqlite, search, filters, searchLimit);
+    const searchLimit = Math.max(limit + offset, Math.min(limit * 20, 250));
+    const candidateRows = new Map<number, NodeSearchRow>();
 
-    if (rankedRows.length === 0) {
-      rankedRows = this.searchNodesLike(sqlite, search, filters, searchLimit);
+    for (const row of this.searchNodesFts(sqlite, search, filters, searchLimit)) {
+      candidateRows.set(row.id, row);
     }
 
-    if (rankedRows.length === 0) {
-      rankedRows = this.searchNodesLikeRelaxed(sqlite, search, filters, searchLimit);
+    for (const row of this.searchNodesLike(sqlite, search, filters, searchLimit)) {
+      if (!candidateRows.has(row.id)) candidateRows.set(row.id, row);
     }
+
+    for (const row of this.searchNodesLikeRelaxed(sqlite, search, filters, searchLimit)) {
+      if (!candidateRows.has(row.id)) candidateRows.set(row.id, row);
+    }
+
+    let rankedRows = Array.from(candidateRows.values());
 
     if ((filters.searchMode ?? 'standard') === 'hybrid') {
       const vectorRows = await this.searchNodesVector(sqlite, search, filters, searchLimit);
@@ -513,6 +520,11 @@ export class NodeService {
         rankedRows = reciprocalRankFuse<NodeSearchRow>([rankedRows, vectorRows], searchLimit);
       }
     }
+
+    rankedRows = rankedRows
+      .map(row => ({ row, score: scoreNodeSearchMatch(row, search) }))
+      .sort((a, b) => b.score - a.score)
+      .map(entry => entry.row);
 
     return rankedRows
       .slice(offset, offset + limit)

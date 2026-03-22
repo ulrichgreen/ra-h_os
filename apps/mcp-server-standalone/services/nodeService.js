@@ -2,6 +2,34 @@
 
 const { query, transaction, getDb } = require('./sqlite-client');
 
+function normalizeDimensionName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function getUnknownDimensions(dimensions) {
+  if (!Array.isArray(dimensions) || dimensions.length === 0) return [];
+
+  const normalized = dimensions
+    .map(normalizeDimensionName)
+    .filter(Boolean);
+
+  if (normalized.length === 0) return [];
+
+  const placeholders = normalized.map(() => '?').join(', ');
+  const rows = query(`SELECT name FROM dimensions WHERE name IN (${placeholders})`, normalized);
+  const existing = new Set(rows.map(row => normalizeDimensionName(row.name)));
+
+  return normalized.filter(value => !existing.has(value));
+}
+
+function formatUnknownDimensionsError(values) {
+  if (values.length === 1) {
+    return `Unknown dimension: "${values[0]}". Create it first or use an existing dimension.`;
+  }
+
+  return `Unknown dimensions: ${values.map(value => `"${value}"`).join(', ')}. Create them first or use existing dimensions.`;
+}
+
 /**
  * Get nodes with optional filtering.
  */
@@ -116,6 +144,10 @@ function createNode(nodeData) {
   } = nodeData;
 
   const title = sanitizeTitle(rawTitle);
+  const unknownDimensions = getUnknownDimensions(dimensions);
+  if (unknownDimensions.length > 0) {
+    throw new Error(formatUnknownDimensionsError(unknownDimensions));
+  }
 
   const now = new Date().toISOString();
   const db = getDb();
@@ -172,6 +204,13 @@ function updateNode(id, updates, options = {}) {
   const existing = getNodeById(id);
   if (!existing) {
     throw new Error(`Node with ID ${id} not found. Use rah_search_nodes to find nodes by keyword.`);
+  }
+
+  if (Array.isArray(dimensions)) {
+    const unknownDimensions = getUnknownDimensions(dimensions);
+    if (unknownDimensions.length > 0) {
+      throw new Error(formatUnknownDimensionsError(unknownDimensions));
+    }
   }
 
   transaction(() => {

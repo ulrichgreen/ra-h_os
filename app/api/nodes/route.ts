@@ -5,6 +5,7 @@ import { autoEmbedQueue } from '@/services/embedding/autoEmbedQueue';
 import { generateDescription } from '@/services/database/descriptionService';
 import { scheduleAutoEdgeCreation } from '@/services/agents/autoEdge';
 import { normalizeDimensions, validateExplicitDescription } from '@/services/database/quality';
+import { formatUnknownDimensionsError, getUnknownDimensions } from '@/services/database/dimensionValidation';
 
 export const runtime = 'nodejs';
 
@@ -97,6 +98,13 @@ export async function POST(request: NextRequest) {
 
     // Process provided dimensions first (needed for description generation)
     const trimmedProvidedDimensions = normalizeDimensions(body.dimensions, 5);
+    const unknownDimensions = getUnknownDimensions(trimmedProvidedDimensions);
+    if (unknownDimensions.length > 0) {
+      return NextResponse.json({
+        success: false,
+        error: formatUnknownDimensionsError(unknownDimensions)
+      }, { status: 400 });
+    }
 
     // Use provided description if present, otherwise auto-generate
     const isUserSuppliedDescription = typeof body.description === 'string' && body.description.trim().length > 0;
