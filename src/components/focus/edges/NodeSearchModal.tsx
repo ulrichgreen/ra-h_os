@@ -88,7 +88,7 @@ export default function NodeSearchModal({
 
     const timeoutId = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/nodes/search?q=${encodeURIComponent(searchQuery)}&limit=10`);
+        const response = await fetch(`/api/nodes/search?q=${encodeURIComponent(searchQuery)}&limit=20`);
         const result = await response.json();
         if (response.ok && result.success) {
           const nextSuggestions = (result.data as NodeSuggestion[])
@@ -229,7 +229,9 @@ export default function NodeSearchModal({
             background: '#141414',
             border: '1px solid #2a2a2a',
             borderRadius: '12px',
-            overflow: 'hidden',
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            maxHeight: 'min(60vh, 560px)',
             boxShadow: '0 24px 48px -12px rgba(0,0,0,0.6)',
           }}>
             {suggestions.map((suggestion, index) => (

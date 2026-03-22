@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getInternalApiBaseUrl } from '@/services/runtime/apiBase';
 
 export const createDimensionTool = tool({
-  description: 'Create a new dimension. Always provide a description explaining what belongs in this category.',
+  description: 'Create a new dimension only when the user explicitly instructs you to do so. Always provide a description explaining what belongs in this category.',
   inputSchema: z.object({
     name: z.string().describe('Dimension name'),
     description: z.string().min(1).max(500).describe('Dimension description explaining what content belongs in this dimension (required, max 500 characters)')

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { nodeService } from '@/services/database/nodes';
 import { formatNodeForChat } from '../infrastructure/nodeFormatter';
 import type { Node } from '@/types/database';
+import { scoreNodeSearchMatch } from '@/services/database/searchRanking';
 
 type QueryNodeFilters = {
   dimensions?: string[];
@@ -13,55 +14,6 @@ type QueryNodeFilters = {
   eventAfter?: string;
   eventBefore?: string;
 };
-
-function extractSearchTerms(query: string): string[] {
-  const stopWords = new Set(['a', 'an', 'and', 'for', 'from', 'in', 'of', 'on', 'or', 'recent', 'the', 'to', 'with']);
-
-  const rawTerms = query
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .split(/\s+/)
-    .map(term => term.trim())
-    .filter(Boolean);
-
-  const terms = new Set<string>();
-  for (const term of rawTerms) {
-    if (!stopWords.has(term) && term.length >= 3) {
-      terms.add(term);
-    }
-    const alphaParts = term.replace(/\d+/g, ' ').split(/\s+/).filter(Boolean);
-    for (const part of alphaParts) {
-      if (!stopWords.has(part) && part.length >= 3) {
-        terms.add(part);
-      }
-    }
-  }
-
-  return Array.from(terms).slice(0, 8);
-}
-
-function scoreNodeForSearch(node: Node, searchTerm: string): number {
-  const normalizedSearch = searchTerm.toLowerCase();
-  const title = (node.title || '').toLowerCase();
-  const description = (node.description || '').toLowerCase();
-  const source = (node.source || '').toLowerCase();
-  const terms = extractSearchTerms(searchTerm);
-
-  let score = 0;
-
-  if (title === normalizedSearch) score += 100;
-  if (title.includes(normalizedSearch)) score += 40;
-  if (description.includes(normalizedSearch)) score += 20;
-  if (source.includes(normalizedSearch)) score += 10;
-
-  for (const term of terms) {
-    if (title.includes(term)) score += 8;
-    if (description.includes(term)) score += 3;
-    if (source.includes(term)) score += 2;
-  }
-
-  return score;
-}
 
 export const queryNodesTool = tool({
   description: 'Search nodes across title, description, and source. For free-text lookups, search the graph broadly and prioritize title/description matches. Do not use dimensions to constrain keyword search unless the user is explicitly asking about a known dimension.',
@@ -150,7 +102,7 @@ export const queryNodesTool = tool({
 
       if (searchTerm) {
         safeNodes = safeNodes
-          .map(node => ({ node, score: scoreNodeForSearch(node, searchTerm) }))
+          .map(node => ({ node, score: scoreNodeSearchMatch(node, searchTerm) }))
           .sort((a, b) => b.score - a.score || b.node.updated_at.localeCompare(a.node.updated_at))
           .slice(0, limit)
           .map(entry => entry.node);
