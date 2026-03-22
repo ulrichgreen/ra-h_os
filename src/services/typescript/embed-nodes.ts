@@ -19,7 +19,6 @@ interface NodeRecord {
   id: number;
   title: string;
   source: string | null;
-  notes: string | null;
   description: string | null;
   dimensions_json: string;
   embedding?: Buffer | null;
@@ -63,7 +62,7 @@ export class NodeEmbedder {
     const prompt = `Analyze this content and provide 2-3 key insights or themes in a concise paragraph (max 100 words):
 
 Title: ${node.title}
-Source: ${node.source || node.notes || 'No source'}
+Source: ${node.source || 'No source'}
 Dimensions: ${dimensionsText}
 
 Focus on the main concepts, key relationships, and practical implications.`;
@@ -111,13 +110,13 @@ Focus on the main concepts, key relationships, and practical implications.`;
     // Create base embedding text
     let embeddingText = formatEmbeddingText(
       node.title,
-      node.source || node.notes || '',
+      node.source || '',
       dimensions,
       node.description
     );
 
     // Add AI analysis if source exists
-    const sourceText = node.source || node.notes || '';
+    const sourceText = node.source || '';
     if (sourceText.trim().length > 0) {
       const analysis = await this.analyzeNodeWithAI(node);
       if (analysis) {
@@ -178,7 +177,7 @@ Focus on the main concepts, key relationships, and practical implications.`;
     if (nodeId) {
       // Single node
         query = `
-        SELECT n.id, n.title, n.source, n.notes, n.description,
+        SELECT n.id, n.title, n.source, n.description,
                COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
                         FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
                n.embedding, n.embedding_updated_at
@@ -189,7 +188,7 @@ Focus on the main concepts, key relationships, and practical implications.`;
     } else if (forceReEmbed) {
       // All nodes
       query = `
-        SELECT n.id, n.title, n.source, n.notes, n.description,
+        SELECT n.id, n.title, n.source, n.description,
                COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
                         FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
                n.embedding, n.embedding_updated_at
@@ -199,7 +198,7 @@ Focus on the main concepts, key relationships, and practical implications.`;
     } else {
       // Only nodes without embeddings
       query = `
-        SELECT n.id, n.title, n.source, n.notes, n.description,
+        SELECT n.id, n.title, n.source, n.description,
                COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
                         FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
                n.embedding, n.embedding_updated_at

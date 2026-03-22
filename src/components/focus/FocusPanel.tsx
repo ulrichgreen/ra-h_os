@@ -291,7 +291,7 @@ export default function FocusPanel({
   };
 
   const startSourceEdit = () => {
-    setSourceEditValue(currentNode?.source || currentNode?.chunk || '');
+    setSourceEditValue(currentNode?.source || '');
     setSourceEditMode(true);
   };
 
@@ -598,7 +598,7 @@ export default function FocusPanel({
   };
 
   const renderSourceSection = () => {
-    const sourceContent = currentNode?.source || currentNode?.chunk || '';
+    const sourceContent = currentNode?.source || '';
 
     return (
       <section

@@ -422,7 +422,7 @@ mcpServer.registerTool(
         nodes: nodes.map((node) => ({
           id: node.id,
           title: node.title,
-          source: node.source ?? node.notes ?? null,
+          source: node.source ?? null,
           description: node.description ?? null,
           link: node.link ?? null,
           dimensions: node.dimensions || [],
@@ -496,7 +496,7 @@ mcpServer.registerTool(
           nodes.push({
             id: result.node.id,
             title: result.node.title,
-            source: result.node.source ?? result.node.notes ?? null,
+            source: result.node.source ?? null,
             link: result.node.link ?? null,
             dimensions: result.node.dimensions || [],
             updated_at: result.node.updated_at
@@ -729,7 +729,7 @@ mcpServer.registerTool(
         results: results.map(r => ({
           nodeId: r.node_id || r.nodeId || r.id,
           title: r.title || 'Untitled',
-          chunkPreview: (r.chunk || r.notes || '').slice(0, 200),
+          chunkPreview: (r.source || '').slice(0, 200),
           similarity: r.similarity || r.score || 0
         }))
       }

@@ -104,7 +104,7 @@ export default function GridView({ nodes, onNodeClick }: GridViewProps) {
               </div>
 
               {/* Description or Content Preview */}
-              {(node.description || node.source || node.notes) && (
+              {(node.description || node.source) && (
                 <div style={{
                   flex: 1,
                   fontSize: '11px',
@@ -116,7 +116,7 @@ export default function GridView({ nodes, onNodeClick }: GridViewProps) {
                   WebkitBoxOrient: 'vertical',
                   marginBottom: '10px'
                 }}>
-                  {node.description || truncateContent(node.source || node.notes)}
+                  {node.description || truncateContent(node.source)}
                 </div>
               )}
 

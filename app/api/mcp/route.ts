@@ -134,7 +134,7 @@ function createRAHServer(): McpServer {
               id: node.id,
               title: node.title,
               description: node.description ?? null,
-              source: node.source ?? node.notes ?? null,
+              source: node.source ?? null,
               link: node.link ?? null,
               dimensions: node.dimensions || [],
               metadata: node.metadata || {},
@@ -309,22 +309,29 @@ function createRAHServer(): McpServer {
       'rah_update_node',
       {
         title: 'Update RA-H node',
-        description: 'Update an existing node. Content is APPENDED, dimensions are replaced.',
+        description: 'Update an existing node. Source content is canonical and dimensions are replaced.',
         inputSchema: {
           id: z.number().int().positive().describe('Node ID to update'),
           updates: z.object({
             title: z.string().optional().describe('New title'),
-            content: z.string().optional().describe('Content to APPEND'),
+            content: z.string().optional().describe('Legacy alias for source'),
+            source: z.string().optional().describe('Canonical source text'),
             link: z.string().optional().describe('New link'),
             dimensions: z.array(z.string()).optional().describe('New dimensions (replaces existing)'),
           }).describe('Fields to update'),
         },
       },
       async ({ id, updates }) => {
+        const mappedUpdates = { ...updates } as Record<string, unknown>;
+        if (mappedUpdates.content !== undefined && mappedUpdates.source === undefined) {
+          mappedUpdates.source = mappedUpdates.content;
+        }
+        delete mappedUpdates.content;
+
         const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/nodes/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updates),
+          body: JSON.stringify(mappedUpdates),
         });
 
         const result = await response.json();

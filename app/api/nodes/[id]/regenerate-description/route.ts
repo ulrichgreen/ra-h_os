@@ -85,7 +85,7 @@ export async function POST(
     // Generate new description using the description service
     const newDescription = await generateDescription({
       title: node.title,
-      notes: node.source || node.description || undefined,
+      source: node.source || node.description || undefined,
       link: node.link || undefined,
       metadata: enrichedMetadata,
       

@@ -138,7 +138,7 @@ export class NodeService {
     
     // Use nodes_v view for array-like dimensions behavior (exclude embedding BLOB for performance)
     let query = `
-      SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+      SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
              n.created_at, n.updated_at,
              COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
@@ -252,7 +252,7 @@ export class NodeService {
   private async getNodeByIdSQLite(id: number): Promise<Node | null> {
     const sqlite = getSQLiteClient();
     const query = `
-      SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+      SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
              n.created_at, n.updated_at,
              COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension) 
@@ -589,7 +589,7 @@ export class NodeService {
           WHERE nodes_fts MATCH ?
           LIMIT ?
         )
-        SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+        SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
                n.chunk_status, n.embedding_updated_at, n.embedding_text,
                n.created_at, n.updated_at,
                COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
@@ -618,7 +618,7 @@ export class NodeService {
     const words = search.split(/\s+/).filter(Boolean);
     const { clauses, params } = this.buildNodeFilterClauses(filters);
     let query = `
-      SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+      SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
              n.created_at, n.updated_at,
              COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
@@ -663,7 +663,7 @@ export class NodeService {
 
     const { clauses, params } = this.buildNodeFilterClauses(filters);
     let query = `
-      SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+      SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
              n.created_at, n.updated_at,
              COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
@@ -737,7 +737,7 @@ export class NodeService {
           ORDER BY distance
           LIMIT ?
         )
-        SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+        SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
                n.chunk_status, n.embedding_updated_at, n.embedding_text,
                n.created_at, n.updated_at,
                COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)

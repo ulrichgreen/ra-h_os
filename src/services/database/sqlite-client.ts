@@ -616,18 +616,10 @@ class SQLiteClient {
         }
       }
 
-      // 10) Final schema pass migrations (content→notes, event_date, dimensions.icon, drop dead columns)
+      // 10) Final schema pass migrations (source canonicalization, event_date, dimensions.icon, drop dead columns)
       try {
         let nodeCols2 = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
         let nodeColNames = nodeCols2.map(c => c.name);
-
-        // Rename content → notes (additive first)
-        if (nodeColNames.includes('content') && !nodeColNames.includes('notes')) {
-          console.log('Migrating nodes.content → nodes.notes...');
-          this.db.exec('ALTER TABLE nodes RENAME COLUMN content TO notes;');
-          nodeCols2 = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
-          nodeColNames = nodeCols2.map(c => c.name);
-        }
 
         if (!nodeColNames.includes('source')) {
           console.log('Adding nodes.source column...');
@@ -637,22 +629,38 @@ class SQLiteClient {
         }
 
         if (nodeColNames.includes('source')) {
-          this.db.exec(`
-            UPDATE nodes
-            SET source = chunk
-            WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
-              AND chunk IS NOT NULL
-              AND LENGTH(TRIM(chunk)) > 0;
-          `);
+          if (nodeColNames.includes('content')) {
+            this.db.exec(`
+              UPDATE nodes
+              SET source = content,
+                  chunk_status = 'not_chunked'
+              WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+                AND content IS NOT NULL
+                AND LENGTH(TRIM(content)) > 0;
+            `);
+          }
 
-          this.db.exec(`
-            UPDATE nodes
-            SET source = notes,
-                chunk_status = 'not_chunked'
-            WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
-              AND notes IS NOT NULL
-              AND LENGTH(TRIM(notes)) > 0;
-          `);
+          if (nodeColNames.includes('notes')) {
+            this.db.exec(`
+              UPDATE nodes
+              SET source = notes,
+                  chunk_status = 'not_chunked'
+              WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+                AND notes IS NOT NULL
+                AND LENGTH(TRIM(notes)) > 0;
+            `);
+          }
+
+          if (nodeColNames.includes('chunk')) {
+            this.db.exec(`
+              UPDATE nodes
+              SET source = chunk,
+                  chunk_status = 'not_chunked'
+              WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+                AND chunk IS NOT NULL
+                AND LENGTH(TRIM(chunk)) > 0;
+            `);
+          }
 
           this.db.exec(`
             UPDATE nodes

@@ -2,7 +2,7 @@
 
 > Connect Claude Code and other AI assistants to your knowledge base.
 
-**How it works:** RA-OS includes an MCP (Model Context Protocol) server. This lets any MCP-compatible assistant — like Claude Code — search your notes, add new knowledge, and manage your knowledge graph. Everything stays local.
+**How it works:** RA-OS includes an MCP (Model Context Protocol) server. This lets any MCP-compatible assistant — like Claude Code — search your knowledge graph, add new knowledge, and manage your graph. Everything stays local.
 
 ---
 
@@ -77,7 +77,7 @@ If you want real-time UI updates when nodes are created:
 | Tool | Description |
 |------|-------------|
 | `getContext` | Get graph overview — stats, hub nodes, dimensions, recent activity. Called first automatically. |
-| `createNode` | Create a new node (title/content/dimensions) |
+| `createNode` | Create a new node (title/source/dimensions) |
 | `queryNodes` | Search existing nodes by keyword |
 | `updateNode` | Update an existing node |
 | `getNodesById` | Get nodes by ID |

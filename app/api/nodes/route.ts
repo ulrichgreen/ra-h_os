@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
       try {
         nodeDescription = await generateDescription({
           title: body.title,
-          notes: rawSource?.slice(0, 2000) || undefined,
+          source: rawSource?.slice(0, 2000) || undefined,
           link: body.link || undefined,
           metadata: body.metadata,
           dimensions: trimmedProvidedDimensions

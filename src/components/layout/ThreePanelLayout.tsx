@@ -235,7 +235,6 @@ export default function ThreePanelLayout() {
         title: node.title,
         link: node.link,
         source: node.source,
-        notes: node.notes,
         dimensions: node.dimensions,
         created_at: node.created_at,
         updated_at: node.updated_at,
