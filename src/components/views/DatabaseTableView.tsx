@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Filter, ChevronDown, ChevronLeft, ChevronRight, X, ArrowUpDown, Search, ExternalLink } from 'lucide-react';
 import type { Node } from '@/types/database';
+import { formatRelativeDate } from '@/utils/formatDate';
 
 type SortOrder = 'updated' | 'edges' | 'created' | 'event_date';
 
@@ -26,27 +27,6 @@ interface DatabaseTableViewProps {
   onNodeClick: (nodeId: number) => void;
   refreshToken?: number;
   toolbarHost?: HTMLDivElement | null;
-}
-
-function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = now - then;
-
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-
-  return `${Math.floor(months / 12)}y ago`;
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -552,14 +532,14 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
                     {/* Updated */}
                     <td style={tdStyle()}>
                       <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
-                        {formatRelativeTime(node.updated_at)}
+                        {formatRelativeDate(node.updated_at)}
                       </span>
                     </td>
 
                     {/* Created */}
                     <td style={tdStyle()}>
                       <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
-                        {formatRelativeTime(node.created_at)}
+                        {formatRelativeDate(node.created_at)}
                       </span>
                     </td>
 
@@ -594,7 +574,7 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
                     {/* Embedding Updated */}
                     <td style={tdStyle()}>
                       <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
-                        {node.embedding_updated_at ? formatRelativeTime(node.embedding_updated_at) : '\u2014'}
+                        {node.embedding_updated_at ? formatRelativeDate(node.embedding_updated_at) : '\u2014'}
                       </span>
                     </td>
                   </tr>

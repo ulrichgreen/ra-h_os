@@ -139,9 +139,9 @@ html, body {
   color: var(--rah-text-base);
   /* Geist Sans for optimal reading/writing experience */
   font-family: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px; 
-  line-height: 1.5; 
-  letter-spacing: -0.011em; /* Optimized letter spacing for Geist */
+  font-size: 15px;
+  line-height: 1.5;
+  letter-spacing: -0.012em; /* Optimized letter spacing for Geist */
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -218,6 +218,19 @@ html, body {
     transform: scale(1);
     opacity: 1;
   }
+}
+
+@keyframes rah-shimmer {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.rah-skeleton {
+  animation: rah-shimmer 1.5s ease-in-out infinite;
 }
 
 /* Modal/Popup animations */
