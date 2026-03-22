@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Filter, ChevronDown, X, ArrowUpDown, GripVertical } from 'lucide-react';
+import { Filter, ChevronDown, X, ArrowUpDown, GripVertical, Inbox } from 'lucide-react';
 import type { Node } from '@/types/database';
 import { getNodeIcon } from '@/utils/nodeIcons';
 import { useDimensionIcons } from '@/context/DimensionIconsContext';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import type { PendingNode } from '../layout/ThreePanelLayout';
+import { formatRelativeDate } from '@/utils/formatDate';
 
 type SortOrder = 'updated' | 'edges' | 'created' | 'custom';
 
@@ -17,6 +18,8 @@ const SORT_LABELS: Record<SortOrder, string> = {
   created: 'Created',
   custom: 'Custom',
 };
+
+const DOCUMENT_MAX_WIDTH = '980px';
 
 interface ColumnFilter {
   id: string;
@@ -123,6 +126,39 @@ function PendingNodeCard({ pending, onDismiss }: { pending: PendingNode; onDismi
           to { transform: rotate(360deg); }
         }
       `}</style>
+    </div>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div
+      className="rah-skeleton"
+      style={{
+        padding: '12px 14px',
+        border: '1px solid var(--rah-border)',
+        borderLeft: '2px solid var(--rah-border)',
+        borderRadius: '10px',
+        background: 'var(--rah-bg-base)',
+        display: 'flex',
+        gap: '12px',
+        alignItems: 'flex-start',
+      }}
+    >
+      <div
+        style={{
+          width: '32px',
+          height: '32px',
+          borderRadius: '8px',
+          background: 'var(--rah-bg-elevated)',
+          flexShrink: 0,
+        }}
+      />
+      <div style={{ flex: 1 }}>
+        <div style={{ height: '14px', width: '58%', borderRadius: '4px', background: 'var(--rah-bg-elevated)', marginBottom: '8px' }} />
+        <div style={{ height: '12px', width: '82%', borderRadius: '4px', background: 'var(--rah-bg-elevated)', marginBottom: '6px' }} />
+        <div style={{ height: '11px', width: '28%', borderRadius: '4px', background: 'var(--rah-bg-elevated)' }} />
+      </div>
     </div>
   );
 }
@@ -418,19 +454,26 @@ export default function ViewsOverlay({
         }}
         style={{
           padding: '10px 12px',
-          background: 'transparent',
+          background: 'var(--rah-bg-base)',
           cursor: 'pointer',
           transition: 'all 0.15s ease',
-          borderBottom: '1px solid var(--rah-bg-panel)',
-          borderLeft: '3px solid transparent',
+          border: '1px solid var(--rah-border)',
+          borderLeft: '2px solid var(--rah-border-stronger)',
+          borderRadius: '10px',
           opacity: isDragSource ? 0.4 : 1,
-          borderTop: isDropTarget ? '2px solid #22c55e' : '2px solid transparent',
+          borderTop: isDropTarget ? '2px solid var(--rah-accent-green)' : '2px solid transparent',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+          e.currentTarget.style.background = 'var(--rah-bg-surface)';
+          e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
+          e.currentTarget.style.transform = 'translateY(-1px)';
+          e.currentTarget.style.boxShadow = 'var(--rah-shadow-floating)';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.background = 'var(--rah-bg-base)';
+          e.currentTarget.style.borderColor = 'var(--rah-border)';
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = 'none';
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -460,13 +503,13 @@ export default function ViewsOverlay({
                 justifyContent: 'center',
                 width: '16px',
                 cursor: 'grab',
-                color: '#444',
+                color: 'var(--rah-text-muted)',
                 flexShrink: 0,
                 alignSelf: 'center',
                 transition: 'color 0.15s ease',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#888'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = '#444'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--rah-text-soft)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--rah-text-muted)'; }}
               onClick={(e) => e.stopPropagation()}
             >
               <GripVertical size={14} />
@@ -476,8 +519,8 @@ export default function ViewsOverlay({
             width: '32px',
             height: '32px',
             borderRadius: '8px',
-            background: 'var(var(--rah-bg-panel))',
-            border: '1px solid var(--rah-bg-active)',
+            background: 'var(--rah-bg-panel)',
+            border: '1px solid var(--rah-border)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -493,9 +536,9 @@ export default function ViewsOverlay({
               marginBottom: descPreview ? '2px' : '4px'
             }}>
               <span style={{
-                fontSize: '13px',
+                fontSize: '14px',
                 fontWeight: 500,
-                color: 'var(var(--rah-text-active))',
+                color: 'var(--rah-text-active)',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -506,21 +549,27 @@ export default function ViewsOverlay({
               </span>
               {node.edge_count != null && node.edge_count > 0 && (
                 <span style={{
-                  fontSize: '10px',
-                  color: 'var(var(--rah-text-muted))',
+                  minWidth: '18px',
+                  height: '18px',
+                  padding: '0 5px',
+                  borderRadius: '999px',
+                  background: 'var(--rah-accent-green-soft)',
+                  border: '1px solid var(--rah-accent-green-soft-strong)',
+                  color: 'var(--rah-accent-green)',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '2px',
+                  justifyContent: 'center',
                   flexShrink: 0,
+                  fontSize: '11px',
+                  fontWeight: 600,
                 }}>
-                  <span style={{ fontSize: '9px' }}>🔗</span>
                   {node.edge_count}
                 </span>
               )}
               <span style={{
-                fontSize: '10px',
-                color: '#444',
-                background: 'var(var(--rah-bg-panel))',
+                fontSize: '11px',
+                color: 'var(--rah-text-muted)',
+                background: 'var(--rah-bg-panel)',
                 padding: '2px 6px',
                 borderRadius: '4px',
                 fontFamily: 'monospace',
@@ -531,8 +580,8 @@ export default function ViewsOverlay({
             </div>
             {descPreview && (
               <div style={{
-                fontSize: '11px',
-                color: 'var(var(--rah-text-muted))',
+                fontSize: '13px',
+                color: 'var(--rah-text-muted)',
                 lineHeight: '1.4',
                 marginBottom: '4px',
                 overflow: 'hidden',
@@ -553,23 +602,35 @@ export default function ViewsOverlay({
                     <span
                       key={d}
                       style={{
-                        fontSize: '9px',
-                        padding: '1px 5px',
-                        background: 'rgba(34, 197, 94, 0.08)',
-                        color: '#4a9',
-                        borderRadius: '3px'
+                        fontSize: '11px',
+                        padding: '2px 8px',
+                        background: 'var(--rah-bg-active)',
+                        border: '1px solid var(--rah-border-strong)',
+                        color: 'var(--rah-text-base)',
+                        borderRadius: '8px'
                       }}
                     >
                       {d}
                     </span>
                   ))}
                   {node.dimensions.length > 3 && (
-                    <span style={{ fontSize: '9px', color: 'var(var(--rah-text-muted))' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
                       +{node.dimensions.length - 3}
                     </span>
                   )}
                 </>
               ) : null}
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              marginTop: '6px',
+              fontSize: '11px',
+              color: 'var(--rah-text-muted)',
+            }}>
+              <span>{formatRelativeDate(node.updated_at || node.created_at)}</span>
+              {node.edge_count != null && node.edge_count > 0 ? <span>{node.edge_count} connections</span> : null}
             </div>
           </div>
         </div>
@@ -578,14 +639,15 @@ export default function ViewsOverlay({
   };
 
   const toolbar = (
-    <div style={{
-      width: '100%',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px',
-      flexWrap: 'wrap'
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: 1 }}>
+    <div style={{ width: '100%', maxWidth: DOCUMENT_MAX_WIDTH, margin: '0 auto' }}>
+      <div style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        flexWrap: 'wrap'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: 1 }}>
           {selectedFilters.map(filter => (
             <div
               key={filter}
@@ -622,7 +684,7 @@ export default function ViewsOverlay({
           ))}
 
           {externalDimensionFilter && (
-            <span style={{ fontSize: '11px', color: 'var(var(--rah-text-muted))' }}>
+            <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
               Sidebar filter
             </span>
           )}
@@ -635,15 +697,16 @@ export default function ViewsOverlay({
                 }
               }}
               disabled={!!externalDimensionFilter}
+              title="Filter (⌘F)"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px',
                 padding: '4px 8px',
                 background: 'transparent',
-                border: '1px solid var(--rah-border-strong)',
+                border: '1px solid var(--rah-border)',
                 borderRadius: '5px',
-                color: externalDimensionFilter ? '#4b4b4b' : '#888',
+                color: externalDimensionFilter ? 'var(--rah-text-muted)' : 'var(--rah-text-soft)',
                 fontSize: '11px',
                 cursor: externalDimensionFilter ? 'not-allowed' : 'pointer',
                 transition: 'all 0.15s ease'
@@ -651,12 +714,12 @@ export default function ViewsOverlay({
               onMouseEnter={(e) => {
                 if (!externalDimensionFilter) {
                   e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                  e.currentTarget.style.borderColor = '#333';
+                  e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
                 }
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderColor = '#222';
+                e.currentTarget.style.borderColor = 'var(--rah-border)';
               }}
             >
               <Filter size={11} />
@@ -670,8 +733,8 @@ export default function ViewsOverlay({
                 top: '100%',
                 left: 0,
                 marginTop: '4px',
-                background: 'var(var(--rah-bg-panel))',
-                border: '1px solid var(--rah-border-strong)',
+                background: 'var(--rah-bg-panel)',
+                border: '1px solid var(--rah-border)',
                 borderRadius: '10px',
                 padding: '6px',
                 minWidth: '220px',
@@ -689,23 +752,23 @@ export default function ViewsOverlay({
                   style={{
                     width: '100%',
                     padding: '7px 10px',
-                    background: 'var(var(--rah-bg-surface))',
+                    background: 'var(--rah-bg-base)',
                     border: '1px solid transparent',
                     borderRadius: '6px',
-                    color: 'var(var(--rah-text-active))',
+                    color: 'var(--rah-text-active)',
                     fontSize: '12px',
                     marginBottom: '4px',
                     outline: 'none',
                   }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = '#333'; }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--rah-border-strong)'; }}
                   onBlur={(e) => { e.currentTarget.style.borderColor = 'transparent'; }}
                 />
                 {dimensionsLoading ? (
-                  <div style={{ padding: '12px', color: 'var(var(--rah-text-muted))', fontSize: '12px', textAlign: 'center' }}>
+                  <div style={{ padding: '12px', color: 'var(--rah-text-muted)', fontSize: '12px', textAlign: 'center' }}>
                     Loading dimensions...
                   </div>
                 ) : filterPickerDimensions.length === 0 ? (
-                  <div style={{ padding: '12px', color: 'var(var(--rah-text-muted))', fontSize: '12px', textAlign: 'center' }}>
+                  <div style={{ padding: '12px', color: 'var(--rah-text-muted)', fontSize: '12px', textAlign: 'center' }}>
                     {filterSearchQuery ? 'No matching dimensions' : 'No dimensions available'}
                   </div>
                 ) : (
@@ -722,7 +785,7 @@ export default function ViewsOverlay({
                         background: 'transparent',
                         border: 'none',
                         borderRadius: '5px',
-                        color: 'var(var(--rah-text-secondary))',
+                        color: 'var(--rah-text-secondary)',
                         fontSize: '12px',
                         cursor: 'pointer',
                         textAlign: 'left'
@@ -732,9 +795,9 @@ export default function ViewsOverlay({
                     >
                       <span>{d.dimension}</span>
                       <span style={{
-                        color: 'var(var(--rah-text-muted))',
+                        color: 'var(--rah-text-muted)',
                         fontSize: '10px',
-                        background: 'var(var(--rah-bg-active))',
+                        background: 'var(--rah-bg-active)',
                         padding: '1px 6px',
                         borderRadius: '10px',
                       }}>
@@ -754,12 +817,12 @@ export default function ViewsOverlay({
                 padding: '4px 8px',
                 background: 'transparent',
                 border: 'none',
-                color: 'var(var(--rah-text-muted))',
+                color: 'var(--rah-text-muted)',
                 fontSize: '11px',
                 cursor: 'pointer'
               }}
               onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = '#666'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--rah-text-muted)'; }}
             >
               Clear all
             </button>
@@ -768,29 +831,29 @@ export default function ViewsOverlay({
 
         {/* Sort dropdown */}
         <div style={{ position: 'relative' }} ref={sortDropdownRef}>
-          <button
-            onClick={() => setShowSortDropdown(!showSortDropdown)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '5px 8px',
-              background: 'transparent',
-              border: '1px solid var(--rah-border-strong)',
-              borderRadius: '5px',
-              color: 'var(var(--rah-text-muted))',
-              fontSize: '11px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
+            <button
+              onClick={() => setShowSortDropdown(!showSortDropdown)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '5px 8px',
+                background: 'transparent',
+                border: '1px solid var(--rah-border)',
+                borderRadius: '5px',
+                color: 'var(--rah-text-soft)',
+                fontSize: '11px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
               whiteSpace: 'nowrap',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.borderColor = '#333';
+              e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderColor = '#222';
+              e.currentTarget.style.borderColor = 'var(--rah-border)';
             }}
           >
             <ArrowUpDown size={11} />
@@ -804,8 +867,8 @@ export default function ViewsOverlay({
               top: '100%',
               right: 0,
               marginTop: '4px',
-              background: 'var(var(--rah-bg-panel))',
-              border: '1px solid var(--rah-border-strong)',
+              background: 'var(--rah-bg-panel)',
+              border: '1px solid var(--rah-border)',
               borderRadius: '10px',
               padding: '4px',
               minWidth: '140px',
@@ -828,7 +891,7 @@ export default function ViewsOverlay({
                     background: sortOrder === key ? 'rgba(255,255,255,0.04)' : 'transparent',
                     border: 'none',
                     borderRadius: '5px',
-                    color: sortOrder === key ? '#f0f0f0' : '#999',
+                    color: sortOrder === key ? 'var(--rah-text-active)' : 'var(--rah-text-soft)',
                     fontSize: '12px',
                     cursor: 'pointer',
                     textAlign: 'left',
@@ -836,7 +899,7 @@ export default function ViewsOverlay({
                   onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = sortOrder === key ? 'rgba(255,255,255,0.04)' : 'transparent'; }}
                 >
-                  {sortOrder === key && <span style={{ color: '#22c55e', fontSize: '12px' }}>✓</span>}
+                  {sortOrder === key && <span style={{ color: 'var(--rah-accent-green)', fontSize: '12px' }}>✓</span>}
                   {SORT_LABELS[key]}
                 </button>
               ))}
@@ -844,6 +907,7 @@ export default function ViewsOverlay({
           )}
         </div>
       </div>
+    </div>
   );
 
   return (
@@ -868,30 +932,55 @@ export default function ViewsOverlay({
 
       {/* Content area — list view */}
       {filteredNodesLoading ? (
-        <div style={{ padding: '40px', color: 'var(var(--rah-text-muted))', textAlign: 'center' }}>
-          Loading...
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '16px',
+        }}>
+          <div style={{ width: '100%', maxWidth: DOCUMENT_MAX_WIDTH, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {Array.from({ length: 6 }, (_, index) => (
+              <SkeletonCard key={index} />
+            ))}
+          </div>
         </div>
       ) : filteredNodes.length === 0 ? (
-        <div style={{ padding: '40px', color: 'var(var(--rah-text-muted))', textAlign: 'center' }}>
-          {selectedFilters.length > 0 ? 'No nodes match the selected filters.' : 'No nodes yet. Add some content to get started.'}
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+          padding: '40px 20px',
+          color: 'var(--rah-text-muted)',
+          textAlign: 'center',
+        }}>
+          <div style={{ width: '100%', maxWidth: DOCUMENT_MAX_WIDTH, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <Inbox size={28} strokeWidth={1.5} style={{ opacity: 0.4 }} />
+            <span style={{ fontSize: '14px', color: 'var(--rah-text-secondary)' }}>
+              {selectedFilters.length > 0 ? 'Nothing matches these filters' : 'Nothing here yet'}
+            </span>
+            <span style={{ fontSize: '12px', opacity: 0.7 }}>
+              {selectedFilters.length > 0 ? 'Try adjusting your filters, or add a node with ⌘N' : 'Add a node with ⌘N to get started'}
+            </span>
+          </div>
         </div>
       ) : (
         <div style={{
           flex: 1,
           overflowY: 'auto',
           padding: '16px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px'
         }}>
-          {pendingNodes && pendingNodes.length > 0 && pendingNodes.map(p => (
-            <PendingNodeCard
-              key={p.id}
-              pending={p}
-              onDismiss={onDismissPending ? () => onDismissPending(p.id) : undefined}
-            />
-          ))}
-          {filteredNodes.map((node, index) => renderNodeCard(node, index))}
+          <div style={{ width: '100%', maxWidth: DOCUMENT_MAX_WIDTH, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {pendingNodes && pendingNodes.length > 0 && pendingNodes.map(p => (
+              <PendingNodeCard
+                key={p.id}
+                pending={p}
+                onDismiss={onDismissPending ? () => onDismissPending(p.id) : undefined}
+              />
+            ))}
+            {filteredNodes.map((node, index) => renderNodeCard(node, index))}
+          </div>
         </div>
       )}
     </div>

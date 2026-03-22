@@ -1,8 +1,10 @@
 "use client";
 
+import { Inbox } from 'lucide-react';
 import { Node } from '@/types/database';
 import { getNodeIcon } from '@/utils/nodeIcons';
 import { useDimensionIcons } from '@/context/DimensionIconsContext';
+import { formatRelativeDate } from '@/utils/formatDate';
 
 interface ListViewProps {
   nodes: Node[];
@@ -11,15 +13,6 @@ interface ListViewProps {
 
 export default function ListView({ nodes, onNodeClick }: ListViewProps) {
   const { dimensionIcons } = useDimensionIcons();
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
 
   const truncateContent = (content?: string, maxLength: number = 100) => {
     if (!content) return '';
@@ -31,13 +24,20 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
     return (
       <div style={{
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: '8px',
         height: '100%',
-        color: '#666',
-        fontSize: '13px'
+        color: 'var(--rah-text-muted)',
+        padding: '40px 20px',
+        textAlign: 'center',
       }}>
-        No nodes match the current filters
+        <Inbox size={28} strokeWidth={1.5} style={{ opacity: 0.4 }} />
+        <span style={{ fontSize: '14px', color: 'var(--rah-text-secondary)' }}>Nothing here yet</span>
+        <span style={{ fontSize: '12px', opacity: 0.7 }}>
+          Try adjusting your filters, or add a node with ⌘N
+        </span>
       </div>
     );
   }
@@ -59,20 +59,25 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
               gap: '12px',
               padding: '12px',
               marginBottom: '4px',
-              background: '#0a0a0a',
-              border: '1px solid #1a1a1a',
+              background: 'var(--rah-bg-base)',
+              border: '1px solid var(--rah-border)',
+              borderLeft: '2px solid var(--rah-border-stronger)',
               borderRadius: '6px',
               cursor: 'pointer',
               textAlign: 'left',
-              transition: 'all 0.2s'
+              transition: 'all 0.15s ease'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#111';
-              e.currentTarget.style.borderColor = '#333';
+              e.currentTarget.style.background = 'var(--rah-bg-surface)';
+              e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
+              e.currentTarget.style.transform = 'translateY(-1px)';
+              e.currentTarget.style.boxShadow = 'var(--rah-shadow-floating)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = '#0a0a0a';
-              e.currentTarget.style.borderColor = '#1a1a1a';
+              e.currentTarget.style.background = 'var(--rah-bg-base)';
+              e.currentTarget.style.borderColor = 'var(--rah-border)';
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = 'none';
             }}
           >
             {/* Icon */}
@@ -82,7 +87,7 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: '#1a1a1a',
+              background: 'var(--rah-bg-active)',
               borderRadius: '6px',
               flexShrink: 0
             }}>
@@ -93,9 +98,9 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
             <div style={{ flex: 1, minWidth: 0 }}>
               {/* Title */}
               <div style={{
-                fontSize: '13px',
+                fontSize: '14px',
                 fontWeight: 500,
-                color: '#e5e5e5',
+                color: 'var(--rah-text-base)',
                 marginBottom: '4px',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -107,8 +112,8 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
               {/* Description or Content Preview */}
               {(node.description || node.source) && (
                 <div style={{
-                  fontSize: '12px',
-                  color: '#666',
+                  fontSize: '13px',
+                  color: 'var(--rah-text-muted)',
                   marginBottom: '8px',
                   lineHeight: '1.4',
                   display: '-webkit-box',
@@ -138,11 +143,12 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
                       <span
                         key={dim}
                         style={{
-                          padding: '2px 6px',
-                          background: '#1a1a1a',
-                          borderRadius: '3px',
-                          fontSize: '10px',
-                          color: '#888'
+                          padding: '2px 8px',
+                          background: 'var(--rah-bg-active)',
+                          border: '1px solid var(--rah-border-strong)',
+                          borderRadius: '8px',
+                          fontSize: '11px',
+                          color: 'var(--rah-text-base)'
                         }}
                       >
                         {dim}
@@ -151,8 +157,8 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
                     {node.dimensions.length > 3 && (
                       <span style={{
                         padding: '2px 6px',
-                        fontSize: '10px',
-                        color: '#666'
+                        fontSize: '11px',
+                        color: 'var(--rah-text-muted)'
                       }}>
                         +{node.dimensions.length - 3}
                       </span>
@@ -162,17 +168,17 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
 
                 {/* Date */}
                 <span style={{
-                  fontSize: '10px',
-                  color: '#555'
+                  fontSize: '11px',
+                  color: 'var(--rah-text-muted)'
                 }}>
-                  {formatDate(node.updated_at || node.created_at)}
+                  {formatRelativeDate(node.updated_at || node.created_at)}
                 </span>
 
                 {/* Edge count */}
                 {node.edge_count !== undefined && node.edge_count > 0 && (
                   <span style={{
-                    fontSize: '10px',
-                    color: '#555'
+                    fontSize: '11px',
+                    color: 'var(--rah-text-muted)'
                   }}>
                     {node.edge_count} connections
                   </span>

@@ -52,6 +52,7 @@ function NavButton({
   onClick,
   trailing,
   activeTone = 'neutral',
+  title,
 }: {
   icon: typeof Search;
   label: string;
@@ -60,6 +61,7 @@ function NavButton({
   onClick: () => void;
   trailing?: ReactNode;
   activeTone?: 'neutral' | 'green';
+  title?: string;
 }) {
   const [hovered, setHovered] = useState(false);
   const activeColor = activeTone === 'green' ? 'var(--rah-accent-green)' : 'var(--rah-text-active)';
@@ -69,7 +71,7 @@ function NavButton({
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      title={expanded ? undefined : label}
+      title={title ?? (expanded ? undefined : label)}
       style={{
         width: '100%',
         height: '36px',
@@ -136,8 +138,8 @@ export default function LeftToolbar({
             onClick={onToggleExpanded}
           />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <NavButton icon={Search} label="Search" expanded={isExpanded} onClick={onSearchClick} />
-            <NavButton icon={Plus} label="Add Stuff" expanded={isExpanded} onClick={onAddStuffClick} />
+            <NavButton icon={Search} label="Search" title="Search (⌘K)" expanded={isExpanded} onClick={onSearchClick} />
+            <NavButton icon={Plus} label="Add Stuff" title="New node (⌘N)" expanded={isExpanded} onClick={onAddStuffClick} />
             <NavButton icon={RefreshCw} label="Refresh" expanded={isExpanded} onClick={onRefreshClick} />
           </div>
         </div>
