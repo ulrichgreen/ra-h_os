@@ -483,11 +483,11 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
                       </div>
                     </td>
 
-                    {/* Notes */}
+                    {/* Source */}
                     <td style={tdStyle()}>
                       <div style={truncCell}>
                         <span style={{ fontSize: '11px', color: 'var(--rah-text-soft)' }}>
-                          {(node.source || node.notes) ? (node.source || node.notes || '').slice(0, 120) : '\u2014'}
+                          {node.source ? node.source.slice(0, 120) : '\u2014'}
                         </span>
                       </div>
                     </td>
@@ -576,7 +576,7 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
                     <td style={tdStyle()}>
                       <div style={truncCell}>
                         <span style={{ fontSize: '10px', color: 'var(--rah-text-muted)' }}>
-                          {(node.source || node.chunk) ? (node.source || node.chunk || '').slice(0, 100) : '\u2014'}
+                          {node.source ? node.source.slice(0, 100) : '\u2014'}
                         </span>
                       </div>
                     </td>

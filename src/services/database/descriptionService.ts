@@ -4,7 +4,7 @@ import { hasValidOpenAiKey } from '../storage/apiKeys';
 
 export interface DescriptionInput {
   title: string;
-  notes?: string;
+  source?: string;
   link?: string;
   metadata?: {
     source?: string;
@@ -61,7 +61,7 @@ export async function generateDescription(input: DescriptionInput): Promise<stri
   }
 
   // Fast path: skip AI for very short inputs (likely just notes)
-  if (!input.notes && !input.link && input.title.length < 30) {
+  if (!input.source && !input.link && input.title.length < 30) {
     console.log(`[DescriptionService] Short input, using fallback for: "${input.title}"`);
     return generateFallbackDescription(input);
   }
@@ -134,8 +134,8 @@ function buildDescriptionPrompt(input: DescriptionInput): string {
   if (publisherHint) lines.push(`Publisher hint: ${publisherHint}`);
   lines.push(`Likely user-authored: ${likelyUserAuthored ? 'yes' : 'no'}`);
 
-  const contentPreview = input.notes?.slice(0, 800) || '';
-  if (contentPreview) lines.push(`Notes: ${contentPreview}${input.notes && input.notes.length > 800 ? '...' : ''}`);
+  const contentPreview = input.source?.slice(0, 800) || '';
+  if (contentPreview) lines.push(`Source excerpt: ${contentPreview}${input.source && input.source.length > 800 ? '...' : ''}`);
 
   return `Write a description for this knowledge node. Max 280 characters.
 

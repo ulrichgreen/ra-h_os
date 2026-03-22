@@ -287,6 +287,65 @@ if has_table nodes; then
   # is_pinned removed in final schema pass
 fi
 
+if has_table nodes && has_col nodes source; then
+  if has_col nodes content; then
+    echo "Backfilling nodes.source from nodes.content"
+    "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE nodes
+SET source = content,
+    chunk_status = 'not_chunked'
+WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+  AND content IS NOT NULL
+  AND LENGTH(TRIM(content)) > 0;
+SQL
+  fi
+
+  if has_col nodes notes; then
+    echo "Backfilling nodes.source from nodes.notes"
+    "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE nodes
+SET source = notes,
+    chunk_status = 'not_chunked'
+WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+  AND notes IS NOT NULL
+  AND LENGTH(TRIM(notes)) > 0;
+SQL
+  fi
+
+  if has_col nodes chunk; then
+    echo "Backfilling nodes.source from nodes.chunk"
+    "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE nodes
+SET source = chunk,
+    chunk_status = 'not_chunked'
+WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+  AND chunk IS NOT NULL
+  AND LENGTH(TRIM(chunk)) > 0;
+SQL
+  fi
+
+  echo "Filling empty nodes.source from title/description fallback"
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE nodes
+SET source = title || CASE
+  WHEN description IS NOT NULL AND LENGTH(TRIM(description)) > 0
+    THEN char(10) || char(10) || description
+  ELSE ''
+END,
+chunk_status = 'not_chunked'
+WHERE source IS NULL OR LENGTH(TRIM(source)) = 0;
+SQL
+
+  echo "Marking nodes with source for rechunking"
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE nodes
+SET chunk_status = 'not_chunked'
+WHERE source IS NOT NULL
+  AND LENGTH(TRIM(source)) > 0
+  AND (chunk_status IS NULL OR chunk_status != 'chunked');
+SQL
+fi
+
 if has_table chunks; then
   if ! has_col chunks embedding_type; then
     echo "Adding chunks.embedding_type"
@@ -329,7 +388,7 @@ CREATE VIEW nodes_v AS
 SELECT n.id,
        n.title,
        n.description,
-       n.notes,
+       n.source,
        n.link,
        n.event_date,
        n.metadata,

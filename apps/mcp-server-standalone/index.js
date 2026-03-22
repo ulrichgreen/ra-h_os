@@ -351,8 +351,7 @@ async function main() {
     'createNode',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. Title: max 160 chars, clear and descriptive. Description is REQUIRED and must be explicit about what the thing is and why it matters for contextual grounding. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "content" = your notes/analysis. "chunk" = verbatim source text. Assign 1-5 dimensions — call queryDimensions first to use existing ones.',
-      // Note: MCP schema uses "content" for external API compat; mapped to "notes" internally
+      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. Title: max 160 chars, clear and descriptive. Description is REQUIRED and must be explicit about what the thing is and why it matters for contextual grounding. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility. Assign 1-5 dimensions — call queryDimensions first to use existing ones.',
       inputSchema: addNodeInputSchema
     },
     async ({ title, content, source, link, description, dimensions, metadata, chunk }) => {
@@ -392,8 +391,7 @@ async function main() {
     'queryNodes',
     {
       title: 'Search RA-H nodes',
-      description: 'Search nodes by keyword across title, description, and content fields. Multi-word queries find nodes containing all words (not exact phrases). Returns up to 25 results (default 10). Call before creating nodes to check for duplicates. Optionally filter by dimensions. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
-      // Note: searches across title, description, and notes columns
+      description: 'Search nodes by keyword across title, description, and source fields. Multi-word queries find nodes containing all words (not exact phrases). Returns up to 25 results (default 10). Call before creating nodes to check for duplicates. Optionally filter by dimensions. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
       inputSchema: searchNodesInputSchema
     },
     async ({ query: searchQuery, limit = 10, dimensions, created_after, created_before, event_after, event_before }) => {
@@ -560,13 +558,13 @@ async function main() {
       for (const id of uniqueIds) {
         const node = nodeService.getNodeById(id);
         if (node) {
-          const rawChunk = node.source ?? node.chunk ?? null;
+          const rawChunk = node.source ?? null;
           const chunkTruncated = rawChunk ? rawChunk.length > CHUNK_LIMIT : false;
 
           nodes.push({
             id: node.id,
             title: node.title,
-            source: node.source ?? node.notes ?? null,
+            source: node.source ?? null,
             description: node.description ?? null,
             link: node.link ?? null,
             chunk: chunkTruncated ? rawChunk.substring(0, CHUNK_LIMIT) : rawChunk,
@@ -595,7 +593,7 @@ async function main() {
     'updateNode',
     {
       title: 'Update RA-H node',
-      description: 'Update an existing node. Description is REQUIRED on every update and must explicitly state WHAT this thing is + WHY it matters for contextual grounding. Content is APPENDED to existing notes (not replaced). Dimensions are REPLACED entirely with the new array. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
+      description: 'Update an existing node. Description is REQUIRED on every update and must explicitly state WHAT this thing is + WHY it matters for contextual grounding. Source content lives in "source". Legacy "content" and "chunk" are mapped to source for compatibility. Dimensions are REPLACED entirely with the new array. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
       inputSchema: updateNodeInputSchema
     },
     async ({ id, updates }) => {
@@ -621,7 +619,7 @@ async function main() {
       delete mappedUpdates.content;
       delete mappedUpdates.chunk;
 
-      const node = nodeService.updateNode(id, mappedUpdates, { appendNotes: false });
+      const node = nodeService.updateNode(id, mappedUpdates);
 
       return {
         content: [{ type: 'text', text: `Updated node #${id}` }],
@@ -916,7 +914,7 @@ async function main() {
       const tableCheck = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'").get();
       if (!tableCheck) {
         return {
-          content: [{ type: 'text', text: 'No chunks table found. Source content has not been chunked yet. Use getNodesById to read the raw chunk field instead.' }],
+          content: [{ type: 'text', text: 'No chunks table found. Source content has not been chunked yet. Use getNodesById to read the raw source text instead.' }],
           structuredContent: { count: 0, chunks: [], note: 'chunks table does not exist' }
         };
       }

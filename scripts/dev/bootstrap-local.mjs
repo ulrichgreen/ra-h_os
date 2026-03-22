@@ -248,6 +248,90 @@ function ensureCoreSchema(db) {
       '[{"id":"p_seed_0","name":"Summary of Focus","content":"Summarize the primary focused node clearly. Include 3–5 key points and cite [NODE:id:\\"title\\"]."},{"id":"p_seed_1","name":"Next Steps","content":"Propose 3 concrete next actions based on the focused nodes with references to [NODE:id:\\"title\\"]."}]'
     );
   }
+
+  const nodeCols = db.prepare('PRAGMA table_info(nodes)').all().map(col => col.name);
+  const hasNodeCol = (name) => nodeCols.includes(name);
+
+  if (!hasNodeCol('description')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN description TEXT;');
+  }
+  if (!hasNodeCol('metadata')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN metadata TEXT;');
+  }
+  if (!hasNodeCol('source')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN source TEXT;');
+  }
+  if (!hasNodeCol('event_date')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN event_date TEXT;');
+  }
+
+  if (hasNodeCol('content')) {
+    db.exec(`
+      UPDATE nodes
+      SET source = content,
+          chunk_status = 'not_chunked'
+      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+        AND content IS NOT NULL
+        AND LENGTH(TRIM(content)) > 0;
+    `);
+  }
+  if (hasNodeCol('notes')) {
+    db.exec(`
+      UPDATE nodes
+      SET source = notes,
+          chunk_status = 'not_chunked'
+      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+        AND notes IS NOT NULL
+        AND LENGTH(TRIM(notes)) > 0;
+    `);
+  }
+  if (hasNodeCol('chunk')) {
+    db.exec(`
+      UPDATE nodes
+      SET source = chunk,
+          chunk_status = 'not_chunked'
+      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+        AND chunk IS NOT NULL
+        AND LENGTH(TRIM(chunk)) > 0;
+    `);
+    }
+
+  db.exec(`
+    UPDATE nodes
+    SET source = title || CASE
+      WHEN description IS NOT NULL AND LENGTH(TRIM(description)) > 0
+        THEN char(10) || char(10) || description
+      ELSE ''
+    END,
+    chunk_status = 'not_chunked'
+    WHERE source IS NULL OR LENGTH(TRIM(source)) = 0;
+  `);
+
+  db.exec(`
+    UPDATE nodes
+    SET chunk_status = 'not_chunked'
+    WHERE source IS NOT NULL
+      AND LENGTH(TRIM(source)) > 0
+      AND (chunk_status IS NULL OR chunk_status != 'chunked');
+  `);
+
+  db.exec('DROP VIEW IF EXISTS nodes_v;');
+  db.exec(`
+    CREATE VIEW nodes_v AS
+    SELECT n.id,
+           n.title,
+           n.description,
+           n.source,
+           n.link,
+           n.event_date,
+           n.metadata,
+           n.created_at,
+           n.updated_at,
+           COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
+                     FROM node_dimensions d
+                     WHERE d.node_id = n.id), '[]') AS dimensions_json
+    FROM nodes n;
+  `);
 }
 
 function tryInitVectorTables(db, dbPath) {

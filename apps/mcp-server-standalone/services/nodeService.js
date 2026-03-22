@@ -9,7 +9,7 @@ function getNodes(filters = {}) {
   const { dimensions, search, limit = 100, offset = 0 } = filters;
 
   let sql = `
-    SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+    SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
            n.created_at, n.updated_at,
            COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
                      FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json
@@ -70,7 +70,7 @@ function getNodes(filters = {}) {
  */
 function getNodeById(id) {
   const sql = `
-    SELECT n.id, n.title, n.description, n.source, n.notes, n.link, n.event_date, n.metadata, n.chunk,
+    SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
            n.created_at, n.updated_at,
            COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
                      FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json
@@ -164,8 +164,7 @@ function createNode(nodeData) {
  * Source-first update path.
  */
 function updateNode(id, updates, options = {}) {
-  const { appendNotes = true } = options;
-  const { title, description, source, notes, link, event_date, dimensions, chunk, metadata } = updates;
+  const { title, description, source, link, event_date, dimensions, metadata } = updates;
   const now = new Date().toISOString();
   const db = getDb();
 
@@ -190,12 +189,6 @@ function updateNode(id, updates, options = {}) {
     if (source !== undefined) {
       setFields.push('source = ?');
       params.push(source);
-    } else if (notes !== undefined) {
-      const nextSource = appendNotes && existing.source
-        ? `${existing.source}\n\n${notes}`
-        : notes;
-      setFields.push('source = ?');
-      params.push(nextSource);
     }
     if (link !== undefined) {
       setFields.push('link = ?');
@@ -204,10 +197,6 @@ function updateNode(id, updates, options = {}) {
     if (event_date !== undefined) {
       setFields.push('event_date = ?');
       params.push(event_date);
-    }
-    if (chunk !== undefined && source === undefined) {
-      setFields.push('source = ?');
-      params.push(chunk);
     }
     if (metadata !== undefined) {
       setFields.push('metadata = ?');

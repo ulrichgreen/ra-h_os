@@ -50,13 +50,12 @@ function initDatabase() {
         id INTEGER PRIMARY KEY,
         title TEXT,
         description TEXT,
-        notes TEXT,
+        source TEXT,
         link TEXT,
         event_date TEXT,
         created_at TEXT,
         updated_at TEXT,
         metadata TEXT,
-        chunk TEXT,
         embedding BLOB,
         embedding_updated_at TEXT,
         embedding_text TEXT,
@@ -112,6 +111,38 @@ function initDatabase() {
   db.pragma('synchronous = NORMAL');
   db.pragma('cache_size = 5000');
   db.pragma('busy_timeout = 5000');
+
+  const nodeCols = db.prepare('PRAGMA table_info(nodes)').all().map(c => c.name);
+  if (!nodeCols.includes('source')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN source TEXT;');
+  }
+  if (nodeCols.includes('content')) {
+    db.exec(`
+      UPDATE nodes
+      SET source = content
+      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+        AND content IS NOT NULL
+        AND LENGTH(TRIM(content)) > 0;
+    `);
+  }
+  if (nodeCols.includes('notes')) {
+    db.exec(`
+      UPDATE nodes
+      SET source = notes
+      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+        AND notes IS NOT NULL
+        AND LENGTH(TRIM(notes)) > 0;
+    `);
+  }
+  if (nodeCols.includes('chunk')) {
+    db.exec(`
+      UPDATE nodes
+      SET source = chunk
+      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
+        AND chunk IS NOT NULL
+        AND LENGTH(TRIM(chunk)) > 0;
+    `);
+  }
 
   const edgeCols = db.prepare('PRAGMA table_info(edges)').all().map(c => c.name);
   if (!edgeCols.includes('explanation')) {
