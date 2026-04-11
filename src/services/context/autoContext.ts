@@ -1,5 +1,4 @@
 import { getSQLiteClient } from '@/services/database/sqlite-client';
-import { getAutoContextSettings } from '@/services/settings/autoContextSettings';
 
 export interface AutoContextSummary {
   id: number;
@@ -34,28 +33,30 @@ function truncate(value: string | null | undefined, maxChars: number): string {
 
 function fetchAutoContextRows(limit: number): AutoContextSummary[] {
   const db = getSQLiteClient();
-  const rows = db.query<{
-    id: number;
-    title: string | null;
-    description: string | null;
-    updated_at: string;
-    edge_count: number | null;
-  }>(
-    `
-      SELECT n.id,
-             n.title,
-             n.description,
-             n.updated_at,
-             COUNT(DISTINCT e.id) AS edge_count
-        FROM nodes n
-        LEFT JOIN edges e
-          ON (e.from_node_id = n.id OR e.to_node_id = n.id)
-       GROUP BY n.id
-       ORDER BY edge_count DESC, n.updated_at DESC, n.id ASC
-       LIMIT ?
-    `,
-    [limit]
-  ).rows;
+  const rows = db
+    .query<{
+      id: number;
+      title: string | null;
+      description: string | null;
+      updated_at: string;
+      edge_count: number | null;
+    }>(
+      `
+        SELECT n.id,
+               n.title,
+               n.description,
+               n.updated_at,
+               COUNT(DISTINCT e.id) AS edge_count
+          FROM nodes n
+          LEFT JOIN edges e
+            ON (e.from_node_id = n.id OR e.to_node_id = n.id)
+         GROUP BY n.id
+         ORDER BY edge_count DESC, n.updated_at DESC, n.id ASC
+         LIMIT ?
+      `,
+      [limit]
+    )
+    .rows;
 
   return rows.map((row) => ({
     id: row.id,
@@ -150,7 +151,7 @@ export function buildContextsBlock(limit = 12): string | null {
 
   const lines: string[] = [
     'User Contexts',
-    'Use contexts as the primary scope layer. Dimensions are secondary metadata and filters.',
+    'Contexts are optional soft hints. Use them when they are explicit and useful, but rely primarily on title, description, source, edges, and recency.',
     '',
   ];
 
@@ -172,7 +173,7 @@ export function buildContextAnchorsBlock(limit = 12): string | null {
 
   const lines: string[] = [
     'Context Anchors',
-    'Each context anchor is the highest-edge node in that context. Use it as the starting graph waypoint for that scope.',
+    'Each context anchor is the highest-edge node in that context. Use it only as an optional waypoint when that context is already clearly relevant.',
     '',
   ];
 
@@ -195,7 +196,7 @@ export function buildHubNodesBlock(limit = 5): string | null {
 
   const lines: string[] = [
     'Global Hub Diagnostics',
-    'These are secondary graph diagnostics only. Do not use them as the primary scope layer when contexts are available.',
+    'These are secondary graph diagnostics only. Do not treat them as the primary grounding mechanism.',
     '',
   ];
 
@@ -210,24 +211,9 @@ export function buildHubNodesBlock(limit = 5): string | null {
 }
 
 export function getAutoContextSummaries(limit = 5): AutoContextSummary[] {
-  const settings = getAutoContextSettings();
-  if (!settings.autoContextEnabled) {
-    return [];
-  }
   return getHubNodes(limit);
 }
 
-export function buildAutoContextBlock(limit = 12): string | null {
-  const settings = getAutoContextSettings();
-  if (!settings.autoContextEnabled) {
-    return null;
-  }
-
-  const sections = [
-    buildContextsBlock(limit),
-    buildContextAnchorsBlock(limit),
-    buildHubNodesBlock(5),
-  ].filter(Boolean);
-
-  return sections.length > 0 ? sections.join('\n\n') : null;
+export function buildAutoContextBlock(limit = 5): string | null {
+  return buildContextsBlock(limit);
 }

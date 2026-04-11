@@ -110,7 +110,7 @@ VALUES (
 SQL
 fi
 
-echo "Ensuring core tables exist (nodes, chunks, edges, chats, node_dimensions)..."
+echo "Ensuring core tables exist (nodes, chunks, edges, chats, contexts)..."
 
 if ! has_table nodes; then
   "$SQLITE_BIN" "$DB_PATH" <<'SQL'
@@ -129,6 +129,20 @@ CREATE TABLE nodes (
   embedding_text TEXT,
   chunk_status TEXT DEFAULT 'not_chunked'
 );
+SQL
+fi
+
+if ! has_table contexts; then
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+CREATE TABLE contexts (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  icon TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX idx_contexts_name_normalized ON contexts(LOWER(TRIM(name)));
 SQL
 fi
 
@@ -158,6 +172,7 @@ CREATE TABLE edges (
   source TEXT,
   created_at TEXT,
   context TEXT,
+  explanation TEXT,
   FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
   FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
 );
@@ -166,14 +181,186 @@ CREATE INDEX idx_edges_to ON edges(to_node_id);
 SQL
 fi
 
+if has_table edges; then
+  NEEDS_EDGE_REWRITE=0
+  if ! has_col edges from_node_id || ! has_col edges to_node_id || ! has_col edges source || ! has_col edges created_at || ! has_col edges context; then
+    NEEDS_EDGE_REWRITE=1
+  fi
+  if has_col edges from_id || has_col edges to_id || has_col edges description || has_col edges updated_at; then
+    NEEDS_EDGE_REWRITE=1
+  fi
+
+  if [ "$NEEDS_EDGE_REWRITE" = "1" ]; then
+    echo "Migrating legacy edges table to canonical schema"
+
+    FROM_EXPR="NULL"
+    if has_col edges from_node_id; then
+      FROM_EXPR="from_node_id"
+    elif has_col edges from_id; then
+      FROM_EXPR="from_id"
+    fi
+
+    TO_EXPR="NULL"
+    if has_col edges to_node_id; then
+      TO_EXPR="to_node_id"
+    elif has_col edges to_id; then
+      TO_EXPR="to_id"
+    fi
+
+    SOURCE_EXPR="'legacy'"
+    if has_col edges source; then
+      SOURCE_EXPR="source"
+    fi
+
+    CREATED_AT_EXPR="CURRENT_TIMESTAMP"
+    if has_col edges created_at; then
+      CREATED_AT_EXPR="created_at"
+    fi
+
+    CONTEXT_EXPR="NULL"
+    if has_col edges context; then
+      CONTEXT_EXPR="context"
+    fi
+
+    EXPLANATION_EXPR="NULL"
+    if has_col edges explanation; then
+      EXPLANATION_EXPR="explanation"
+    elif has_col edges description; then
+      EXPLANATION_EXPR="description"
+    elif has_col edges context; then
+      EXPLANATION_EXPR="CASE WHEN json_valid(context) THEN json_extract(context, '\$.explanation') ELSE NULL END"
+    fi
+
+    "$SQLITE_BIN" "$DB_PATH" <<SQL
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+DROP INDEX IF EXISTS idx_edges_from;
+DROP INDEX IF EXISTS idx_edges_to;
+ALTER TABLE edges RENAME TO edges_legacy_migration;
+CREATE TABLE edges (
+  id INTEGER PRIMARY KEY,
+  from_node_id INTEGER NOT NULL,
+  to_node_id INTEGER NOT NULL,
+  source TEXT,
+  created_at TEXT,
+  context TEXT,
+  explanation TEXT,
+  FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+INSERT INTO edges (id, from_node_id, to_node_id, source, created_at, context, explanation)
+SELECT
+  id,
+  ${FROM_EXPR},
+  ${TO_EXPR},
+  ${SOURCE_EXPR},
+  COALESCE(${CREATED_AT_EXPR}, CURRENT_TIMESTAMP),
+  ${CONTEXT_EXPR},
+  ${EXPLANATION_EXPR}
+FROM edges_legacy_migration
+WHERE ${FROM_EXPR} IS NOT NULL
+  AND ${TO_EXPR} IS NOT NULL;
+DROP TABLE edges_legacy_migration;
+COMMIT;
+PRAGMA foreign_keys=ON;
+SQL
+  fi
+
+  if ! has_col edges explanation; then
+    echo "Adding edges.explanation"
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE edges ADD COLUMN explanation TEXT;"
+    if has_col edges context; then
+      "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE edges
+SET explanation = CASE
+  WHEN json_valid(context) THEN json_extract(context, '$.explanation')
+  ELSE explanation
+END
+WHERE explanation IS NULL
+  AND context IS NOT NULL;
+SQL
+    fi
+  fi
+
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node_id);
+CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node_id);
+SQL
+fi
+
 echo "Dropping legacy episodic/semantic memory tables if they exist..."
 
 if has_table chats; then
-  if "$SQLITE_BIN" "$DB_PATH" -json "PRAGMA table_info(chats);" | grep -q 'focused_memory_id'; then
-    echo "  Removing legacy chats.focused_memory_id column"
-    "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+  NEEDS_CHAT_REWRITE=0
+  if has_col chats focused_memory_id; then
+    NEEDS_CHAT_REWRITE=1
+  fi
+  for required_col in chat_type helper_name agent_type delegation_id user_message assistant_message thread_id focused_node_id created_at metadata; do
+    if ! has_col chats "$required_col"; then
+      NEEDS_CHAT_REWRITE=1
+      break
+    fi
+  done
+
+  if [ "$NEEDS_CHAT_REWRITE" = "1" ]; then
+    echo "  Migrating legacy chats table to canonical schema"
+
+    CHAT_TYPE_EXPR="NULL"
+    if has_col chats chat_type; then
+      CHAT_TYPE_EXPR="chat_type"
+    fi
+
+    HELPER_NAME_EXPR="NULL"
+    if has_col chats helper_name; then
+      HELPER_NAME_EXPR="helper_name"
+    elif has_col chats title; then
+      HELPER_NAME_EXPR="title"
+    fi
+
+    AGENT_TYPE_EXPR="'orchestrator'"
+    if has_col chats agent_type; then
+      AGENT_TYPE_EXPR="COALESCE(agent_type, 'orchestrator')"
+    fi
+
+    DELEGATION_ID_EXPR="NULL"
+    if has_col chats delegation_id; then
+      DELEGATION_ID_EXPR="delegation_id"
+    fi
+
+    USER_MESSAGE_EXPR="NULL"
+    if has_col chats user_message; then
+      USER_MESSAGE_EXPR="user_message"
+    fi
+
+    ASSISTANT_MESSAGE_EXPR="NULL"
+    if has_col chats assistant_message; then
+      ASSISTANT_MESSAGE_EXPR="assistant_message"
+    fi
+
+    THREAD_ID_EXPR="NULL"
+    if has_col chats thread_id; then
+      THREAD_ID_EXPR="thread_id"
+    fi
+
+    FOCUSED_NODE_ID_EXPR="NULL"
+    if has_col chats focused_node_id; then
+      FOCUSED_NODE_ID_EXPR="focused_node_id"
+    fi
+
+    CREATED_AT_CHAT_EXPR="CURRENT_TIMESTAMP"
+    if has_col chats created_at; then
+      CREATED_AT_CHAT_EXPR="created_at"
+    fi
+
+    METADATA_CHAT_EXPR="NULL"
+    if has_col chats metadata; then
+      METADATA_CHAT_EXPR="metadata"
+    fi
+
+    "$SQLITE_BIN" "$DB_PATH" <<SQL
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
+DROP INDEX IF EXISTS idx_chats_thread;
 ALTER TABLE chats RENAME TO chats_legacy_cleanup;
 CREATE TABLE chats (
   id INTEGER PRIMARY KEY,
@@ -194,9 +381,17 @@ INSERT INTO chats (
   user_message, assistant_message, thread_id, focused_node_id,
   created_at, metadata
 )
-SELECT id, chat_type, helper_name, agent_type, delegation_id,
-       user_message, assistant_message, thread_id, focused_node_id,
-       created_at, metadata
+SELECT id,
+       ${CHAT_TYPE_EXPR},
+       ${HELPER_NAME_EXPR},
+       ${AGENT_TYPE_EXPR},
+       ${DELEGATION_ID_EXPR},
+       ${USER_MESSAGE_EXPR},
+       ${ASSISTANT_MESSAGE_EXPR},
+       ${THREAD_ID_EXPR},
+       ${FOCUSED_NODE_ID_EXPR},
+       COALESCE(${CREATED_AT_CHAT_EXPR}, CURRENT_TIMESTAMP),
+       ${METADATA_CHAT_EXPR}
   FROM chats_legacy_cleanup;
 DROP TABLE chats_legacy_cleanup;
 CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);
@@ -250,24 +445,10 @@ if has_table chats && ! has_col chats delegation_id; then
   "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE chats ADD COLUMN delegation_id INTEGER;"
 fi
 
-# chat_memory_state removed in final schema pass
+# Drop dead chat_memory_state table (orphaned from removed memory pipeline)
+echo "Dropping dead chat_memory_state table if present..."
+"$SQLITE_BIN" "$DB_PATH" "DROP INDEX IF EXISTS idx_chat_memory_thread;"
 "$SQLITE_BIN" "$DB_PATH" "DROP TABLE IF EXISTS chat_memory_state;"
-
-echo "Dropping legacy agent_delegations table if present..."
-"$SQLITE_BIN" "$DB_PATH" "DROP TABLE IF EXISTS agent_delegations;"
-
-if ! has_table node_dimensions; then
-  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
-CREATE TABLE node_dimensions (
-  node_id INTEGER NOT NULL,
-  dimension TEXT NOT NULL,
-  PRIMARY KEY (node_id, dimension),
-  FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
-) WITHOUT ROWID;
-CREATE INDEX idx_dim_by_dimension ON node_dimensions(dimension, node_id);
-CREATE INDEX idx_dim_by_node ON node_dimensions(node_id, dimension);
-SQL
-fi
 
 echo "Checking/adding missing columns..."
 
@@ -284,7 +465,50 @@ if has_table nodes; then
     echo "Adding nodes.source"
     "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE nodes ADD COLUMN source TEXT;"
   fi
-  # is_pinned removed in final schema pass
+  if ! has_col nodes chunk_status; then
+    echo "Adding nodes.chunk_status"
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE nodes ADD COLUMN chunk_status TEXT DEFAULT 'not_chunked';"
+  fi
+  if ! has_col nodes context_id; then
+    echo "Adding nodes.context_id"
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE nodes ADD COLUMN context_id INTEGER REFERENCES contexts(id) ON DELETE SET NULL;"
+  fi
+fi
+
+if has_table contexts; then
+  if ! has_col contexts description; then
+    echo "Adding contexts.description"
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE contexts ADD COLUMN description TEXT NOT NULL DEFAULT '';"
+  fi
+  if ! has_col contexts icon; then
+    echo "Adding contexts.icon"
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE contexts ADD COLUMN icon TEXT;"
+  fi
+  if ! has_col contexts created_at; then
+    echo "Adding contexts.created_at"
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE contexts ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;"
+  fi
+  if ! has_col contexts updated_at; then
+    echo "Adding contexts.updated_at"
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;"
+  fi
+
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE contexts
+SET description = COALESCE(NULLIF(TRIM(description), ''), name)
+WHERE description IS NULL OR LENGTH(TRIM(description)) = 0;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized ON contexts(LOWER(TRIM(name)));
+SQL
+fi
+
+"$SQLITE_BIN" "$DB_PATH" "CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);"
+
+# --- Additive migrations (do first) ---
+
+# Add event_date column (2026-02-15)
+if has_table nodes && ! has_col nodes event_date; then
+  echo "Adding nodes.event_date"
+  "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE nodes ADD COLUMN event_date TEXT;"
 fi
 
 if has_table nodes && has_col nodes source; then
@@ -346,6 +570,38 @@ WHERE source IS NOT NULL
 SQL
 fi
 
+# Backfill event_date from metadata.published_date where available
+if has_table nodes && has_col nodes event_date; then
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+UPDATE nodes
+SET event_date = json_extract(metadata, '$.published_date')
+WHERE event_date IS NULL
+  AND json_extract(metadata, '$.published_date') IS NOT NULL;
+SQL
+fi
+
+# --- Destructive migrations (do last, SQLite 3.35+ required) ---
+
+# Drop deprecated nodes.type column
+if has_table nodes && has_col nodes type; then
+  echo "Dropping deprecated nodes.type"
+  "$SQLITE_BIN" "$DB_PATH" "DROP INDEX IF EXISTS idx_nodes_type;"
+  "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE nodes DROP COLUMN type;"
+fi
+
+# Drop deprecated nodes.is_pinned column
+if has_table nodes && has_col nodes is_pinned; then
+  echo "Dropping deprecated nodes.is_pinned"
+  "$SQLITE_BIN" "$DB_PATH" "DROP INDEX IF EXISTS idx_nodes_pinned;"
+  "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE nodes DROP COLUMN is_pinned;"
+fi
+
+# Drop dead edges.user_feedback column
+if has_table edges && has_col edges user_feedback; then
+  echo "Dropping dead edges.user_feedback"
+  "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE edges DROP COLUMN user_feedback;"
+fi
+
 if has_table chunks; then
   if ! has_col chunks embedding_type; then
     echo "Adding chunks.embedding_type"
@@ -357,28 +613,44 @@ if has_table chunks; then
   fi
 fi
 
-echo "Ensuring dimensions table exists..."
-if ! has_table dimensions; then
-  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
-CREATE TABLE dimensions (
-  name TEXT PRIMARY KEY,
-  description TEXT,
-  icon TEXT,
-  is_priority INTEGER DEFAULT 0,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+echo "Dropping legacy dimension tables after snapshot..."
+"$SQLITE_BIN" "$DB_PATH" <<'SQL'
+CREATE TABLE IF NOT EXISTS dimension_migration_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  migrated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  dimension_count INTEGER NOT NULL,
+  assignment_count INTEGER NOT NULL,
+  payload TEXT
 );
 SQL
-fi
 
-if has_table dimensions; then
-  echo "Seeding default locked dimensions..."
-  for dimension in research ideas projects memory preferences; do
+if has_table dimensions || has_table node_dimensions; then
+  SNAPSHOT_COUNT=$("$SQLITE_BIN" -readonly "$DB_PATH" "SELECT COUNT(*) FROM dimension_migration_snapshots;" 2>/dev/null || echo 0)
+  if [ "${SNAPSHOT_COUNT:-0}" = "0" ]; then
+    DIM_COUNT=0
+    ASSIGN_COUNT=0
+    PAYLOAD='[]'
+
+    if has_table dimensions; then
+      DIM_COUNT=$("$SQLITE_BIN" -readonly "$DB_PATH" "SELECT COUNT(*) FROM dimensions;" 2>/dev/null || echo 0)
+    fi
+    if has_table node_dimensions; then
+      ASSIGN_COUNT=$("$SQLITE_BIN" -readonly "$DB_PATH" "SELECT COUNT(*) FROM node_dimensions;" 2>/dev/null || echo 0)
+      PAYLOAD=$("$SQLITE_BIN" -readonly "$DB_PATH" "SELECT COALESCE(json_group_array(json_object('node_id', nd.node_id, 'dimension', nd.dimension, 'description', d.description, 'icon', d.icon, 'is_priority', d.is_priority)), '[]') FROM node_dimensions nd LEFT JOIN dimensions d ON d.name = nd.dimension;" 2>/dev/null || echo '[]')
+    fi
+
     "$SQLITE_BIN" "$DB_PATH" <<SQL
-INSERT INTO dimensions (name, is_priority, updated_at)
-VALUES ('$dimension', 1, datetime('now'))
-ON CONFLICT(name) DO UPDATE SET is_priority = 1, updated_at = datetime('now');
+INSERT INTO dimension_migration_snapshots (dimension_count, assignment_count, payload)
+VALUES (${DIM_COUNT:-0}, ${ASSIGN_COUNT:-0}, '${PAYLOAD//\'/''}');
 SQL
-  done
+  fi
+
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+DROP INDEX IF EXISTS idx_dim_by_dimension;
+DROP INDEX IF EXISTS idx_dim_by_node;
+DROP TABLE IF EXISTS node_dimensions;
+DROP TABLE IF EXISTS dimensions;
+SQL
 fi
 
 echo "Refreshing helper view nodes_v..."
@@ -393,10 +665,7 @@ SELECT n.id,
        n.event_date,
        n.metadata,
        n.created_at,
-       n.updated_at,
-       COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                 FROM node_dimensions d
-                 WHERE d.node_id = n.id), '[]') AS dimensions_json
+       n.updated_at
 FROM nodes n;
 SQL
 
@@ -439,6 +708,13 @@ DROP INDEX IF EXISTS idx_memory_table_row;
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
 CREATE INDEX IF NOT EXISTS idx_logs_table_ts ON logs(table_name, ts);
 CREATE INDEX IF NOT EXISTS idx_logs_table_row ON logs(table_name, row_id);
+SQL
+
+# Performance indexes for common query patterns
+echo "Ensuring performance indexes..."
+"$SQLITE_BIN" "$DB_PATH" <<'SQL'
+CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chats_created_at ON chats(created_at DESC);
 SQL
 
 # triggers for nodes (drop/recreate to ensure enriched payloads)
@@ -604,11 +880,29 @@ if has_table helpers && has_col helpers fluid_context; then
   "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE helpers DROP COLUMN fluid_context;" || true
 fi
 
-echo "Ensuring performance indexes exist..."
-"$SQLITE_BIN" "$DB_PATH" <<'SQL'
-CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_chats_created_at ON chats(created_at DESC);
+echo "Ensuring voice_usage table exists..."
+if ! has_table voice_usage; then
+  "$SQLITE_BIN" "$DB_PATH" <<'SQL'
+CREATE TABLE voice_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER,
+  session_id TEXT,
+  helper_name TEXT,
+  request_id TEXT,
+  message_id TEXT,
+  voice TEXT,
+  model TEXT,
+  chars INTEGER,
+  cost_usd REAL,
+  duration_ms INTEGER,
+  text_preview TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_voice_usage_session ON voice_usage(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_voice_usage_chat ON voice_usage(chat_id);
 SQL
+fi
 
 echo "Running VACUUM and ANALYZE..."
 "$SQLITE_BIN" "$DB_PATH" "VACUUM; ANALYZE;"

@@ -27,18 +27,18 @@ try {
 const { z } = require('zod');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+const packageJson = require('./package.json');
 
 const { initDatabase, getDatabasePath, closeDatabase, getDb, query } = require('./services/sqlite-client');
 const nodeService = require('./services/nodeService');
 const edgeService = require('./services/edgeService');
 const contextService = require('./services/contextService');
-const dimensionService = require('./services/dimensionService');
 const skillService = require('./services/skillService');
 
 // Server info
 const serverInfo = {
   name: 'ra-h-standalone',
-  version: '1.10.1'
+  version: packageJson.version
 };
 
 function buildInstructions() {
@@ -59,18 +59,14 @@ function buildInstructions() {
   return `Today's date: ${now}. RA-H is the user's personal knowledge graph — local SQLite, fully on-device.
 
 ## Quick start
-1. Call getContext for orientation (stats, contexts, dimensions, anchors/hubs).
+1. Call getContext for orientation (stats, contexts, anchors/hubs).
 2. For simple tasks, tool descriptions have everything you need.
 3. For complex tasks, call readSkill("db-operations").
 
 ## Knowledge capture
 Proactively offer to save valuable information when insights, decisions, or references surface.
-Propose: "I'd add this as: [title] in [dimensions] — want me to?"
+Propose: "I'd add this as: [title] — want me to?"
 Always search before creating to avoid duplicates.
-Use only existing dimensions returned by getContext or queryDimensions.
-Do not invent new dimensions from node titles, concepts, or phrasing.
-Only call createDimension when the user explicitly instructs you to create a new dimension.
-Use contexts as the primary scope layer. Query contexts before assigning when needed.
 
 ## Available skills
 ${skillIndex}
@@ -82,22 +78,20 @@ All data stays on this device.`;
 // Tool schemas
 const addNodeInputSchema = {
   title: z.string().min(1).max(160).describe('Clear, descriptive title'),
-  content: z.string().max(20000).optional().describe('Legacy content field; mapped to source'),
-  source: z.string().max(50000).optional().describe('Full source text'),
+  content: z.string().max(20000).optional().describe('Legacy alias for source content'),
+  source: z.string().max(50000).optional().describe('Canonical source content for embedding'),
   link: z.string().url().optional().describe('Source URL'),
   description: z.string().optional().describe('Strongly recommended. Write the description as natural prose, not labels or a checklist. It should make clear what the artifact is and any surrounding context available. RA-H will accept whatever description is provided and will not block the write.'),
   context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID.'),
   context_name: z.string().optional().describe('Optional convenience context name.'),
-  dimensions: z.array(z.string()).min(1).max(5).describe('1-5 existing categories. Call queryDimensions first to use existing ones. Do not invent new dimensions.'),
   metadata: z.record(z.any()).optional().describe('Optional metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.'),
-  chunk: z.string().max(50000).optional().describe('Full source text')
+  chunk: z.string().max(50000).optional().describe('Legacy alias for source text')
 };
 
 const searchNodesInputSchema = {
   query: z.string().min(1).max(400).describe('Search query'),
   limit: z.number().min(1).max(25).optional().describe('Max results (default 10)'),
   contextId: z.number().int().positive().optional().describe('Optional primary context filter.'),
-  dimensions: z.array(z.string()).max(5).optional().describe('Filter by dimensions'),
   created_after: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes created on or after this date.'),
   created_before: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes created before this date.'),
   event_after: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes with event_date on or after this date.'),
@@ -113,12 +107,11 @@ const updateNodeInputSchema = {
   updates: z.object({
     title: z.string().optional().describe('New title'),
     description: z.string().optional().describe('Recommended replacement description. Keep it as natural prose that says what this artifact is and any surrounding context available. RA-H will accept whatever description is provided and will not block the write.'),
-    content: z.string().optional().describe('Content to APPEND'),
+    content: z.string().optional().describe('Legacy alias for source'),
     source: z.string().optional().describe('Canonical source content for embedding'),
     link: z.string().optional().describe('New link'),
     context_id: z.number().int().positive().nullable().optional().describe('Primary context ID. Omit to preserve existing context; use null to clear it.'),
-    dimensions: z.array(z.string()).optional().describe('New dimensions (replaces existing)'),
-    metadata: z.record(z.any()).optional().describe('New metadata')
+    metadata: z.record(z.any()).optional().describe('Metadata patch. It now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
   }).describe('Fields to update')
 };
 
@@ -146,25 +139,6 @@ const queryContextsInputSchema = {
   includeNodes: z.boolean().optional().describe('Include nodes for an exact single-context lookup')
 };
 
-const listDimensionsInputSchema = {};
-
-const createDimensionInputSchema = {
-  name: z.string().min(1).describe('Dimension name'),
-  description: z.string().max(500).optional().describe('Description'),
-  isPriority: z.boolean().optional().describe('Lock for auto-assignment')
-};
-
-const updateDimensionInputSchema = {
-  name: z.string().min(1).describe('Current dimension name'),
-  newName: z.string().optional().describe('New name (for renaming)'),
-  description: z.string().max(500).optional().describe('New description'),
-  isPriority: z.boolean().optional().describe('Lock/unlock dimension')
-};
-
-const deleteDimensionInputSchema = {
-  name: z.string().min(1).describe('Dimension name to delete')
-};
-
 const readSkillInputSchema = {
   name: z.string().min(1).describe('Skill name (e.g. "db-operations", "onboarding", "persona")')
 };
@@ -188,24 +162,6 @@ const sqliteQueryInputSchema = {
   sql: z.string().min(1).describe('The SQL query to execute. Must be a SELECT, WITH, or PRAGMA statement.'),
   format: z.enum(['json', 'table']).optional().describe('Output format (default json)')
 };
-
-// Helper to sanitize dimensions
-function sanitizeDimensions(raw) {
-  if (!Array.isArray(raw)) return [];
-  const result = [];
-  const seen = new Set();
-  for (const value of raw) {
-    if (typeof value !== 'string') continue;
-    const trimmed = value.trim();
-    if (!trimmed) continue;
-    const lowered = trimmed.toLowerCase();
-    if (seen.has(lowered)) continue;
-    seen.add(lowered);
-    result.push(trimmed);
-    if (result.length >= 5) break;
-  }
-  return result;
-}
 
 // FTS5 helpers
 function sanitizeFtsQuery(input) {
@@ -314,7 +270,7 @@ async function main() {
     'getContext',
     {
       title: 'Get RA-H context',
-      description: 'Get knowledge graph overview: stats, contexts, hub nodes (secondary diagnostics), dimensions, recent activity, and available skills. Call this first to orient yourself. For deeper operating policy, follow up with readSkill("db-operations").',
+      description: 'Get knowledge graph overview: stats, contexts, hub nodes (secondary diagnostics), recent activity, and available skills. Call this first to orient yourself. For deeper operating policy, follow up with readSkill("db-operations").',
       inputSchema: {}
     },
     async () => {
@@ -335,7 +291,7 @@ async function main() {
         };
       }
 
-      const summary = `Graph: ${context.stats.contextCount || 0} contexts, ${context.stats.nodeCount} nodes, ${context.stats.edgeCount} edges, ${context.stats.dimensionCount} dimensions, ${skills.length} skills.`;
+      const summary = `Graph: ${context.stats.contextCount || 0} contexts, ${context.stats.nodeCount} nodes, ${context.stats.edgeCount} edges, ${skills.length} skills.`;
       return {
         content: [{ type: 'text', text: summary }],
         structuredContent: context
@@ -349,40 +305,36 @@ async function main() {
     'createNode',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. Set context explicitly when clear; otherwise RA-H will infer the best-fit context automatically on create. Title: max 160 chars, clear and descriptive. Description is REQUIRED and should be natural prose that makes clear what the thing is, why it belongs in the graph, and workflow status. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility. Assign 1-5 dimensions — call queryDimensions first to use existing ones.',
+      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. Set context explicitly when clear and useful. Title: max 160 chars, clear and descriptive. Description is strongly recommended and should explicitly describe what the thing is and any surrounding context available, but the write will never be blocked over description quality. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility.',
       inputSchema: addNodeInputSchema
     },
-    async ({ title, content, source, link, description, context_id, context_name, dimensions, metadata, chunk }) => {
-      const normalizedDimensions = sanitizeDimensions(dimensions);
-      if (normalizedDimensions.length === 0) {
-        throw new Error('At least one dimension is required.');
-      }
+    async ({ title, content, source, link, description, context_id, context_name, metadata, chunk }) => {
+      const sourceText = source?.trim() || content?.trim() || chunk?.trim();
+      const normalizedDescription = typeof description === 'string' ? description.trim() : description;
+
       let resolvedContextId;
       try {
         resolvedContextId = contextService.resolveContextId({ context_id, context_name });
       } catch (error) {
-        log('Warning: invalid explicit context input on createNode; falling back to automatic inference:', error.message);
-        resolvedContextId = undefined;
+        throw new Error(error.message);
       }
 
       const node = nodeService.createNode({
         title: title.trim(),
-        source: source?.trim() || chunk?.trim() || content?.trim(),
+        source: sourceText,
         link: link?.trim(),
-        description: typeof description === 'string' ? description.trim() : description,
+        description: normalizedDescription,
         context_id: resolvedContextId,
-        dimensions: normalizedDimensions,
         metadata: metadata || {}
       });
 
-      const summary = `Created node #${node.id}: ${node.title} [${node.dimensions.join(', ')}]`;
+      const summary = `Created node #${node.id}: ${node.title}`;
 
       return {
         content: [{ type: 'text', text: summary }],
         structuredContent: {
           nodeId: node.id,
           title: node.title,
-          dimensions: node.dimensions,
           message: summary
         }
       };
@@ -393,169 +345,21 @@ async function main() {
     'queryNodes',
     {
       title: 'Search RA-H nodes',
-      description: 'Search nodes by keyword across title, description, and source fields. Multi-word queries find nodes containing all words (not exact phrases). Returns up to 25 results (default 10). Call before creating nodes to check for duplicates. Optionally filter by dimensions. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
+      description: 'Search nodes by keyword across title, description, and source fields. Multi-word queries find nodes containing all words (not exact phrases). Returns up to 25 results (default 10). Call before creating nodes to check for duplicates. Optionally filter by context. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
       inputSchema: searchNodesInputSchema
     },
-    async ({ query: searchQuery, limit = 10, contextId, dimensions, created_after, created_before, event_after, event_before }) => {
-      const normalizedDimensions = sanitizeDimensions(dimensions || []);
+    async ({ query: searchQuery, limit = 10, contextId, created_after, created_before, event_after, event_before }) => {
       const safeLimit = Math.min(Math.max(limit, 1), 25);
       const trimmedQuery = searchQuery.trim();
-      const fts = checkFtsAvailability();
-
-      if (contextId) {
-        const nodes = nodeService.getNodes({
-          search: trimmedQuery,
-          limit: safeLimit,
-          contextId,
-          dimensions: normalizedDimensions,
-        });
-
-        const summary = nodes.length === 0
-          ? 'No matching RA-H nodes found in that context.'
-          : `Found ${nodes.length} node(s) in that context.`;
-
-        return {
-          content: [{ type: 'text', text: summary }],
-          structuredContent: {
-            count: nodes.length,
-            nodes: nodes.map((node) => ({
-              id: node.id,
-              title: node.title,
-              source: node.source ?? null,
-              description: node.description ?? null,
-              link: node.link ?? null,
-              dimensions: node.dimensions || [],
-              updated_at: node.updated_at,
-            })),
-          },
-        };
-      }
-
-      // Build temporal filter clauses
-      const temporalClauses = [];
-      const temporalParams = [];
-      if (created_after) { temporalClauses.push('n.created_at >= ?'); temporalParams.push(created_after); }
-      if (created_before) { temporalClauses.push('n.created_at < ?'); temporalParams.push(created_before); }
-      if (event_after) { temporalClauses.push('n.event_date >= ?'); temporalParams.push(event_after); }
-      if (event_before) { temporalClauses.push('n.event_date < ?'); temporalParams.push(event_before); }
-      const temporalSQL = temporalClauses.length > 0 ? temporalClauses.map(c => `AND ${c}`).join(' ') : '';
-
-      let nodes = null;
-
-      // Try FTS5 first (handles multi-word queries naturally)
-      if (fts.nodes) {
-        const ftsQuery = sanitizeFtsQuery(trimmedQuery);
-        if (ftsQuery) {
-          try {
-            let sql, params;
-
-            if (normalizedDimensions.length > 0) {
-              sql = `
-                WITH fts_matches AS (
-                  SELECT rowid, rank FROM nodes_fts WHERE nodes_fts MATCH ? LIMIT 100
-                )
-                SELECT n.id, n.title, n.description, n.source, n.link,
-                       n.created_at, n.updated_at, n.event_date,
-                       COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                                 FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json
-                FROM fts_matches fm
-                JOIN nodes n ON n.id = fm.rowid
-                WHERE EXISTS (
-                  SELECT 1 FROM node_dimensions nd
-                  WHERE nd.node_id = n.id
-                  AND nd.dimension IN (${normalizedDimensions.map(() => '?').join(',')})
-                )
-                ${temporalSQL}
-                ORDER BY fm.rank
-                LIMIT ?
-              `;
-              params = [ftsQuery, ...normalizedDimensions, ...temporalParams, safeLimit];
-            } else {
-              sql = `
-                WITH fts_matches AS (
-                  SELECT rowid, rank FROM nodes_fts WHERE nodes_fts MATCH ? LIMIT ?
-                )
-                SELECT n.id, n.title, n.description, n.source, n.link,
-                       n.created_at, n.updated_at, n.event_date,
-                       COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                                 FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json
-                FROM fts_matches fm
-                JOIN nodes n ON n.id = fm.rowid
-                ${temporalSQL ? 'WHERE ' + temporalClauses.join(' AND ') : ''}
-                ORDER BY fm.rank
-              `;
-              params = [ftsQuery, safeLimit, ...temporalParams];
-            }
-
-            const rows = query(sql, params);
-            nodes = rows.map(row => ({
-              id: row.id,
-              title: row.title,
-              source: row.source ?? null,
-              description: row.description ?? null,
-              link: row.link ?? null,
-              dimensions: JSON.parse(row.dimensions_json || '[]'),
-              created_at: row.created_at,
-              updated_at: row.updated_at,
-              event_date: row.event_date ?? null
-            }));
-          } catch (err) {
-            log('FTS search failed, falling back to LIKE:', err.message);
-            nodes = null;
-          }
-        }
-      }
-
-      // Fallback: LIKE with word splitting (each word must appear somewhere)
-      if (nodes === null) {
-        const words = trimmedQuery.split(/\s+/).filter(w => w.length > 0);
-
-        let sql = `
-          SELECT n.id, n.title, n.description, n.source, n.link,
-                 n.created_at, n.updated_at, n.event_date,
-                 COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                           FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json
-          FROM nodes n
-          WHERE 1=1
-        `;
-        const params = [];
-
-        for (const word of words) {
-          sql += ` AND (n.title LIKE ? COLLATE NOCASE OR n.description LIKE ? COLLATE NOCASE OR n.source LIKE ? COLLATE NOCASE)`;
-          params.push(`%${word}%`, `%${word}%`, `%${word}%`);
-        }
-
-        if (normalizedDimensions.length > 0) {
-          sql += ` AND EXISTS (
-            SELECT 1 FROM node_dimensions nd
-            WHERE nd.node_id = n.id
-            AND nd.dimension IN (${normalizedDimensions.map(() => '?').join(',')})
-          )`;
-          params.push(...normalizedDimensions);
-        }
-
-        // Temporal filters
-        if (temporalSQL) {
-          sql += ` ${temporalSQL}`;
-          params.push(...temporalParams);
-        }
-
-        sql += ` ORDER BY n.updated_at DESC LIMIT ?`;
-        params.push(safeLimit);
-
-        const rows = query(sql, params);
-        nodes = rows.map(row => ({
-          id: row.id,
-          title: row.title,
-          source: row.source ?? null,
-          description: row.description ?? null,
-          link: row.link ?? null,
-          dimensions: JSON.parse(row.dimensions_json || '[]'),
-          created_at: row.created_at,
-          updated_at: row.updated_at,
-          event_date: row.event_date ?? null
-        }));
-      }
+      const nodes = nodeService.getNodes({
+        search: trimmedQuery,
+        limit: safeLimit,
+        contextId,
+        createdAfter: created_after,
+        createdBefore: created_before,
+        eventAfter: event_after,
+        eventBefore: event_before,
+      });
 
       const summary = nodes.length === 0
         ? 'No nodes found matching that query.'
@@ -565,7 +369,17 @@ async function main() {
         content: [{ type: 'text', text: summary }],
         structuredContent: {
           count: nodes.length,
-          nodes
+          nodes: nodes.map((node) => ({
+            id: node.id,
+            title: node.title,
+            source: node.source ?? null,
+            description: node.description ?? null,
+            link: node.link ?? null,
+            context_id: node.context_id ?? null,
+            created_at: node.created_at,
+            updated_at: node.updated_at,
+            event_date: node.event_date ?? null,
+          }))
         }
       };
     }
@@ -589,8 +403,8 @@ async function main() {
       for (const id of uniqueIds) {
         const node = nodeService.getNodeById(id);
         if (node) {
-          const rawChunk = node.source ?? null;
-          const chunkTruncated = rawChunk ? rawChunk.length > CHUNK_LIMIT : false;
+          const rawSource = node.source ?? null;
+          const sourceTruncated = rawSource ? rawSource.length > CHUNK_LIMIT : false;
 
           nodes.push({
             id: node.id,
@@ -598,10 +412,9 @@ async function main() {
             source: node.source ?? null,
             description: node.description ?? null,
             link: node.link ?? null,
-            chunk: chunkTruncated ? rawChunk.substring(0, CHUNK_LIMIT) : rawChunk,
-            chunk_truncated: chunkTruncated,
-            chunk_length: rawChunk ? rawChunk.length : 0,
-            dimensions: node.dimensions || [],
+            chunk: sourceTruncated ? rawSource.substring(0, CHUNK_LIMIT) : rawSource,
+            chunk_truncated: sourceTruncated,
+            chunk_length: rawSource ? rawSource.length : 0,
             metadata: node.metadata ?? null,
             created_at: node.created_at,
             updated_at: node.updated_at,
@@ -624,37 +437,44 @@ async function main() {
     'updateNode',
     {
       title: 'Update RA-H node',
-      description: 'Update an existing node. Description is REQUIRED on every update and should be natural prose that makes clear what this thing is, why it belongs in the graph, and workflow status. Source content lives in "source". Legacy "content" and "chunk" are mapped to source for compatibility. Dimensions are REPLACED entirely with the new array. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
+      description: 'Update an existing node. Description updates should explicitly state what this thing is and any surrounding context available, but the write will never be blocked over description quality. Source content lives in "source". Legacy "content" is mapped to source for compatibility. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
       inputSchema: updateNodeInputSchema
     },
     async ({ id, updates }) => {
       if (!updates || Object.keys(updates).length === 0) {
         throw new Error('At least one field must be provided in updates.');
       }
-      // Map MCP legacy fields to canonical source
+
+      // Backward compatibility: map legacy content/chunk → source
       const mappedUpdates = { ...updates };
-      if (mappedUpdates.content !== undefined) {
-        mappedUpdates.source = mappedUpdates.content;
-      }
       if (mappedUpdates.chunk !== undefined && mappedUpdates.source === undefined) {
         mappedUpdates.source = mappedUpdates.chunk;
       }
-      delete mappedUpdates.content;
+      if (mappedUpdates.content !== undefined) {
+        mappedUpdates.source = mappedUpdates.content;
+        delete mappedUpdates.content;
+      }
       delete mappedUpdates.chunk;
+
       if (Object.prototype.hasOwnProperty.call(mappedUpdates, 'description')) {
         mappedUpdates.description = typeof mappedUpdates.description === 'string'
           ? mappedUpdates.description.trim()
           : mappedUpdates.description;
       }
 
+      if (Object.prototype.hasOwnProperty.call(mappedUpdates, 'context_id')) {
+        mappedUpdates.context_id = contextService.resolveContextId({ context_id: mappedUpdates.context_id });
+      }
+
       const node = nodeService.updateNode(id, mappedUpdates);
+      const message = `Updated node #${id}`;
 
       return {
-        content: [{ type: 'text', text: `Updated node #${id}` }],
+        content: [{ type: 'text', text: message }],
         structuredContent: {
           success: true,
           nodeId: node.id,
-          message: `Updated node #${id}`
+          message
         }
       };
     }
@@ -738,145 +558,71 @@ async function main() {
     }
   );
 
-  // ========== DIMENSION TOOLS ==========
-
-  registerToolWithAliases(
-    'queryDimensions',
-    {
-      title: 'List RA-H dimensions',
-      description: 'Get all existing canonical dimensions with node counts. Call before creating nodes to assign existing dimensions. Only create a new dimension if the user explicitly instructs you to do so.',
-      inputSchema: listDimensionsInputSchema
-    },
-    async () => {
-      const dimensions = dimensionService.getDimensions();
-
-      return {
-        content: [{ type: 'text', text: `Found ${dimensions.length} dimension(s).` }],
-        structuredContent: {
-          count: dimensions.length,
-          dimensions
-        }
-      };
-    }
-  );
+  // ========== CONTEXT TOOLS ==========
 
   registerToolWithAliases(
     'queryContexts',
     {
-      title: 'Query RA-H contexts',
-      description: 'List contexts, inspect a specific context, or search contexts by name/description.',
+      title: 'List RA-H contexts',
+      description: 'List or inspect contexts, the soft organizational layer for the graph. Use this before assigning or filtering by context.',
       inputSchema: queryContextsInputSchema
     },
     async ({ contextId, name, search, limit = 50, includeNodes = false }) => {
-      const normalizedName = typeof name === 'string' ? name.trim().toLowerCase() : '';
+      const normalizedName = typeof name === 'string' ? name.trim() : '';
+      const normalizedSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
+
       let contexts = [];
 
       if (contextId) {
         const context = contextService.getContextById(contextId);
-        if (context) {
-          contexts = [context];
-        }
-      } else if (normalizedName) {
-        const context = contextService.getContextByName(normalizedName);
-        if (context) {
-          contexts = [context];
-        }
+        contexts = context ? [context] : [];
       } else {
-        const all = contextService.listContexts();
-        contexts = all.filter((context) => {
-          if (search) {
-            const haystack = `${context.name || ''} ${context.description || ''}`.toLowerCase();
-            return haystack.includes(search.trim().toLowerCase());
-          }
-          return true;
-        }).slice(0, Math.min(Math.max(limit, 1), 100));
+        contexts = contextService.listContexts();
       }
 
+      if (normalizedName) {
+        contexts = contexts.filter((context) => context.name.toLowerCase() === normalizedName.toLowerCase());
+      }
+
+      if (normalizedSearch) {
+        contexts = contexts.filter((context) =>
+          context.name.toLowerCase().includes(normalizedSearch) ||
+          (context.description || '').toLowerCase().includes(normalizedSearch)
+        );
+      }
+
+      contexts = contexts.slice(0, Math.min(Math.max(limit, 1), 100));
+
       const includeContextNodes = includeNodes && contexts.length === 1 && (contextId || normalizedName);
-      const enriched = contexts.map((context) => {
-        if (!includeContextNodes) return context;
+      const structuredContexts = contexts.map((context) => {
+        if (!includeContextNodes) {
+          return context;
+        }
+
         const nodes = nodeService.getNodes({ contextId: context.id, limit: 500 });
-        return { ...context, nodes };
+        return {
+          ...context,
+          nodes: nodes.map((node) => ({
+            id: node.id,
+            title: node.title,
+            description: node.description ?? null,
+            link: node.link ?? null,
+            context_id: node.context_id ?? null,
+            updated_at: node.updated_at,
+          })),
+        };
       });
 
-      return {
-        content: [{ type: 'text', text: enriched.length === 0 ? 'No matching contexts found.' : `Found ${enriched.length} context(s).` }],
-        structuredContent: {
-          count: enriched.length,
-          contexts: enriched
-        }
-      };
-    }
-  );
-
-  registerToolWithAliases(
-    'createDimension',
-    {
-      title: 'Create RA-H dimension',
-      description: 'Create a new dimension/category only when the user explicitly instructs you to do so. Use lowercase, singular form (e.g. "biology" not "Biology" or "biologies"). Set isPriority=true to lock it for automatic assignment to new nodes. Always include a description.',
-      inputSchema: createDimensionInputSchema
-    },
-    async ({ name, description, isPriority }) => {
-      const dimension = dimensionService.createDimension({
-        name,
-        description,
-        isPriority
-      });
+      const summary = structuredContexts.length === 0
+        ? 'No contexts found.'
+        : `Found ${structuredContexts.length} context(s).`;
 
       return {
-        content: [{ type: 'text', text: `Created dimension: ${dimension.dimension}` }],
+        content: [{ type: 'text', text: summary }],
         structuredContent: {
-          success: true,
-          dimension: dimension.dimension,
-          message: `Created dimension: ${dimension.dimension}`
-        }
-      };
-    }
-  );
-
-  registerToolWithAliases(
-    'updateDimension',
-    {
-      title: 'Update RA-H dimension',
-      description: 'Update or rename a dimension.',
-      inputSchema: updateDimensionInputSchema
-    },
-    async ({ name, newName, description, isPriority }) => {
-      const result = dimensionService.updateDimension({
-        name,
-        currentName: name,
-        newName,
-        description,
-        isPriority
-      });
-
-      return {
-        content: [{ type: 'text', text: `Updated dimension: ${result.dimension}` }],
-        structuredContent: {
-          success: true,
-          dimension: result.dimension,
-          message: `Updated dimension: ${result.dimension}`
-        }
-      };
-    }
-  );
-
-  registerToolWithAliases(
-    'deleteDimension',
-    {
-      title: 'Delete RA-H dimension',
-      description: 'Delete a dimension and remove it from all nodes. WARNING: This is destructive — the dimension will be removed from ALL nodes that use it. Consider checking node counts with queryDimensions first.',
-      inputSchema: deleteDimensionInputSchema
-    },
-    async ({ name }) => {
-      const result = dimensionService.deleteDimension(name);
-
-      return {
-        content: [{ type: 'text', text: `Deleted dimension: ${name}` }],
-        structuredContent: {
-          success: true,
-          message: `Deleted dimension: ${name}`
-        }
+          count: structuredContexts.length,
+          contexts: structuredContexts,
+        },
       };
     }
   );
@@ -1096,7 +842,7 @@ async function main() {
     'sqliteQuery',
     {
       title: 'Execute read-only SQL',
-      description: 'Execute read-only SQL queries against the knowledge graph database. Tables: nodes, edges, dimensions, node_dimensions, chunks. Use PRAGMA table_info(tablename) for schema. Only SELECT/WITH/PRAGMA allowed. Use when structured tools are insufficient — e.g., complex JOINs, aggregations, or custom filtering. Read readSkill("db-operations") for table definitions and query patterns.',
+      description: 'Execute read-only SQL queries against the knowledge graph database. Tables: nodes, contexts, edges, chunks, and migration snapshots. Use PRAGMA table_info(tablename) for schema. Only SELECT/WITH/PRAGMA allowed. Use when structured tools are insufficient — e.g., complex JOINs, aggregations, or custom filtering. Read readSkill("schema") for table definitions and query patterns.',
       inputSchema: sqliteQueryInputSchema
     },
     async ({ sql: userSql, format = 'json' }) => {

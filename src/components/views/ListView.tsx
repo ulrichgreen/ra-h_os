@@ -3,7 +3,6 @@
 import { Inbox } from 'lucide-react';
 import { Node } from '@/types/database';
 import { getNodeIcon } from '@/utils/nodeIcons';
-import { useDimensionIcons } from '@/context/DimensionIconsContext';
 import { formatRelativeDate } from '@/utils/formatDate';
 import { getNodeProcessedState } from '@/services/nodes/metadata';
 
@@ -13,7 +12,6 @@ interface ListViewProps {
 }
 
 export default function ListView({ nodes, onNodeClick }: ListViewProps) {
-  const { dimensionIcons } = useDimensionIcons();
 
   const truncateContent = (content?: string, maxLength: number = 100) => {
     if (!content) return '';
@@ -97,7 +95,7 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
               borderRadius: '6px',
               flexShrink: 0
             }}>
-              {getNodeIcon(node, dimensionIcons, 16)}
+              {getNodeIcon(node, 16)}
             </div>
 
             {/* Content */}
@@ -148,38 +146,19 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
                 }}>
                   {processedState}
                 </span>
-                {/* Dimensions */}
-                {node.dimensions && node.dimensions.length > 0 && (
-                  <div style={{
-                    display: 'flex',
-                    gap: '4px',
-                    flexWrap: 'wrap'
-                  }}>
-                    {node.dimensions.slice(0, 3).map(dim => (
-                      <span
-                        key={dim}
-                        style={{
-                          padding: '2px 8px',
-                          background: 'var(--rah-bg-active)',
-                          border: '1px solid var(--rah-border-strong)',
-                          borderRadius: '8px',
-                          fontSize: '11px',
-                          color: 'var(--rah-text-base)'
-                        }}
-                      >
-                        {dim}
-                      </span>
-                    ))}
-                    {node.dimensions.length > 3 && (
-                      <span style={{
-                        padding: '2px 6px',
-                        fontSize: '11px',
-                        color: 'var(--rah-text-muted)'
-                      }}>
-                        +{node.dimensions.length - 3}
-                      </span>
-                    )}
-                  </div>
+                {node.context?.name && (
+                  <span
+                    style={{
+                      padding: '2px 8px',
+                      background: 'var(--rah-bg-active)',
+                      border: '1px solid var(--rah-border-strong)',
+                      borderRadius: '8px',
+                      fontSize: '11px',
+                      color: 'var(--rah-text-base)'
+                    }}
+                  >
+                    {node.context.name}
+                  </span>
                 )}
 
                 {/* Date */}

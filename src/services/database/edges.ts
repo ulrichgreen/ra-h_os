@@ -2,11 +2,11 @@ import { getSQLiteClient } from './sqlite-client';
 import { Edge, EdgeContext, EdgeData, EdgeCreatedVia, NodeConnection, Node } from '@/types/database';
 import { eventBroadcaster } from '../events';
 import { nodeService } from './nodes';
-import { getOpenAiKey } from '../storage/apiKeys';
 import { generateText } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
+import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { validateEdgeExplanation } from './quality';
+import { hasValidOpenAiKey } from '../storage/apiKeys';
 
 const inferredEdgeContextSchema = z.object({
   type: z.enum(['created_by', 'part_of', 'source_of', 'related_to']),
@@ -53,14 +53,6 @@ async function inferEdgeContext(params: {
     return { type: 'related_to', confidence: 0.8, swap_direction: false };
   }
 
-  // If no API key is configured, degrade gracefully.
-  // We still enforce explanation, but fall back to "related_to" classification.
-  const apiKey = getOpenAiKey();
-  if (!apiKey) {
-    return { type: 'related_to', confidence: 0.0, swap_direction: false };
-  }
-
-  const provider = createOpenAI({ apiKey });
   const prompt = [
     `Given two nodes and an explanation, determine the relationship type and direction.`,
     ``,
@@ -83,8 +75,12 @@ async function inferEdgeContext(params: {
   ].join('\n');
 
   try {
+    if (!hasValidOpenAiKey()) {
+      return { type: 'related_to', confidence: 0.2, swap_direction: false };
+    }
+
     const { text } = await generateText({
-      model: provider('gpt-4o-mini'),
+      model: openai('gpt-4o-mini'),
       prompt,
       temperature: 0.0,
       maxOutputTokens: 120,
@@ -120,18 +116,6 @@ async function autoInferEdge(params: {
 }): Promise<{ explanation: string; type: EdgeContext['type']; confidence: number; swap_direction: boolean }> {
   const { fromNode, toNode } = params;
 
-  const apiKey = getOpenAiKey();
-  if (!apiKey) {
-    // Fallback without AI
-    return {
-      explanation: `Connection to ${toNode.title}; exact relationship uncertain.`,
-      type: 'related_to',
-      confidence: 0.0,
-      swap_direction: false,
-    };
-  }
-
-  const provider = createOpenAI({ apiKey });
   const prompt = [
     `Given two knowledge base nodes, determine how they are related.`,
     ``,
@@ -157,8 +141,17 @@ async function autoInferEdge(params: {
   ].join('\n');
 
   try {
+    if (!hasValidOpenAiKey()) {
+      return {
+        explanation: `Connection to ${toNode.title}; exact relationship uncertain.`,
+        type: 'related_to',
+        confidence: 0.2,
+        swap_direction: false,
+      };
+    }
+
     const { text } = await generateText({
-      model: provider('gpt-4o-mini'),
+      model: openai('gpt-4o-mini'),
       prompt,
       temperature: 0.0,
       maxOutputTokens: 150,
@@ -477,15 +470,14 @@ export class EdgeService {
           WHEN e.from_node_id = ? THEN n_to.title
           ELSE n_from.title
         END as connected_node_title,
-        CASE
-          WHEN e.from_node_id = ? THEN n_to.link
+        CASE WHEN e.from_node_id = ? THEN n_to.link
           ELSE n_from.link
         END as connected_node_link,
         CASE 
           WHEN e.from_node_id = ? THEN n_to.source
           ELSE n_from.source
         END as connected_node_source,
-        CASE 
+        CASE
           WHEN e.from_node_id = ? THEN n_to.metadata
           ELSE n_from.metadata
         END as connected_node_metadata,
@@ -496,24 +488,13 @@ export class EdgeService {
         CASE 
           WHEN e.from_node_id = ? THEN n_to.updated_at
           ELSE n_from.updated_at
-        END as connected_node_updated_at,
-        CASE 
-          WHEN e.from_node_id = ? THEN (
-            SELECT JSON_GROUP_ARRAY(d.dimension) 
-            FROM node_dimensions d WHERE d.node_id = n_to.id
-          )
-          ELSE (
-            SELECT JSON_GROUP_ARRAY(d.dimension) 
-            FROM node_dimensions d WHERE d.node_id = n_from.id
-          )
-        END as connected_node_dimensions_json
+        END as connected_node_updated_at
       FROM edges e
       LEFT JOIN nodes n_from ON e.from_node_id = n_from.id
       LEFT JOIN nodes n_to ON e.to_node_id = n_to.id
       WHERE e.from_node_id = ? OR e.to_node_id = ?
       ORDER BY e.created_at DESC
     `, [
-      nodeId,
       nodeId,
       nodeId,
       nodeId,
@@ -543,7 +524,6 @@ export class EdgeService {
         id: row.connected_node_id,
         title: row.connected_node_title,
         link: row.connected_node_link,
-        dimensions: row.connected_node_dimensions,
         embedding: undefined, // Not needed for display
         source: row.connected_node_source,
         metadata: row.connected_node_metadata,
@@ -587,7 +567,6 @@ export class EdgeService {
         id: row.connected_node_id,
         title: row.connected_node_title,
         link: row.connected_node_link,
-        dimensions: JSON.parse(row.connected_node_dimensions_json || '[]'),
         embedding: undefined, // Not needed for display
         source: row.connected_node_source,
         metadata: typeof row.connected_node_metadata === 'string' ? JSON.parse(row.connected_node_metadata) : row.connected_node_metadata,

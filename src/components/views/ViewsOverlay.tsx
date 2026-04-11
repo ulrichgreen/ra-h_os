@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Filter, ChevronDown, X, ArrowUpDown, GripVertical, Inbox, Check } from 'lucide-react';
 import type { ContextSummary, Node } from '@/types/database';
 import { getNodeIcon } from '@/utils/nodeIcons';
-import { useDimensionIcons } from '@/context/DimensionIconsContext';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import type { PendingNode } from '@/components/layout/ThreePanelLayout';
 import { getNodeProcessedState } from '@/services/nodes/metadata';
@@ -24,41 +23,6 @@ const SORT_LABELS: Record<SortOrder, string> = {
 
 const DOCUMENT_MAX_WIDTH = '980px';
 
-const pickerRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  width: '100%',
-  padding: '7px 10px',
-  background: 'transparent',
-  border: 'none',
-  borderRadius: '5px',
-  color: 'var(--rah-text-secondary)',
-  fontSize: '12px',
-  cursor: 'pointer',
-  textAlign: 'left',
-};
-
-const pickerCountStyle: React.CSSProperties = {
-  color: 'var(--rah-text-muted)',
-  fontSize: '10px',
-  background: 'var(--rah-bg-active)',
-  padding: '1px 6px',
-  borderRadius: '10px',
-};
-
-interface ColumnFilter {
-  id: string;
-  dimension: string;
-}
-
-interface DimensionSummary {
-  dimension: string;
-  count: number;
-  isPriority: boolean;
-  description?: string | null;
-}
-
 interface ViewsOverlayProps {
   onNodeClick: (nodeId: number) => void;
   onNodeOpenInOtherPane?: (nodeId: number) => void;
@@ -66,10 +30,8 @@ interface ViewsOverlayProps {
   pendingNodes?: PendingNode[];
   onDismissPending?: (id: string) => void;
   externalContextFilterId?: number | null;
-  externalDimensionFilter?: string | null;
   onContextFilterSelect?: (contextId: number | null, contextName?: string | null) => void;
   onClearExternalContextFilter?: () => void;
-  onClearExternalDimensionFilter?: () => void;
   toolbarHost?: HTMLDivElement | null;
 }
 
@@ -225,6 +187,29 @@ function SkeletonCard() {
   );
 }
 
+const pickerRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  width: '100%',
+  padding: '7px 10px',
+  background: 'transparent',
+  border: 'none',
+  borderRadius: '5px',
+  color: 'var(--rah-text-secondary)',
+  fontSize: '12px',
+  cursor: 'pointer',
+  textAlign: 'left',
+};
+
+const pickerCountStyle: React.CSSProperties = {
+  color: 'var(--rah-text-muted)',
+  fontSize: '10px',
+  background: 'var(--rah-bg-active)',
+  padding: '1px 6px',
+  borderRadius: '10px',
+};
+
 export default function ViewsOverlay({
   onNodeClick,
   onNodeOpenInOtherPane,
@@ -232,17 +217,11 @@ export default function ViewsOverlay({
   pendingNodes,
   onDismissPending,
   externalContextFilterId = null,
-  externalDimensionFilter = null,
   onContextFilterSelect,
   onClearExternalContextFilter,
-  onClearExternalDimensionFilter,
   toolbarHost,
 }: ViewsOverlayProps) {
-  const { dimensionIcons } = useDimensionIcons();
 
-  // Dimensions for filter picker
-  const [dimensions, setDimensions] = useState<DimensionSummary[]>([]);
-  const [dimensionsLoading, setDimensionsLoading] = useState(true);
   const [contexts, setContexts] = useState<ContextSummary[]>([]);
   const [contextsLoading, setContextsLoading] = useState(true);
 
@@ -256,13 +235,8 @@ export default function ViewsOverlay({
   const [reorderDragIndex, setReorderDragIndex] = useState<number | null>(null);
   const [reorderDropIndex, setReorderDropIndex] = useState<number | null>(null);
 
-  // Filter system state
-  const [columns, setColumns] = useState<ColumnFilter[]>([]);
   const [filteredNodes, setFilteredNodes] = useState<Node[]>([]);
   const [filteredNodesLoading, setFilteredNodesLoading] = useState(false);
-  const [showFilterPicker, setShowFilterPicker] = useState(false);
-  const [showDimensionPicker, setShowDimensionPicker] = useState(false);
-  const [filterSearchQuery, setFilterSearchQuery] = useState('');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
   const processedFilter: ProcessedFilter = sortOrder === 'processed'
@@ -270,41 +244,6 @@ export default function ViewsOverlay({
     : sortOrder === 'not_processed'
       ? 'not_processed'
       : 'all';
-
-  // Derive selectedFilters for backward compatibility (unique dimensions)
-  const selectedFilters = useMemo(() => {
-    if (externalDimensionFilter) {
-      return [externalDimensionFilter];
-    }
-
-    return [...new Set(columns.map(c => c.dimension))];
-  }, [columns, externalDimensionFilter]);
-
-  // Sorted dimensions (locked first)
-  const sortedDimensions = useMemo(() => {
-    return [...dimensions].sort((a, b) => {
-      if (a.isPriority && !b.isPriority) return -1;
-      if (!a.isPriority && b.isPriority) return 1;
-      return a.dimension.localeCompare(b.dimension);
-    });
-  }, [dimensions]);
-
-  // Fetch functions
-  const fetchDimensions = useCallback(async () => {
-    setDimensionsLoading(true);
-    try {
-      const response = await fetch('/api/dimensions');
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to fetch dimensions');
-      }
-      setDimensions(data.data || []);
-    } catch (error) {
-      console.error('Error fetching dimensions:', error);
-    } finally {
-      setDimensionsLoading(false);
-    }
-  }, []);
 
   const fetchContexts = useCallback(async () => {
     setContextsLoading(true);
@@ -364,135 +303,35 @@ export default function ViewsOverlay({
     }
   }, [sortOrder, customOrder, applyProcessedFilter, externalContextFilterId]);
 
-  const fetchFilteredNodes = useCallback(async (filters: string[]) => {
-    if (filters.length === 0) {
-      fetchAllNodes();
-      return;
-    }
-    setFilteredNodesLoading(true);
-    try {
-      const apiSort = sortOrder === 'custom' || sortOrder === 'processed' || sortOrder === 'not_processed'
-        ? 'updated'
-        : sortOrder;
-      const response = await fetch(`/api/nodes?limit=500&sortBy=${apiSort}&dimensions=${encodeURIComponent(filters.join(','))}&dimensionsMatch=all${externalContextFilterId ? `&contextId=${externalContextFilterId}` : ''}`);
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to fetch nodes');
-      }
-      const nodes: Node[] = data.data || [];
-      if (sortOrder === 'custom' && customOrder.length > 0) {
-        const orderMap = new Map(customOrder.map((id, idx) => [id, idx]));
-        const ordered: Node[] = [];
-        const unordered: Node[] = [];
-        for (const node of nodes) {
-          if (orderMap.has(node.id)) {
-            ordered.push(node);
-          } else {
-            unordered.push(node);
-          }
-        }
-        ordered.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
-        setFilteredNodes(applyProcessedFilter([...ordered, ...unordered]));
-      } else {
-        setFilteredNodes(applyProcessedFilter(nodes));
-      }
-    } catch (error) {
-      console.error('Error fetching filtered nodes:', error);
-    } finally {
-      setFilteredNodesLoading(false);
-    }
-  }, [fetchAllNodes, sortOrder, customOrder, applyProcessedFilter, externalContextFilterId]);
-
-  // Stringify filters for stable dependency
-  const filtersKey = selectedFilters.join(',');
-
-  // Fetch dimensions on mount
-  useEffect(() => {
-    fetchDimensions();
-  }, [fetchDimensions]);
-
+  // Fetch contexts on mount
   useEffect(() => {
     fetchContexts();
   }, [fetchContexts]);
 
-  // Fetch nodes on mount and when filters/sort/refreshToken change
+  // Fetch nodes on mount and when sort/refreshToken/context filter change
   useEffect(() => {
     if (refreshToken > 0) {
       console.log('🔄 Feed refreshing due to SSE event (refreshToken:', refreshToken, ')');
     }
-    if (selectedFilters.length > 0) {
-      fetchFilteredNodes(selectedFilters);
-    } else {
-      fetchAllNodes();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey, sortOrder, refreshToken, externalContextFilterId]);
+    fetchAllNodes();
+  }, [fetchAllNodes, refreshToken, sortOrder, externalContextFilterId]);
 
-  // Also refresh dimensions when data changes (for filter picker counts)
+  // Refresh contexts when data changes
   useEffect(() => {
     if (refreshToken > 0) {
-      fetchDimensions();
       fetchContexts();
     }
-  }, [refreshToken, fetchDimensions, fetchContexts]);
-
-  // Column management
-  const addColumn = (dimension: string) => {
-    if (externalDimensionFilter) {
-      return;
-    }
-
-    const newColumn: ColumnFilter = {
-      id: `col-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      dimension
-    };
-    setColumns([...columns, newColumn]);
-    setShowFilterPicker(false);
-    setFilterSearchQuery('');
-  };
-
-  const removeFilter = (dimension: string) => {
-    if (externalDimensionFilter && dimension === externalDimensionFilter) {
-      onClearExternalDimensionFilter?.();
-      return;
-    }
-
-    const idx = columns.findIndex(c => c.dimension === dimension);
-    if (idx !== -1) {
-      setColumns(columns.filter((_, i) => i !== idx));
-    }
-  };
-
-  const clearFilters = () => {
-    if (externalContextFilterId) {
-      onClearExternalContextFilter?.();
-    }
-
-    if (externalDimensionFilter) {
-      onClearExternalDimensionFilter?.();
-    }
-
-    setColumns([]);
-  };
-
-  // Filter dimensions for picker
-  const filterPickerDimensions = sortedDimensions.filter(d =>
-    d.dimension.toLowerCase().includes(filterSearchQuery.toLowerCase())
-  );
+  }, [refreshToken, fetchContexts]);
 
   // Close dropdowns on outside click
-  const filterPickerRef = useRef<HTMLDivElement>(null);
-  const dimensionPickerRef = useRef<HTMLDivElement>(null);
+  const contextPickerRef = useRef<HTMLDivElement>(null);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
+  const [showContextPicker, setShowContextPicker] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (showFilterPicker && filterPickerRef.current && !filterPickerRef.current.contains(e.target as HTMLElement)) {
-        setShowFilterPicker(false);
-        setFilterSearchQuery('');
-      }
-      if (showDimensionPicker && dimensionPickerRef.current && !dimensionPickerRef.current.contains(e.target as HTMLElement)) {
-        setShowDimensionPicker(false);
+      if (showContextPicker && contextPickerRef.current && !contextPickerRef.current.contains(e.target as HTMLElement)) {
+        setShowContextPicker(false);
       }
       if (showSortDropdown && sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as HTMLElement)) {
         setShowSortDropdown(false);
@@ -500,7 +339,7 @@ export default function ViewsOverlay({
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showDimensionPicker, showFilterPicker, showSortDropdown]);
+  }, [showContextPicker, showSortDropdown]);
 
   // Reorder handlers
   const handleReorderDrop = useCallback((dropIdx: number) => {
@@ -557,17 +396,13 @@ export default function ViewsOverlay({
       }
     } catch (error) {
       console.error('Error updating processed state from feed:', error);
-      if (selectedFilters.length > 0) {
-        void fetchFilteredNodes(selectedFilters);
-      } else {
-        void fetchAllNodes();
-      }
+      void fetchAllNodes();
     }
-  }, [fetchAllNodes, fetchFilteredNodes, selectedFilters]);
+  }, [fetchAllNodes]);
 
   // Render node card
   const renderNodeCard = (node: Node, index: number) => {
-    const nodeIcon = getNodeIcon(node, dimensionIcons, 14);
+    const nodeIcon = getNodeIcon(node, 14);
     const isCustomSort = sortOrder === 'custom';
     const isDragSource = reorderDragIndex === index;
     const isDropTarget = reorderDropIndex === index;
@@ -587,7 +422,7 @@ export default function ViewsOverlay({
         onDragStart={(e) => {
           const title = node.title || 'Untitled';
           e.dataTransfer.setData('application/x-rah-node', JSON.stringify({ id: node.id, title }));
-          e.dataTransfer.setData('application/node-info', JSON.stringify({ id: node.id, title, dimensions: node.dimensions || [] }));
+          e.dataTransfer.setData('application/node-info', JSON.stringify({ id: node.id, title }));
           e.dataTransfer.setData('text/plain', `[NODE:${node.id}:"${title}"]`);
         }}
         onDragOver={(e) => {
@@ -636,8 +471,7 @@ export default function ViewsOverlay({
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
-          {/* Grip handle — only in custom sort mode */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', minWidth: 0 }}>
             {isCustomSort && (
               <div
                 draggable
@@ -695,137 +529,112 @@ export default function ViewsOverlay({
             </button>
             <div style={{
               display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
+              flexDirection: 'column',
+              gap: '4px',
               minWidth: 0,
               flex: 1,
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                 <span style={{
                   fontSize: '13px',
-                  fontWeight: 500,
+                  fontWeight: 600,
                   color: 'var(--rah-text-active)',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
-                  flex: 1,
                   minWidth: 0,
+                  flex: 1,
                 }}>
                   {node.title || 'Untitled'}
                 </span>
                 {node.context?.name ? (
-                  <span style={{
-                    fontSize: '10px',
-                    lineHeight: 1.2,
-                    padding: '3px 7px',
-                    borderRadius: '999px',
-                    background: 'rgba(34, 197, 94, 0.08)',
-                    border: '1px solid rgba(34, 197, 94, 0.18)',
-                    color: 'var(--rah-accent-green)',
-                    flexShrink: 0,
-                    maxWidth: '40%',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}>
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                      color: 'var(--rah-accent-green)',
+                      background: 'color-mix(in srgb, var(--rah-accent-green) 12%, var(--rah-bg-panel))',
+                      border: '1px solid color-mix(in srgb, var(--rah-accent-green) 32%, var(--rah-border))',
+                      padding: '3px 7px',
+                      borderRadius: '999px',
+                      lineHeight: 1.2,
+                      flexShrink: 0,
+                    }}
+                  >
                     {node.context.name}
                   </span>
                 ) : null}
               </div>
-              <div style={{
-                width: '20px',
-                height: '20px',
-                borderRadius: '6px',
-                background: 'var(--rah-bg-panel)',
-                border: '1px solid var(--rah-border)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0
-              }}>
-                {nodeIcon}
-              </div>
-              <span style={{
-                fontSize: '10px',
-                color: 'var(--rah-text-muted)',
-                background: 'var(--rah-bg-panel)',
-                padding: '2px 6px',
-                borderRadius: '999px',
-                fontFamily: 'monospace',
-                flexShrink: 0,
-                lineHeight: 1.2,
-              }}>
-                #{node.id}
-              </span>
-              {node.edge_count != null && node.edge_count > 0 && (
-                <span style={{
-                  minWidth: '18px',
-                  height: '18px',
-                  padding: '0 5px',
-                  borderRadius: '999px',
-                  background: 'var(--rah-accent-green-soft)',
-                  border: '1px solid var(--rah-accent-green-soft-strong)',
-                  color: 'var(--rah-accent-green)',
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                <div style={{
+                  fontSize: '12px',
+                  color: 'var(--rah-text-muted)',
+                  lineHeight: '1.35',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flex: 1,
+                  minWidth: 0,
+                }}>
+                  {descPreview || 'No description'}
+                </div>
+                <div style={{
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
+                  gap: '6px',
+                  minWidth: 0,
+                  overflow: 'hidden',
                   flexShrink: 0,
-                  fontSize: '11px',
-                  fontWeight: 600,
                 }}>
-                  {node.edge_count}
-                </span>
-              )}
-            </div>
-          </div>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            minWidth: 0,
-          }}>
-            <div style={{
-              fontSize: '12px',
-              color: 'var(--rah-text-muted)',
-              lineHeight: '1.35',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              flex: 1,
-              minWidth: 0,
-            }}>
-              {descPreview || 'No description'}
-            </div>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '3px',
-              minWidth: 0,
-              maxWidth: '46%',
-              overflow: 'hidden',
-              flexShrink: 1,
-              whiteSpace: 'nowrap',
-            }}>
-              {node.dimensions && node.dimensions.length > 0 ? (
-                <>
-                  {node.dimensions.map(d => (
-                    <span
-                      key={d}
-                      style={{
-                        fontSize: '10px',
-                        padding: '2px 7px',
-                        background: 'var(--rah-bg-active)',
-                        border: '1px solid var(--rah-border-strong)',
-                        color: 'var(--rah-text-base)',
-                        borderRadius: '999px',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {d}
+                  <div style={{
+                    width: '20px',
+                    height: '20px',
+                    borderRadius: '6px',
+                    background: 'var(--rah-bg-panel)',
+                    border: '1px solid var(--rah-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    {nodeIcon}
+                  </div>
+                  <span style={{
+                    fontSize: '10px',
+                    color: 'var(--rah-text-muted)',
+                    background: 'var(--rah-bg-panel)',
+                    padding: '2px 6px',
+                    borderRadius: '999px',
+                    fontFamily: 'monospace',
+                    flexShrink: 0,
+                    lineHeight: 1.2,
+                  }}>
+                    #{node.id}
+                  </span>
+                  {node.edge_count != null && node.edge_count > 0 ? (
+                    <span style={{
+                      minWidth: '18px',
+                      height: '18px',
+                      padding: '0 5px',
+                      borderRadius: '999px',
+                      background: 'var(--rah-accent-green-soft)',
+                      border: '1px solid var(--rah-accent-green-soft-strong)',
+                      color: 'var(--rah-accent-green)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      fontSize: '11px',
+                      fontWeight: 600,
+                    }}>
+                      {node.edge_count}
                     </span>
-                  ))}
-                </>
-              ) : null}
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -843,87 +652,6 @@ export default function ViewsOverlay({
         flexWrap: 'wrap'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: 1 }}>
-          <div style={{ position: 'relative' }} ref={filterPickerRef}>
-            <button
-              onClick={() => setShowFilterPicker(!showFilterPicker)}
-              title="Context"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                padding: '4px 8px',
-                background: 'transparent',
-                border: '1px solid var(--rah-border)',
-                borderRadius: '5px',
-                color: 'var(--rah-text-soft)',
-                fontSize: '11px',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <Filter size={11} />
-              {externalContextFilterId
-                ? (contexts.find((context) => context.id === externalContextFilterId)?.name || 'Context')
-                : 'Context'}
-              <ChevronDown size={10} />
-            </button>
-
-            {showFilterPicker && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                marginTop: '4px',
-                background: 'var(--rah-bg-panel)',
-                border: '1px solid var(--rah-border)',
-                borderRadius: '10px',
-                padding: '6px',
-                minWidth: '220px',
-                maxHeight: '320px',
-                overflowY: 'auto',
-                zIndex: 1000,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.4)'
-              }}>
-                {contextsLoading ? (
-                  <div style={{ padding: '12px', color: 'var(--rah-text-muted)', fontSize: '12px', textAlign: 'center' }}>
-                    Loading contexts...
-                  </div>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => {
-                        onContextFilterSelect?.(null, null);
-                        setShowFilterPicker(false);
-                      }}
-                      style={pickerRowStyle}
-                    >
-                      <span>All contexts</span>
-                    </button>
-                    {contexts.map((context) => (
-                      <button
-                        key={context.id}
-                        onClick={() => {
-                          onContextFilterSelect?.(context.id, context.name);
-                          setShowFilterPicker(false);
-                        }}
-                        style={{
-                          ...pickerRowStyle,
-                          background: externalContextFilterId === context.id ? 'rgba(255,255,255,0.04)' : 'transparent',
-                          color: externalContextFilterId === context.id ? 'var(--rah-text-active)' : 'var(--rah-text-secondary)',
-                        }}
-                      >
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '8px' }}>
-                          {context.name}
-                        </span>
-                        <span style={pickerCountStyle}>{context.count}</span>
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
           {externalContextFilterId ? (
             <div
               style={{
@@ -938,7 +666,7 @@ export default function ViewsOverlay({
                 color: '#5a9'
               }}
             >
-              {contexts.find((context) => context.id === externalContextFilterId)?.name || 'Context'}
+              {contexts.find((context) => context.id === externalContextFilterId)?.name ?? 'Context'}
               <button
                 onClick={() => onClearExternalContextFilter?.()}
                 style={{
@@ -956,53 +684,16 @@ export default function ViewsOverlay({
             </div>
           ) : null}
 
-          {selectedFilters.map(filter => (
-            <div
-              key={filter}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '3px 8px',
-                background: 'rgba(34, 197, 94, 0.06)',
-                border: '1px solid rgba(34, 197, 94, 0.12)',
-                borderRadius: '5px',
-                fontSize: '11px',
-                color: '#5a9'
-              }}
-            >
-              {filter}
-              <button
-                onClick={() => removeFilter(filter)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#5a9',
-                  cursor: 'pointer',
-                  padding: '0',
-                  display: 'flex',
-                  alignItems: 'center'
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = '#5a9'; }}
-              >
-                <X size={11} />
-              </button>
-            </div>
-          ))}
-
-          <div style={{ position: 'relative' }} ref={dimensionPickerRef}>
+          <div style={{ position: 'relative' }} ref={contextPickerRef}>
             <button
-              onClick={() => {
-                setShowDimensionPicker(!showDimensionPicker);
-              }}
-              title="Dimensions"
+              onClick={() => setShowContextPicker(!showContextPicker)}
+              title="Context filter"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px',
                 padding: '4px 8px',
-                background: 'transparent',
+                background: externalContextFilterId ? 'rgba(34, 197, 94, 0.06)' : 'transparent',
                 border: '1px solid var(--rah-border)',
                 borderRadius: '5px',
                 color: 'var(--rah-text-soft)',
@@ -1010,21 +701,12 @@ export default function ViewsOverlay({
                 cursor: 'pointer',
                 transition: 'all 0.15s ease'
               }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderColor = 'var(--rah-border)';
-              }}
             >
               <Filter size={11} />
-              Dimension
-              <ChevronDown size={10} />
+              Context
             </button>
 
-            {showDimensionPicker && (
+            {showContextPicker && (
               <div style={{
                 position: 'absolute',
                 top: '100%',
@@ -1040,70 +722,36 @@ export default function ViewsOverlay({
                 zIndex: 1000,
                 boxShadow: '0 8px 24px rgba(0,0,0,0.4)'
               }}>
-                <input
-                  type="text"
-                  value={filterSearchQuery}
-                  onChange={(e) => setFilterSearchQuery(e.target.value)}
-                  placeholder="Search dimensions..."
-                  autoFocus
-                  style={{
-                    width: '100%',
-                    padding: '7px 10px',
-                    background: 'var(--rah-bg-base)',
-                    border: '1px solid transparent',
-                    borderRadius: '6px',
-                    color: 'var(--rah-text-active)',
-                    fontSize: '12px',
-                    marginBottom: '4px',
-                    outline: 'none',
+                <button
+                  onClick={() => {
+                    onClearExternalContextFilter?.();
+                    setShowContextPicker(false);
                   }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--rah-border-strong)'; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = 'transparent'; }}
-                />
-                {dimensionsLoading ? (
+                  style={pickerRowStyle}
+                >
+                  All contexts
+                </button>
+                {contextsLoading ? (
                   <div style={{ padding: '12px', color: 'var(--rah-text-muted)', fontSize: '12px', textAlign: 'center' }}>
-                    Loading dimensions...
+                    Loading contexts...
                   </div>
-                ) : filterPickerDimensions.length === 0 ? (
-                  <div style={{ padding: '12px', color: 'var(--rah-text-muted)', fontSize: '12px', textAlign: 'center' }}>
-                    {filterSearchQuery ? 'No matching dimensions' : 'No dimensions available'}
-                  </div>
-                ) : (
-                  filterPickerDimensions.map(d => (
-                    <button
-                      key={d.dimension}
-                      onClick={() => addColumn(d.dimension)}
-                      style={pickerRowStyle}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                    >
-                      <span>{d.dimension}</span>
-                      <span style={pickerCountStyle}>{d.count}</span>
-                    </button>
-                  ))
-                )}
+                ) : contexts.map((context) => (
+                  <button
+                    key={context.id}
+                    onClick={() => {
+                      onContextFilterSelect?.(context.id, context.name);
+                      setShowContextPicker(false);
+                    }}
+                    style={pickerRowStyle}
+                  >
+                    <span>{context.name}</span>
+                    <span style={pickerCountStyle}>{context.count}</span>
+                  </button>
+              ))}
               </div>
             )}
           </div>
         </div>
-
-        {(selectedFilters.length > 0 || externalContextFilterId) && (
-          <button
-            onClick={clearFilters}
-            style={{
-              padding: '4px 8px',
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--rah-text-muted)',
-              fontSize: '11px',
-              cursor: 'pointer'
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--rah-text-muted)'; }}
-          >
-            Clear all
-          </button>
-        )}
 
         {/* Sort dropdown */}
         <div style={{ position: 'relative' }} ref={sortDropdownRef}>
@@ -1234,10 +882,10 @@ export default function ViewsOverlay({
           <div style={{ width: '100%', maxWidth: DOCUMENT_MAX_WIDTH, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <Inbox size={28} strokeWidth={1.5} style={{ opacity: 0.4 }} />
             <span style={{ fontSize: '14px', color: 'var(--rah-text-secondary)' }}>
-              {selectedFilters.length > 0 ? 'Nothing matches these filters' : 'Nothing here yet'}
+              Nothing here yet
             </span>
             <span style={{ fontSize: '12px', opacity: 0.7 }}>
-              {selectedFilters.length > 0 ? 'Try adjusting your filters, or add a node with ⌘N' : 'Add a node with ⌘N to get started'}
+              Add a node with ⌘N to get started
             </span>
           </div>
         </div>

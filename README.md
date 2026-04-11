@@ -58,7 +58,7 @@ Open [localhost:3000](http://localhost:3000). Done.
 
 With a key, you get:
 - Auto-generated descriptions when you add nodes
-- Automatic dimension/tag assignment
+- Automatic node descriptions
 - Semantic search (find similar content, not just keyword matches)
 
 **Cost:** Less than $0.10/day for heavy use. Most users spend $1-2/month.
@@ -115,13 +115,13 @@ Restart Claude Code fully (**Cmd+Q on Mac**, not just closing the window).
 }
 ```
 
-**What happens:** Once connected, Claude calls `getContext` first to orient itself (stats, contexts, hub nodes, dimensions, available skills). It proactively captures knowledge — when a new insight, decision, person, or reference surfaces, it proposes a specific node (title, dimensions, description) so you can approve with minimal friction. For complex tasks it reads skills to follow your graph conventions and workflows.
+**What happens:** Once connected, Claude calls `getContext` first to orient itself (stats, contexts, hub nodes, available skills). It proactively captures knowledge. When a new insight, decision, person, or reference surfaces, it should propose a specific node with a strong title, description, source, and metadata. Context is optional and should only be set when the primary scope is obvious.
 
 Available tools:
 
 | Tool | What it does |
 |------|--------------|
-| `getContext` | Get graph overview — stats, contexts, hub nodes, dimensions, recent activity |
+| `getContext` | Get graph overview — stats, contexts, hub nodes, recent activity |
 | `queryContexts` | List contexts, inspect a context, or search contexts |
 | `queryNodes` | Find nodes by keyword |
 | `createNode` | Create a new node |
@@ -130,10 +130,6 @@ Available tools:
 | `createEdge` | Link two nodes together |
 | `updateEdge` | Update an edge explanation |
 | `queryEdge` | Find connections |
-| `queryDimensions` | List all tags/categories |
-| `createDimension` | Create a new dimension |
-| `updateDimension` | Update/rename a dimension |
-| `deleteDimension` | Delete a dimension |
 | `listSkills` | List available skills |
 | `readSkill` | Read a skill by name |
 | `writeSkill` | Create or update a custom skill |
@@ -145,7 +141,7 @@ Available tools:
 - "What's in my knowledge graph?"
 - "Search my knowledge base for notes about React performance"
 - "Add a node about the article I just read on transformers"
-- "What nodes are connected to my 'research' dimension?"
+- "Show me the nodes connected to my research context"
 
 ---
 

@@ -13,7 +13,7 @@ scripts/
 │   ├── duplicate-helper.js  # Create new helpers
 │   └── delete-helper.js     # Remove helpers
 └── migrations/        # Completed one-time migrations
-    └── cleanup-dimensions.sql
+    └── (historical migration artifacts)
 ```
 
 ## Database Scripts
@@ -24,7 +24,7 @@ npm run backup
 ```
 - Creates timestamped backup in `/backups/` folder
 - Example: `rah_backup_20250902_102846.sql`
-- Includes all nodes, chunks, edges, dimensions
+- Includes all nodes, chunks, edges, contexts, and migration snapshots
 
 ### Restore from Backup
 ```bash
@@ -59,7 +59,7 @@ node scripts/helpers/delete-helper.js "helper-id"
 - All nodes (42,000+ knowledge items)
 - Content chunks and embeddings
 - Node connections/edges
-- Dimensions and metadata
+- Contexts, metadata, and migration snapshots
 - Database schema and indexes
 
 ## Notes

@@ -13,7 +13,6 @@ interface NodeSearchModalProps {
 interface NodeSuggestion {
   id: number;
   title: string;
-  dimensions?: string[];
 }
 
 export default function NodeSearchModal({
@@ -96,7 +95,6 @@ export default function NodeSearchModal({
             .map((node) => ({
               id: node.id,
               title: node.title,
-              dimensions: node.dimensions || [],
             }));
           setSuggestions(nextSuggestions);
           setSelectedIndex(0);
@@ -258,17 +256,6 @@ export default function NodeSearchModal({
                   <div style={{ color: '#e0e0e0', fontSize: '13px', marginBottom: '2px' }}>
                     {suggestion.title}
                   </div>
-                  {suggestion.dimensions && suggestion.dimensions.length > 0 && (
-                    <div style={{
-                      color: '#666',
-                      fontSize: '11px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {suggestion.dimensions.join(' · ')}
-                    </div>
-                  )}
                 </div>
                 <span style={{ color: '#444', fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>
                   #{suggestion.id}

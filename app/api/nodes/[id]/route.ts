@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { contextService, nodeService } from '@/services/database';
 import { autoEmbedQueue } from '@/services/embedding/autoEmbedQueue';
 import { hasSufficientContent } from '@/services/embedding/constants';
-import { coerceDescriptionForStorage, normalizeDimensions } from '@/services/database/quality';
-import { formatUnknownDimensionsError, getUnknownDimensions } from '@/services/database/dimensionValidation';
+import { coerceDescriptionForStorage } from '@/services/database/quality';
 import { normalizeNodeLink } from '@/utils/nodeLink';
 import { mergeNodeMetadata } from '@/services/nodes/metadata';
 
@@ -94,36 +93,32 @@ export async function PUT(
       });
     }
 
-    if (Array.isArray(body.dimensions)) {
-      updates.dimensions = normalizeDimensions(body.dimensions, 5);
-      const unknownDimensions = getUnknownDimensions(updates.dimensions as string[]);
-      if (unknownDimensions.length > 0) {
-        return NextResponse.json({
-          success: false,
-          error: formatUnknownDimensionsError(unknownDimensions)
-        }, { status: 400 });
-      }
-    }
-
     delete updates.notes;
     delete updates.chunk;
 
-    if (Object.prototype.hasOwnProperty.call(body, 'context_id') || Object.prototype.hasOwnProperty.call(body, 'context_name')) {
+    if (body.metadata !== undefined) {
+      updates.metadata = mergeNodeMetadata(existingNode.metadata, body.metadata);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'context_name')) {
+      return NextResponse.json({
+        success: false,
+        error: 'context_name is only supported on node creation. Use context_id for updates.'
+      }, { status: 400 });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'context_id')) {
       try {
-        updates.context_id = await contextService.resolveContextId({
+        const resolvedContextId = await contextService.resolveContextId({
           context_id: body.context_id,
-          context_name: body.context_name,
         });
+        updates.context_id = resolvedContextId;
       } catch (error) {
         return NextResponse.json({
           success: false,
           error: error instanceof Error ? error.message : 'Invalid context input'
         }, { status: 400 });
       }
-    }
-
-    if (body.metadata !== undefined) {
-      updates.metadata = mergeNodeMetadata(existingNode.metadata, body.metadata);
     }
 
     const incomingSource = typeof body.source === 'string' ? body.source : undefined;

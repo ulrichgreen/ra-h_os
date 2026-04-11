@@ -1,33 +1,9 @@
 const WEAK_DESCRIPTION_PATTERNS = /\b(discusses|explores|examines|talks about|is about|delves into)\b/i;
-const EXPLICIT_ENTITY_PATTERNS = /\b(article|artifact|book|brief|claim|company|concept|conversation|dataset|decision|dimension|document|episode|essay|event|guide|idea|insight|interview|lesson|link|node|note|paper|person|plan|placeholder|podcast|post|presentation|project|question|record|research|resource|skill|source|status|summary|talk|target|test node|thread|tool|transcript|tweet|update|video|website|workflow)\b/i;
+const EXPLICIT_ENTITY_PATTERNS = /\b(article|artifact|book|brief|claim|company|concept|conversation|dataset|decision|document|episode|essay|event|guide|idea|insight|interview|lesson|link|node|note|paper|person|plan|placeholder|podcast|post|presentation|project|question|record|research|resource|skill|source|status|summary|talk|target|test node|thread|tool|transcript|tweet|update|video|website|workflow)\b/i;
 const UNCERTAINTY_PATTERNS = /\b(likely|probably|possibly|appears to be|seems to be|unclear|uncertain)\b/i;
 const WHY_PATTERNS = /(why added:|added (?:after|as|for|because|to)|follow-?on|queued for|saved for|relevant because|connected to|not inferred|belongs in the graph because|belongs here because|captures .* idea|ties directly into|ties into)/i;
 const STATUS_PATTERNS = /(status:|queued|not yet reviewed|in progress|processed|reviewed|saved for later|to review|to read|to watch|to listen|draft|not yet published|unpublished)/i;
 const GENERIC_EDGE_PATTERNS = /^(related|related to|connected|connected to|association|associated with)$/i;
-
-export function normalizeDimensionName(value: string): string {
-  return value.trim().replace(/\s+/g, ' ');
-}
-
-export function normalizeDimensions(values: unknown, max = 5): string[] {
-  if (!Array.isArray(values)) return [];
-
-  const seen = new Set<string>();
-  const normalized: string[] = [];
-
-  for (const value of values) {
-    if (typeof value !== 'string') continue;
-    const trimmed = normalizeDimensionName(value);
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    normalized.push(trimmed);
-    if (normalized.length >= max) break;
-  }
-
-  return normalized;
-}
 
 export function validateExplicitDescription(description: string): string | null {
   const text = description.trim();
@@ -81,17 +57,6 @@ export function validateEdgeExplanation(explanation: string): string | null {
   }
   if (GENERIC_EDGE_PATTERNS.test(text)) {
     return 'Edge explanation is too generic. State the actual relationship or explicitly note uncertainty.';
-  }
-  return null;
-}
-
-export function validateDimensionDescription(description: string): string | null {
-  const text = description.trim();
-  if (!text) {
-    return 'Dimension description is required.';
-  }
-  if (text.length > 500) {
-    return 'Description must be 500 characters or less.';
   }
   return null;
 }

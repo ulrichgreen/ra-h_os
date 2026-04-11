@@ -12,9 +12,6 @@
 import { nodeService, edgeService } from '@/services/database';
 import { Node } from '@/types/database';
 
-// Entity-like dimensions where we expect to find referenceable entities
-const ENTITY_DIMENSIONS = ['people', 'companies', 'organizations', 'books', 'papers', 'articles', 'podcasts', 'creators'];
-
 /**
  * Clean up a candidate entity string by removing common prefixes/suffixes.
  */
@@ -113,7 +110,7 @@ function isGenericPhrase(phrase: string): boolean {
 
 /**
  * Look up existing nodes that match candidate entity strings.
- * Uses exact title matching (case-insensitive) with optional dimension filtering.
+ * Uses exact title matching (case-insensitive).
  */
 async function findMatchingEntityNodes(candidates: string[]): Promise<Map<string, Node>> {
   const matches = new Map<string, Node>();
@@ -131,16 +128,7 @@ async function findMatchingEntityNodes(candidates: string[]): Promise<Map<string
     const matchingNode = allNodes.find(node => {
       const normalizedTitle = (node.title || '').toLowerCase().trim();
       if (normalizedTitle !== normalizedCandidate) return false;
-
-      // Optionally filter to entity-like dimensions for higher confidence
-      // But don't require it - some entities might not have dimensions yet
-      const nodeDimensions = node.dimensions || [];
-      const hasEntityDimension = nodeDimensions.some(dim =>
-        ENTITY_DIMENSIONS.includes(dim.toLowerCase())
-      );
-
-      // Accept if it has an entity dimension OR if it's a short title (likely a named entity)
-      return hasEntityDimension || node.title.length < 50;
+      return node.title.length < 80;
     });
 
     if (matchingNode) {

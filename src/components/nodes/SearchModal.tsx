@@ -4,24 +4,21 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Chip from '../common/Chip';
 import { getNodeIcon } from '@/utils/nodeIcons';
-import { useDimensionIcons } from '@/context/DimensionIconsContext';
 
 interface SearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   onNodeSelect: (nodeId: number) => void;
-  existingFilters: {type: 'dimension' | 'title', value: string}[];
+  existingFilters: {type: 'context' | 'title' | 'tag', value: string}[];
 }
 
 interface NodeSuggestion {
   id: number;
   title: string;
-  dimensions?: string[];
   link?: string;
 }
 
 export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFilters }: SearchModalProps) {
-  const { dimensionIcons } = useDimensionIcons();
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState<NodeSuggestion[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -111,7 +108,6 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           const nodeSuggestions: NodeSuggestion[] = result.data.map((node: any) => ({
             id: node.id,
             title: node.title,
-            dimensions: node.dimensions || [],
             link: node.link || undefined,
           }));
           
@@ -208,7 +204,7 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
                 className={`search-result-item ${index === selectedIndex ? 'selected' : ''}`}
               >
                 <span className="result-id">{suggestion.id}</span>
-                <span className="result-icon">{getNodeIcon(suggestion as any, dimensionIcons, 14)}</span>
+                <span className="result-icon">{getNodeIcon(suggestion as any, 14)}</span>
                 <span className="result-title">{suggestion.title}</span>
                 {index === selectedIndex && (
                   <span className="result-hint">↵</span>
@@ -250,7 +246,7 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           display: flex;
           align-items: center;
           gap: 16px;
-          background: var(--rah-bg-panel);
+          background: var(--rah-bg-modal);
           border: 1px solid var(--rah-border-strong);
           border-radius: 16px;
           padding: 20px 24px;
@@ -262,7 +258,7 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
         .search-icon {
           width: 22px;
           height: 22px;
-          color: #525252;
+          color: var(--rah-text-muted);
           flex-shrink: 0;
         }
         
@@ -271,14 +267,14 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           background: none;
           border: none;
           outline: none;
-          color: #fafafa;
+          color: var(--rah-text-active);
           font-size: 18px;
           font-family: inherit;
           font-weight: 400;
         }
-        
+
         .search-input::placeholder {
-          color: #525252;
+          color: var(--rah-text-muted);
         }
         
         .search-shortcut {
@@ -292,17 +288,17 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           align-items: center;
           justify-content: center;
           padding: 4px 8px;
-          background: var(--rah-border-strong);
+          background: var(--rah-bg-active);
           border-radius: 6px;
           font-size: 11px;
           font-family: inherit;
-          color: #737373;
-          border: 1px solid var(--rah-border-stronger);
+          color: var(--rah-text-muted);
+          border: 1px solid var(--rah-border-strong);
         }
-        
+
         .search-results {
           margin-top: 8px;
-          background: var(--rah-bg-panel);
+          background: var(--rah-bg-modal);
           border: 1px solid var(--rah-border-strong);
           border-radius: 16px;
           overflow-x: hidden;
@@ -322,7 +318,7 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           padding: 16px 20px;
           background: transparent;
           border: none;
-          border-bottom: 1px solid var(--rah-bg-active);
+          border-bottom: 1px solid var(--rah-border);
           cursor: pointer;
           transition: background 100ms ease;
           text-align: left;
@@ -345,8 +341,8 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           font-size: 10px;
           font-weight: 600;
           font-family: 'SF Mono', 'Fira Code', monospace;
-          color: var(--rah-bg-base);
-          background: #22c55e;
+          color: var(--rah-text-inverse);
+          background: var(--rah-accent-green);
           padding: 4px 8px;
           border-radius: 6px;
           min-width: 28px;
@@ -369,17 +365,17 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
         }
         
         .result-hint {
-          color: #525252;
+          color: var(--rah-text-muted);
           font-size: 13px;
         }
-        
+
         .search-empty {
           margin-top: 8px;
           padding: 32px 24px;
-          background: var(--rah-bg-panel);
+          background: var(--rah-bg-modal);
           border: 1px solid var(--rah-border-strong);
           border-radius: 16px;
-          color: #525252;
+          color: var(--rah-text-muted);
           font-size: 14px;
           text-align: center;
         }

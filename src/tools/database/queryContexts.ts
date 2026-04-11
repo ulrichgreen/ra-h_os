@@ -19,11 +19,11 @@ export const queryContextsTool = tool({
   description: 'List and inspect contexts. Use this to discover available primary scopes before filtering nodes or assigning node context.',
   inputSchema: z.object({
     filters: z.object({
-      id: z.number().int().positive().optional(),
-      name: z.string().optional(),
-      search: z.string().optional(),
-      limit: z.number().min(1).max(100).default(50).optional(),
-      includeNodes: z.boolean().default(false).optional(),
+      id: z.number().int().positive().describe('Exact context ID lookup.').optional(),
+      name: z.string().describe('Exact context name lookup.').optional(),
+      search: z.string().describe('Case-insensitive search across context names and descriptions.').optional(),
+      limit: z.number().min(1).max(100).default(50).describe('Maximum number of contexts to return.').optional(),
+      includeNodes: z.boolean().default(false).describe('Include the node list for an exact single-context lookup.').optional(),
     }).optional(),
   }),
   execute: async ({ filters = {} }: { filters?: QueryContextFilters }) => {
@@ -33,12 +33,15 @@ export const queryContextsTool = tool({
       const normalizedSearch = filters.search?.trim().toLowerCase();
 
       let contexts = await contextService.listContexts();
+
       if (filters.id !== undefined) {
         contexts = contexts.filter((context) => context.id === filters.id);
       }
+
       if (normalizedName) {
         contexts = contexts.filter((context) => context.name.toLowerCase() === normalizedName.toLowerCase());
       }
+
       if (normalizedSearch) {
         contexts = contexts.filter((context) =>
           matchesSearch(context.name, normalizedSearch) ||
@@ -47,35 +50,46 @@ export const queryContextsTool = tool({
       }
 
       const limitedContexts = contexts.slice(0, limit);
-      const includeNodes = filters.includeNodes === true && limitedContexts.length === 1 && (filters.id !== undefined || Boolean(normalizedName));
+      const canIncludeNodes =
+        filters.includeNodes === true &&
+        limitedContexts.length === 1 &&
+        (filters.id !== undefined || Boolean(normalizedName));
 
-      const enriched = await Promise.all(limitedContexts.map(async (context) => {
-        if (!includeNodes) return context;
-        const nodes = await contextService.getNodesForContext(context.id);
-        return {
-          ...context,
-          nodes: nodes.map((node) => ({
-            id: node.id,
-            title: node.title,
-            description: node.description ?? null,
-            dimensions: node.dimensions || [],
-            context_id: node.context_id ?? null,
-            updated_at: node.updated_at,
-          })),
-        };
-      }));
+      const contextsWithNodes = await Promise.all(
+        limitedContexts.map(async (context) => {
+          if (!canIncludeNodes) return context;
+
+          const nodes = await contextService.getNodesForContext(context.id);
+          return {
+            ...context,
+            nodes: nodes.map((node) => ({
+              id: node.id,
+              title: node.title,
+              description: node.description ?? null,
+              context_id: node.context_id ?? null,
+              context: node.context ?? null,
+              updated_at: node.updated_at,
+            })),
+          };
+        })
+      );
+
+      const message = contextsWithNodes.length === 0
+        ? 'No contexts found.'
+        : `Found ${contextsWithNodes.length} context${contextsWithNodes.length === 1 ? '' : 's'}:\n${contextsWithNodes.map((context) => `• ${context.name} (#${context.id}, ${context.count} nodes)`).join('\n')}`;
 
       return {
         success: true,
         data: {
-          contexts: enriched,
-          count: enriched.length,
+          contexts: contextsWithNodes,
+          count: contextsWithNodes.length,
           total_available: contexts.length,
           filters_applied: filters,
         },
-        message: enriched.length === 0 ? 'No contexts found.' : `Found ${enriched.length} context(s).`,
+        message,
       };
     } catch (error) {
+      console.error('QueryContexts tool error:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to query contexts',

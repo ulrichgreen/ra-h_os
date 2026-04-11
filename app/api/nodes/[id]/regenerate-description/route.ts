@@ -4,7 +4,14 @@ import { generateDescription } from '@/services/database/descriptionService';
 
 export const runtime = 'nodejs';
 
-type NodeMetadata = { source?: string; channel_name?: string; author?: string; site_name?: string; type?: string } & Record<string, unknown>;
+type NodeMetadata = {
+  source?: string;
+  channel_name?: string;
+  author?: string;
+  site_name?: string;
+  type?: string;
+  source_metadata?: Record<string, unknown>;
+} & Record<string, unknown>;
 
 function parseMetadata(raw: unknown): NodeMetadata | undefined {
   if (!raw) return undefined;
@@ -27,9 +34,14 @@ async function enrichYoutubeMetadataIfMissing(link: string, metadata: NodeMetada
   if (!url.includes('youtube.com') && !url.includes('youtu.be')) return metadata;
 
   const existing = metadata || {};
+  const existingSourceMetadata = typeof existing.source_metadata === 'object' && existing.source_metadata
+    ? existing.source_metadata
+    : {};
   const hasCreatorHint = Boolean(
     (typeof existing.author === 'string' && existing.author.trim()) ||
-    (typeof existing.channel_name === 'string' && existing.channel_name.trim())
+    (typeof existing.channel_name === 'string' && existing.channel_name.trim()) ||
+    (typeof existingSourceMetadata.author === 'string' && existingSourceMetadata.author.trim()) ||
+    (typeof existingSourceMetadata.channel_name === 'string' && existingSourceMetadata.channel_name.trim())
   );
   if (hasCreatorHint) return existing;
 
@@ -44,9 +56,20 @@ async function enrichYoutubeMetadataIfMissing(link: string, metadata: NodeMetada
 
     return {
       ...existing,
-      source: typeof existing.source === 'string' && existing.source.trim().length > 0 ? existing.source : 'youtube',
-      channel_name: typeof existing.channel_name === 'string' && existing.channel_name.trim().length > 0 ? existing.channel_name : authorName,
-      site_name: typeof existing.site_name === 'string' && existing.site_name.trim().length > 0 ? existing.site_name : (providerName || 'YouTube'),
+      type: typeof existing.type === 'string' && existing.type.trim().length > 0 ? existing.type : 'youtube',
+      source_metadata: {
+        ...existingSourceMetadata,
+        channel_name: typeof existing.channel_name === 'string' && existing.channel_name.trim().length > 0
+          ? existing.channel_name
+          : (typeof existingSourceMetadata.channel_name === 'string' && existingSourceMetadata.channel_name.trim().length > 0
+            ? existingSourceMetadata.channel_name
+            : authorName),
+        site_name: typeof existing.site_name === 'string' && existing.site_name.trim().length > 0
+          ? existing.site_name
+          : (typeof existingSourceMetadata.site_name === 'string' && existingSourceMetadata.site_name.trim().length > 0
+            ? existingSourceMetadata.site_name
+            : (providerName || 'YouTube')),
+      },
     };
   } catch {
     return existing;
@@ -88,8 +111,6 @@ export async function POST(
       source: node.source || node.description || undefined,
       link: node.link || undefined,
       metadata: enrichedMetadata,
-      
-      dimensions: node.dimensions || []
     });
 
     // Update the node with the new description

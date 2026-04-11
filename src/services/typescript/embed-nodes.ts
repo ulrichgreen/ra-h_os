@@ -1,26 +1,24 @@
 /**
  * Node metadata embedding service for RA-H knowledge management system
- * Embeds node metadata (title, content, dimensions, AI analysis) into nodes.embedding field
+ * Embeds node metadata (title, source, context, AI analysis) into nodes.embedding field
  */
 
 import OpenAI from 'openai';
 import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
-import { 
-  createDatabaseConnection, 
-  getDbVectorCapability,
+import {
+  createDatabaseConnection,
   serializeFloat32Vector,
   formatEmbeddingText,
-  batchProcess 
+  batchProcess
 } from './sqlite-vec';
-import type { VectorCapability } from '@/services/database/sqlite-runtime';
 
 interface NodeRecord {
   id: number;
   title: string;
   source: string | null;
   description: string | null;
-  dimensions_json: string;
+  context_name: string | null;
   embedding?: Buffer | null;
   embedding_updated_at?: string | null;
   embedding_text?: string | null;
@@ -36,7 +34,6 @@ export class NodeEmbedder {
   private openaiClient: OpenAI;
   private openaiProvider: ReturnType<typeof createOpenAI>;
   private db: ReturnType<typeof createDatabaseConnection>;
-  private readonly vectorCapability: VectorCapability;
   private processedCount: number = 0;
   private failedCount: number = 0;
 
@@ -45,25 +42,21 @@ export class NodeEmbedder {
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY environment variable is not set');
     }
-    
+
     this.openaiClient = new OpenAI({ apiKey });
     this.openaiProvider = createOpenAI({ apiKey });
     this.db = createDatabaseConnection();
-    this.vectorCapability = getDbVectorCapability(this.db);
   }
 
   /**
    * Analyze node content with AI to extract insights
    */
   private async analyzeNodeWithAI(node: NodeRecord): Promise<string> {
-    const dimensions = node.dimensions_json ? JSON.parse(node.dimensions_json) : [];
-    const dimensionsText = Array.isArray(dimensions) && dimensions.length ? dimensions.join(', ') : 'none';
-    
     const prompt = `Analyze this content and provide 2-3 key insights or themes in a concise paragraph (max 100 words):
 
 Title: ${node.title}
 Source: ${node.source || 'No source'}
-Dimensions: ${dimensionsText}
+Context: ${node.context_name || 'none'}
 
 Focus on the main concepts, key relationships, and practical implications.`;
 
@@ -90,7 +83,7 @@ Focus on the main concepts, key relationships, and practical implications.`;
       model: 'text-embedding-3-small',
       input: text,
     });
-    
+
     return response.data[0].embedding;
   }
 
@@ -104,15 +97,12 @@ Focus on the main concepts, key relationships, and practical implications.`;
       return;
     }
 
-    // Parse dimensions from JSON string
-    const dimensions = node.dimensions_json ? JSON.parse(node.dimensions_json) : [];
-    
     // Create base embedding text
     let embeddingText = formatEmbeddingText(
       node.title,
       node.source || '',
-      dimensions,
-      node.description
+      node.description,
+      node.context_name
     );
 
     // Add AI analysis if source exists
@@ -128,36 +118,41 @@ Focus on the main concepts, key relationships, and practical implications.`;
       // Generate embedding
       const embedding = await this.generateEmbedding(embeddingText);
       const embeddingBlob = serializeFloat32Vector(embedding);
-      
+
       // Update database
       const updateStmt = this.db.prepare(`
-        UPDATE nodes 
-        SET embedding = ?, 
-            embedding_updated_at = ?, 
+        UPDATE nodes
+        SET embedding = ?,
+            embedding_updated_at = ?,
             embedding_text = ?
         WHERE id = ?
       `);
-      
+
       const now = new Date().toISOString();
       updateStmt.run(embeddingBlob, now, embeddingText, node.id);
-      
-      if (this.vectorCapability.available) {
-        try {
-          const pkCol = 'node_id';
-          const deleteStmt = this.db.prepare(`DELETE FROM vec_nodes WHERE ${pkCol} = ?`);
-          deleteStmt.run(BigInt(node.id));
 
-          const vectorString = `[${embedding.join(',')}]`;
-          const insertStmt = this.db.prepare(`INSERT INTO vec_nodes (${pkCol}, embedding) VALUES (?, ?)`);
-          insertStmt.run(BigInt(node.id), vectorString);
-        } catch (vecError) {
-          console.warn(`Could not update vec_nodes for node ${node.id}:`, vecError);
-        }
+      // Update vec_nodes virtual table
+      try {
+        // Determine correct column name for primary key (node_id vs id)
+        // Use declared PK column from your DB schema (confirmed: node_id)
+        const pkCol = 'node_id';
+
+        // Delete existing entry if any
+        const deleteStmt = this.db.prepare(`DELETE FROM vec_nodes WHERE ${pkCol} = ?`);
+        deleteStmt.run(BigInt(node.id));
+
+        // Insert new entry (use bracketed string format compatible with sqlite-vec)
+        const vectorString = `[${embedding.join(',')}]`;
+        const insertStmt = this.db.prepare(`INSERT INTO vec_nodes (${pkCol}, embedding) VALUES (?, ?)`);
+        insertStmt.run(BigInt(node.id), vectorString);
+      } catch (vecError) {
+        console.warn(`Could not update vec_nodes for node ${node.id}:`, vecError);
+        // Continue - main embedding is still saved
       }
-      
+
       this.processedCount++;
       console.log(`✓ Embedded node ${node.id}: "${node.title}"`);
-      
+
     } catch (error) {
       this.failedCount++;
       console.error(`✗ Failed to embed node ${node.id}:`, error);
@@ -170,54 +165,51 @@ Focus on the main concepts, key relationships, and practical implications.`;
    */
   async embedNodes(options: EmbedNodeOptions = {}): Promise<{ processed: number; failed: number }> {
     const { nodeId, forceReEmbed = false, verbose = false } = options;
-    
+
     let query: string;
     let params: any[] = [];
-    
+
     if (nodeId) {
       // Single node
         query = `
-        SELECT n.id, n.title, n.source, n.description,
-               COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                        FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
+        SELECT n.id, n.title, n.source, n.description, c.name as context_name,
                n.embedding, n.embedding_updated_at
         FROM nodes n
+        LEFT JOIN contexts c ON c.id = n.context_id
         WHERE n.id = ?
       `;
       params = [nodeId];
     } else if (forceReEmbed) {
       // All nodes
       query = `
-        SELECT n.id, n.title, n.source, n.description,
-               COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                        FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
+        SELECT n.id, n.title, n.source, n.description, c.name as context_name,
                n.embedding, n.embedding_updated_at
         FROM nodes n
+        LEFT JOIN contexts c ON c.id = n.context_id
         ORDER BY n.id
       `;
     } else {
       // Only nodes without embeddings
       query = `
-        SELECT n.id, n.title, n.source, n.description,
-               COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                        FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
+        SELECT n.id, n.title, n.source, n.description, c.name as context_name,
                n.embedding, n.embedding_updated_at
         FROM nodes n
+        LEFT JOIN contexts c ON c.id = n.context_id
         WHERE n.embedding IS NULL OR n.embedding_updated_at IS NULL
         ORDER BY n.id
       `;
     }
-    
+
     const stmt = this.db.prepare(query);
     const nodes = stmt.all(...params) as NodeRecord[];
-    
+
     if (nodes.length === 0) {
       console.log('No nodes to process');
       return { processed: 0, failed: 0 };
     }
-    
+
     console.log(`Processing ${nodes.length} nodes...`);
-    
+
     // Process in batches
     await batchProcess(
       nodes,
@@ -233,9 +225,9 @@ Focus on the main concepts, key relationships, and practical implications.`;
         console.log(`Progress: ${processed}/${total} nodes`);
       } : undefined
     );
-    
+
     console.log(`\nComplete! Processed: ${this.processedCount}, Failed: ${this.failedCount}`);
-    
+
     return {
       processed: this.processedCount,
       failed: this.failedCount
@@ -254,15 +246,15 @@ Focus on the main concepts, key relationships, and practical implications.`;
  * CLI interface for direct execution
  */
 export async function runCLI(args: string[]): Promise<void> {
-  const nodeId = args.includes('--node-id') 
+  const nodeId = args.includes('--node-id')
     ? parseInt(args[args.indexOf('--node-id') + 1])
     : undefined;
-  
+
   const forceReEmbed = args.includes('--force');
   const verbose = args.includes('--verbose');
-  
+
   const embedder = new NodeEmbedder();
-  
+
   try {
     await embedder.embedNodes({ nodeId, forceReEmbed, verbose });
   } finally {

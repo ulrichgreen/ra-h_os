@@ -6,11 +6,10 @@ import { FileText } from 'lucide-react';
 interface NodeLabelProps {
   id: string;
   title: string;
-  dimensions: string[];
   onNodeClick?: (nodeId: number) => void;
 }
 
-function NodeLabel({ id, title, dimensions, onNodeClick }: NodeLabelProps) {
+function NodeLabel({ id, title, onNodeClick }: NodeLabelProps) {
   const handleClick = (e: React.MouseEvent) => {
     // Prevent bubbling into parent containers (e.g., content view onClick that toggles edit)
     e.stopPropagation();
@@ -62,7 +61,7 @@ function NodeLabel({ id, title, dimensions, onNodeClick }: NodeLabelProps) {
 export function parseAndRenderContent(content: string, onNodeClick?: (nodeId: number) => void): React.ReactNode[] {
   if (!content) return [content];
   
-  // Pattern to match [NODE:id:"title"] (dimensions removed)
+  // Pattern to match [NODE:id:"title"]
   // Be tolerant of spaces and curly quotes
   // Use non-greedy match (.+?) to handle quotes inside titles
   const nodePattern = /\[NODE:\s*(\d+)\s*:\s*["""'](.+?)["""']\s*\]/g;
@@ -80,15 +79,12 @@ export function parseAndRenderContent(content: string, onNodeClick?: (nodeId: nu
     // Parse the node data
     const id = match[1];
     const title = match[2];
-    const dimensions: string[] = []; // No dimensions in new format
-    
     // Add the node label
     parts.push(
       <NodeLabel
         key={`node-${id}-${match.index}`}
         id={id}
         title={title}
-        dimensions={dimensions}
         onNodeClick={onNodeClick}
       />
     );

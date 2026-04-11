@@ -2,7 +2,6 @@
 
 import { Node } from '@/types/database';
 import { getNodeIcon } from '@/utils/nodeIcons';
-import { useDimensionIcons } from '@/context/DimensionIconsContext';
 import { getNodeProcessedState } from '@/services/nodes/metadata';
 
 interface GridViewProps {
@@ -11,7 +10,6 @@ interface GridViewProps {
 }
 
 export default function GridView({ nodes, onNodeClick }: GridViewProps) {
-  const { dimensionIcons } = useDimensionIcons();
   const truncateContent = (content?: string, maxLength: number = 120) => {
     if (!content) return '';
     if (content.length <= maxLength) return content;
@@ -93,7 +91,7 @@ export default function GridView({ nodes, onNodeClick }: GridViewProps) {
                   borderRadius: '6px',
                   flexShrink: 0
                 }}>
-                  {getNodeIcon(node, dimensionIcons, 14)}
+                  {getNodeIcon(node, 14)}
                 </div>
                 <div style={{
                   fontSize: '13px',
@@ -135,37 +133,25 @@ export default function GridView({ nodes, onNodeClick }: GridViewProps) {
                 </div>
               )}
 
-              {/* Footer with Dimensions */}
-              {node.dimensions && node.dimensions.length > 0 && (
+              {/* Footer with Context */}
+              {node.context?.name && (
                 <div style={{
                   display: 'flex',
                   gap: '4px',
                   flexWrap: 'wrap',
                   marginTop: 'auto'
                 }}>
-                  {node.dimensions.slice(0, 3).map(dim => (
-                    <span
-                      key={dim}
-                      style={{
-                        padding: '2px 6px',
-                        background: '#1a1a1a',
-                        borderRadius: '3px',
-                        fontSize: '10px',
-                        color: '#888'
-                      }}
-                    >
-                      {dim}
-                    </span>
-                  ))}
-                  {node.dimensions.length > 3 && (
-                    <span style={{
+                  <span
+                    style={{
                       padding: '2px 6px',
+                      background: '#1a1a1a',
+                      borderRadius: '3px',
                       fontSize: '10px',
-                      color: '#555'
-                    }}>
-                      +{node.dimensions.length - 3}
-                    </span>
-                  )}
+                      color: '#888'
+                    }}
+                  >
+                    {node.context.name}
+                  </span>
                 </div>
               )}
             </button>

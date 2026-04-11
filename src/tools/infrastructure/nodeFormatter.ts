@@ -7,7 +7,6 @@
 export interface NodeData {
   id: number;
   title: string;
-  dimensions?: string[];
 }
 
 /**
@@ -45,7 +44,6 @@ export function parseNodeMarkers(text: string): Array<NodeData & { raw: string }
       raw,
       id: parseInt(id, 10),
       title,
-      dimensions: []
     });
   }
   

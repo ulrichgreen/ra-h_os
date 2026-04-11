@@ -18,7 +18,7 @@ export const TOOL_GROUPS: Record<string, ToolGroup> = {
   orchestration: {
     id: 'orchestration',
     name: 'Orchestration',
-    description: 'Web search and reasoning tools',
+    description: 'Workflows, web search, and reasoning (orchestrator only)',
     icon: '●',
     color: '#8b5cf6'
   },
@@ -37,13 +37,10 @@ export const TOOL_GROUP_ASSIGNMENTS: Record<string, string> = {
   queryNodes: 'core',
   getNodesById: 'core',
   queryEdge: 'core',
-  queryDimensions: 'core',
-  getDimension: 'core',
-  queryDimensionNodes: 'core',
   queryContexts: 'core',
   searchContentEmbeddings: 'core',
 
-  // Orchestration: Web search and reasoning
+  // Orchestration: Web search and reasoning (orchestrator only)
   webSearch: 'orchestration',
   think: 'orchestration',
 

@@ -1,5 +1,5 @@
-import { openai as openaiProvider } from '@ai-sdk/openai';
 import { generateText } from 'ai';
+import { openai as openaiProvider } from '@ai-sdk/openai';
 import { hasValidOpenAiKey } from '../storage/apiKeys';
 import type { CanonicalNodeMetadata } from '@/types/database';
 
@@ -16,11 +16,12 @@ export interface DescriptionInput {
     pages?: number;
     text_length?: number;
   };
-  dimensions?: string[];
 }
 
-export { hasValidOpenAiKey } from '../storage/apiKeys';
-
+/**
+ * Generate a context-rich description for a knowledge node.
+ * The result must cover what the artifact is, why it is in the graph, and workflow status.
+ */
 export async function generateDescription(input: DescriptionInput): Promise<string> {
   if (!hasValidOpenAiKey()) {
     console.log(`[DescriptionService] No valid OpenAI key, using fallback for: "${input.title}"`);
@@ -46,9 +47,12 @@ export async function generateDescription(input: DescriptionInput): Promise<stri
     return description;
   } catch (error) {
     console.error('[DescriptionService] Error generating description:', error);
+    // Fallback: just use the title — more useful than a vague template
     return `${input.title}. Added via Quick Add with no further context yet, so the reason it belongs in the graph is not fully inferred. It has not been reviewed yet.`.slice(0, 500);
   }
 }
+
+export { hasValidOpenAiKey } from '../storage/apiKeys';
 
 function buildDescriptionPrompt(input: DescriptionInput): string {
   const sourceMetadata = input.metadata?.source_metadata as Record<string, unknown> | undefined;
@@ -60,6 +64,8 @@ function buildDescriptionPrompt(input: DescriptionInput): string {
   const normalizedSource = sourceType.toLowerCase();
   const url = typeof input.link === 'string' ? input.link.trim() : '';
 
+  // Best-effort creator hint from structured metadata (when available),
+  // but never assume a particular extraction source (YouTube vs paper vs website vs note).
   const creatorHint =
     (typeof sourceMetadata?.author === 'string' ? sourceMetadata.author.trim() : '') ||
     (typeof sourceMetadata?.channel_name === 'string' ? sourceMetadata.channel_name.trim() : '') ||
@@ -67,6 +73,7 @@ function buildDescriptionPrompt(input: DescriptionInput): string {
     (typeof input.metadata?.channel_name === 'string' ? input.metadata.channel_name.trim() : '') ||
     '';
 
+  // Best-effort publisher / container hint (less ideal than a true author, but better than nothing).
   const publisherHint =
     (typeof sourceMetadata?.site_name === 'string' ? sourceMetadata.site_name.trim() : '') ||
     (typeof input.metadata?.site_name === 'string' ? input.metadata.site_name.trim() : '') ||
@@ -90,7 +97,6 @@ function buildDescriptionPrompt(input: DescriptionInput): string {
   const lines: string[] = [`Title: ${input.title}`];
 
   if (input.link) lines.push(`URL: ${input.link}`);
-  if (input.dimensions?.length) lines.push(`Dimensions: ${input.dimensions.join(', ')}`);
   if (sourceMetadata?.channel_name || input.metadata?.channel_name) lines.push(`Channel: ${sourceMetadata?.channel_name || input.metadata?.channel_name}`);
   if (sourceMetadata?.author || input.metadata?.author) lines.push(`Author: ${sourceMetadata?.author || input.metadata?.author}`);
   if (sourceMetadata?.site_name || input.metadata?.site_name) lines.push(`Site: ${sourceMetadata?.site_name || input.metadata?.site_name}`);
@@ -116,7 +122,7 @@ RULES:
 1) Name the format only if the context clearly supports it: "Podcast episode where…", "Blog post arguing…", "Personal note capturing…", "Research paper showing…", "Resume/CV for…", "Document likely containing…", "Idea that…"
 2) Name people by role — channel/host is the creator, title figures are guests/subjects. Use the Creator hint if available.
 3) State the actual claim, finding, or insight from the content — not a vague summary of the topic.
-4) If the reason it belongs in the graph cannot be inferred from title, source excerpt, URL, metadata, or dimensions, say that naturally rather than inventing context.
+4) If the reason it belongs in the graph cannot be inferred from title, source excerpt, URL, or metadata, say that naturally rather than inventing context.
 5) If workflow status is unknown, say that naturally, for example by noting it has not been reviewed yet.
 6) Do NOT use labels or headings like "WHAT:", "WHY:", or "STATUS:".
 7) ABSOLUTELY FORBIDDEN — these words and phrases will be rejected: "discusses", "explores", "examines", "talks about", "is about", "delves into", "emphasizing the need for", "insightful for understanding", "relevant to", "important for", "useful for understanding". State things directly instead.
@@ -144,6 +150,7 @@ function sanitizeDescription(rawText: string, input: DescriptionInput): string {
     return `${input.title}. Added via Quick Add with no further context yet, so the reason it belongs in the graph is not fully inferred. It has not been reviewed yet.`.slice(0, 500);
   }
 
+  // Guard against weak generic openings from model drift.
   const noGenericPrefix = singleLine.replace(
     /^(your note|this note)\s*[—:-]\s*/i,
     'Personal note capturing '

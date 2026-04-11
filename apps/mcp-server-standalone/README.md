@@ -41,8 +41,8 @@ Restart Claude. Done.
 ## What to Expect
 
 Once connected, Claude will:
-- **Call `getContext` first** to orient itself (stats, contexts, hub nodes, dimensions, skills)
-- **Proactively capture knowledge** — when a new insight, decision, person, or reference surfaces, it proposes a specific node (title, dimensions, description) so you can approve with minimal friction
+- **Call `getContext` first** to orient itself (stats, contexts, anchors/hubs, skills)
+- **Proactively capture knowledge** — when a new insight, decision, person, or reference surfaces, it proposes a specific node (title, description, optional context) so you can approve with minimal friction
 - **Read skills for complex tasks** — skills are editable and shared across internal + external agents
 - **Search before creating** to avoid duplicates
 
@@ -50,7 +50,7 @@ Once connected, Claude will:
 
 | Tool | Description |
 |------|-------------|
-| `getContext` | Get graph overview — stats, contexts, hub nodes, dimensions, recent activity |
+| `getContext` | Get graph overview — stats, contexts, recent activity |
 | `createNode` | Create a new node |
 | `queryNodes` | Search nodes by keyword |
 | `queryContexts` | List or inspect contexts |
@@ -59,16 +59,33 @@ Once connected, Claude will:
 | `createEdge` | Create connection between nodes |
 | `updateEdge` | Update an edge explanation |
 | `queryEdge` | Find edges for a node |
-| `queryDimensions` | List all dimensions |
-| `createDimension` | Create a dimension |
-| `updateDimension` | Update/rename a dimension |
-| `deleteDimension` | Delete a dimension |
 | `listSkills` | List available skills |
 | `readSkill` | Read a skill by name |
 | `writeSkill` | Create or update a skill |
 | `deleteSkill` | Delete a skill |
 | `searchContentEmbeddings` | Search through source content (transcripts, books, articles) |
 | `sqliteQuery` | Execute read-only SQL queries (SELECT/WITH/PRAGMA) |
+
+## Node Metadata Contract
+
+When `createNode` or `updateNode` includes metadata, prefer the canonical shape:
+
+```json
+{
+  "type": "website | youtube | pdf | tweet | note | chat | ...",
+  "state": "processed | not_processed",
+  "captured_method": "quick_add_note | website_extract | ...",
+  "captured_by": "human | agent",
+  "source_metadata": {}
+}
+```
+
+Rules:
+
+- `source_metadata` is for small factual source-specific fields only
+- metadata updates merge with the existing object; they do not replace the full blob
+- use `captured_by = "human"` for direct user creation and user-requested agent capture
+- reserve `captured_by = "agent"` for autonomous/background creation only
 
 ## Skills
 

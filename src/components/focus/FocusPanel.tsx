@@ -4,9 +4,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { Trash2, Loader, Database, RefreshCw, Pencil, X, Save, Plus, Link2, Tag, Share2, AlignLeft, ChevronDown, ChevronRight, Check, Folder } from 'lucide-react';
 import { parseAndRenderContent } from '@/components/helpers/NodeLabelRenderer';
 import { Node, NodeConnection } from '@/types/database';
-import DimensionTags from './dimensions/DimensionTags';
 import { getNodeIcon } from '@/utils/nodeIcons';
-import { useDimensionIcons } from '@/context/DimensionIconsContext';
 import ConfirmDialog from '../common/ConfirmDialog';
 import { SourceReader } from './source';
 import SourceEditor from './source/SourceEditor';
@@ -39,7 +37,6 @@ export default function FocusPanel({
   onTextSelect,
   highlightedPassage,
 }: FocusPanelProps) {
-  const { dimensionIcons } = useDimensionIcons();
   const [nodesData, setNodesData] = useState<Record<number, Node>>({});
   const [edgesData, setEdgesData] = useState<Record<number, NodeConnection[]>>({});
   const [loadingNodes, setLoadingNodes] = useState<Set<number>>(new Set());
@@ -837,7 +834,7 @@ export default function FocusPanel({
                     {isOutgoing ? '↗' : '↙'}
                   </span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-                    {getNodeIcon(connection.connected_node, dimensionIcons, 12)}
+                    {getNodeIcon(connection.connected_node, 12)}
                   </span>
                   <button
                     type="button"
@@ -1150,7 +1147,7 @@ export default function FocusPanel({
                 <div className="prop-label">node</div>
                 <div className="prop-value">
                   <span className="node-meta-value">
-                    <span className="node-meta-icon">{getNodeIcon(currentNode, dimensionIcons, 12)}</span>
+                    <span className="node-meta-icon">{getNodeIcon(currentNode, 12)}</span>
                     <span className="node-id-pill">#{currentNode.id}</span>
                   </span>
                 </div>
@@ -1235,21 +1232,24 @@ export default function FocusPanel({
                 </div>
               </div>
 
-              <div className="prop-row prop-row-top">
-                <div className="prop-label">ctx</div>
-                <div className="prop-value" style={{ overflow: 'visible' }}>
-                  <div ref={contextMenuRef} style={{ position: 'relative', width: '100%' }}>
+              <div className="prop-row">
+                <div className="prop-label">context</div>
+                <div className="prop-value context-prop-value">
+                  <div className="context-select-shell" ref={contextMenuRef}>
                     <button
                       type="button"
-                      onClick={() => setContextMenuOpen((prev) => !prev)}
-                      disabled={contextSaving}
                       className="context-select-trigger"
+                      disabled={contextSaving}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setContextMenuOpen((prev) => !prev);
+                      }}
                     >
-                      <span className="context-select-main">
-                        <span className="context-select-icon">
+                      <span className="context-select-current">
+                        <span className="context-select-badge">
                           <Folder size={13} />
                         </span>
-                        <span className="context-select-text">
+                        <span className={currentNode.context ? 'context-select-name' : 'context-select-empty'}>
                           {currentNode.context?.name || 'No context'}
                         </span>
                       </span>
@@ -1261,7 +1261,8 @@ export default function FocusPanel({
                         <button
                           type="button"
                           className={`context-option ${currentNode.context_id == null ? 'active' : ''}`}
-                          onClick={() => {
+                          onClick={(event) => {
+                            event.stopPropagation();
                             void saveContext('');
                           }}
                         >
@@ -1272,7 +1273,8 @@ export default function FocusPanel({
                             key={context.id}
                             type="button"
                             className={`context-option ${currentNode.context_id === context.id ? 'active' : ''}`}
-                            onClick={() => {
+                            onClick={(event) => {
+                              event.stopPropagation();
                               void saveContext(String(context.id));
                             }}
                           >
@@ -1283,20 +1285,6 @@ export default function FocusPanel({
                       </div>
                     ) : null}
                   </div>
-                </div>
-              </div>
-
-              {/* Dimensions */}
-              <div className="prop-row prop-row-top">
-                <div className="prop-label">dime</div>
-                <div className="prop-value">
-                  <DimensionTags
-                    dimensions={currentNode.dimensions || []}
-                    onUpdate={async (newDimensions) => {
-                      try { await updateNode(activeTab, { dimensions: newDimensions }); }
-                      catch (error) { console.error('Error saving dimensions:', error); window.alert('Failed to save dimensions. Please try again.'); }
-                    }}
-                  />
                 </div>
               </div>
 
@@ -1322,7 +1310,7 @@ export default function FocusPanel({
                             onMouseLeave={() => setHoveredConnectionId(null)}
                           >
                             <span className={`conn-dir ${isOut ? 'out' : 'in'}`}>{isOut ? '↗' : '↙'}</span>
-                            <span className="conn-icon">{getNodeIcon(connection.connected_node, dimensionIcons, 12)}</span>
+                            <span className="conn-icon">{getNodeIcon(connection.connected_node, 12)}</span>
                             <button
                               type="button"
                               className="conn-title-btn"
@@ -1424,7 +1412,7 @@ export default function FocusPanel({
                   const title = currentNode.title || 'Untitled';
                   e.dataTransfer.effectAllowed = 'copyMove';
                   e.dataTransfer.setData('application/x-rah-node', JSON.stringify({ id: activeTab, title }));
-                  e.dataTransfer.setData('application/node-info', JSON.stringify({ id: activeTab, title, dimensions: currentNode.dimensions || [] }));
+                  e.dataTransfer.setData('application/node-info', JSON.stringify({ id: activeTab, title }));
                   e.dataTransfer.setData('text/plain', `[NODE:${activeTab}:"${title}"]`);
                 }}
                 className="node-drag-handle"
@@ -1703,7 +1691,7 @@ export default function FocusPanel({
         }
 
         .prop-label {
-          width: 44px;
+          width: 58px;
           flex-shrink: 0;
           padding: 7px 8px 7px 0;
           color: var(--rah-text-muted);
@@ -1718,6 +1706,10 @@ export default function FocusPanel({
           overflow: hidden;
           font-size: 12px;
           line-height: 1.5;
+        }
+
+        .context-prop-value {
+          overflow: visible;
         }
 
         .props-toggle {
@@ -1769,6 +1761,116 @@ export default function FocusPanel({
           font-family: inherit;
         }
 
+        .context-select-shell {
+          position: relative;
+          z-index: 4;
+        }
+
+        .context-select-trigger {
+          width: 100%;
+          min-height: 38px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 0 10px 0 8px;
+          border: 1px solid var(--rah-border-strong);
+          border-radius: 10px;
+          background: linear-gradient(180deg, var(--rah-bg-surface), var(--rah-bg-panel));
+          color: var(--rah-text-primary);
+          cursor: pointer;
+        }
+
+        .context-select-current {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+        }
+
+        .context-select-badge {
+          width: 22px;
+          height: 22px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 7px;
+          border: 1px solid var(--rah-border);
+          background: var(--rah-bg-base);
+          color: var(--rah-text-muted);
+          flex-shrink: 0;
+        }
+
+        .context-select-name,
+        .context-select-empty {
+          font-size: 12px;
+          line-height: 1.2;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .context-select-name {
+          color: var(--rah-text-primary);
+          font-weight: 600;
+        }
+
+        .context-select-empty {
+          color: var(--rah-text-muted);
+          font-style: italic;
+        }
+
+        .context-select-chevron {
+          color: var(--rah-text-muted);
+          flex-shrink: 0;
+          transition: transform 120ms ease;
+        }
+
+        .context-select-chevron.open {
+          transform: rotate(180deg);
+        }
+
+        .context-select-menu {
+          position: relative;
+          margin-top: 6px;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          padding: 6px;
+          border: 1px solid var(--rah-border);
+          border-radius: 12px;
+          background: var(--rah-bg-surface);
+          box-shadow: var(--rah-shadow-floating);
+        }
+
+        .context-option {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          width: 100%;
+          min-height: 32px;
+          padding: 0 10px;
+          border: none;
+          border-radius: 8px;
+          background: transparent;
+          color: var(--rah-text-secondary);
+          font-size: 12px;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .context-option.active {
+          background: color-mix(in srgb, var(--rah-accent-green) 10%, var(--rah-bg-panel));
+          color: var(--rah-text-primary);
+        }
+
+        .context-option-count {
+          font-size: 10px;
+          color: var(--rah-text-muted);
+          flex-shrink: 0;
+        }
+
         .prop-empty-btn {
           background: transparent;
           border: none;
@@ -1778,106 +1880,6 @@ export default function FocusPanel({
           padding: 0;
           cursor: pointer;
           font-family: inherit;
-        }
-
-        .context-select-trigger {
-          width: 100%;
-          min-height: 34px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          padding: 7px 10px;
-          border-radius: 9px;
-          border: 1px solid var(--rah-border);
-          background: var(--rah-bg-panel);
-          color: var(--rah-text-base);
-          cursor: pointer;
-          font-family: inherit;
-          transition: border-color 120ms ease, background 120ms ease;
-        }
-
-        .context-select-trigger:hover {
-          border-color: var(--rah-border-strong);
-          background: var(--rah-bg-hover);
-        }
-
-        .context-select-main {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          min-width: 0;
-          flex: 1;
-        }
-
-        .context-select-icon {
-          display: inline-flex;
-          align-items: center;
-          color: var(--rah-text-muted);
-          flex-shrink: 0;
-        }
-
-        .context-select-text {
-          min-width: 0;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          font-size: 12px;
-        }
-
-        .context-select-chevron {
-          color: var(--rah-text-muted);
-          transition: transform 120ms ease;
-          flex-shrink: 0;
-        }
-
-        .context-select-chevron.open {
-          transform: rotate(180deg);
-        }
-
-        .context-select-menu {
-          margin-top: 6px;
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          padding: 6px;
-          border-radius: 10px;
-          border: 1px solid var(--rah-border);
-          background: var(--rah-bg-panel);
-          box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
-        }
-
-        .context-option {
-          width: 100%;
-          min-height: 32px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          padding: 0 10px;
-          border: none;
-          border-radius: 7px;
-          background: transparent;
-          color: var(--rah-text-secondary);
-          cursor: pointer;
-          font-size: 12px;
-          font-family: inherit;
-          text-align: left;
-        }
-
-        .context-option:hover,
-        .context-option.active {
-          background: var(--rah-bg-hover);
-          color: var(--rah-text-active);
-        }
-
-        .context-option-count {
-          color: var(--rah-text-muted);
-          font-size: 10px;
-          background: var(--rah-bg-active);
-          padding: 1px 6px;
-          border-radius: 999px;
-          flex-shrink: 0;
         }
 
         .prop-muted {

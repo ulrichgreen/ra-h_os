@@ -2,7 +2,7 @@
 
 > MCP tools for graph operations and skills for procedural guidance.
 
-**How it works:** External agents call MCP tools to read and write your graph. For complex tasks, they read skills (`listSkills`/`readSkill`) to follow your preferred operating patterns.
+**How it works:** External agents call MCP tools to read and write your graph. Contexts are optional soft organization only; node quality should come from clear nodes and explicit edges.
 
 ---
 
@@ -14,18 +14,15 @@ RA-OS exposes these core standalone MCP tools:
 
 | Tool | Description |
 |------|-------------|
-| `getContext` | Graph overview: stats, contexts, hub nodes, dimensions, recent activity, skills |
-| `queryNodes` | Search nodes by keyword/dimensions/date |
+| `getContext` | Graph overview: stats, contexts, hub nodes, recent activity, skills |
+| `queryNodes` | Search nodes by keyword/date/context |
 | `getNodesById` | Fetch full nodes by ID |
 | `createNode` | Create a node |
 | `updateNode` | Update a node |
 | `createEdge` | Create an edge between nodes |
 | `queryEdge` | Query edges |
 | `updateEdge` | Update edge explanation |
-| `queryDimensions` | List dimensions |
-| `createDimension` | Create a dimension |
-| `updateDimension` | Update/rename a dimension |
-| `deleteDimension` | Delete a dimension |
+| `queryContexts` | List contexts and optional attached nodes |
 
 ### Skills + Search
 

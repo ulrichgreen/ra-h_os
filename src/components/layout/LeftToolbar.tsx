@@ -18,7 +18,8 @@ import {
   Sun,
   Moon,
 } from 'lucide-react';
-import type { PaneType, NavigablePaneType } from '../panes/types';
+import type { PaneType } from '../panes/types';
+import type { FocusedSkill } from '@/types/skills';
 import type { Theme } from '@/hooks/useTheme';
 import type { ContextSummary } from '@/types/database';
 
@@ -27,11 +28,12 @@ interface LeftToolbarProps {
   onAddStuffClick: () => void;
   onRefreshClick: () => void;
   onSettingsClick: () => void;
-  onPaneTypeClick: (paneType: NavigablePaneType) => void;
+  onPaneTypeClick: (paneType: PaneType) => void;
   isExpanded: boolean;
   onToggleExpanded: () => void;
   openTabTypes: Set<PaneType>;
   activeTabType: PaneType | null;
+  focusedSkill?: FocusedSkill | null;
   theme: Theme;
   onThemeToggle: () => void;
   contexts?: ContextSummary[];
@@ -41,11 +43,10 @@ interface LeftToolbarProps {
 const NAV_WIDTH_COLLAPSED = 50;
 const NAV_WIDTH_EXPANDED = 280;
 
-const VIEW_ITEMS: Array<{ paneType: NavigablePaneType; label: string; icon: typeof LayoutList }> = [
+const PRIMARY_VIEW_ITEMS: Array<{ paneType: PaneType; label: string; icon: typeof LayoutList }> = [
   { paneType: 'views', label: 'Nodes', icon: LayoutList },
   { paneType: 'skills', label: 'Skills', icon: BookOpen },
   { paneType: 'map', label: 'Map', icon: Map },
-  { paneType: 'dimensions', label: 'Dimension', icon: Folder },
   { paneType: 'table', label: 'Table', icon: Table2 },
 ];
 
@@ -116,12 +117,21 @@ export default function LeftToolbar({
   onToggleExpanded,
   openTabTypes,
   activeTabType,
+  focusedSkill,
   theme,
   onThemeToggle,
   contexts = [],
   onContextQuickSelect,
 }: LeftToolbarProps) {
   const [contextsExpanded, setContextsExpanded] = useState(false);
+
+  const renderActionButtons = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <NavButton icon={Search} label="Search" title="Search (⌘K)" expanded={isExpanded} onClick={onSearchClick} />
+      <NavButton icon={Plus} label="Add Stuff" title="New node (⌘N)" expanded={isExpanded} onClick={onAddStuffClick} />
+      <NavButton icon={RefreshCw} label="Refresh" expanded={isExpanded} onClick={onRefreshClick} />
+    </div>
+  );
 
   return (
     <div
@@ -131,6 +141,7 @@ export default function LeftToolbar({
         background: 'transparent',
         display: 'flex',
         flexDirection: 'column',
+        justifyContent: 'space-between',
         padding: '12px 8px',
         flexShrink: 0,
         transition: 'width 0.2s ease',
@@ -138,7 +149,6 @@ export default function LeftToolbar({
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', height: '100%' }}>
-        {/* Top: collapse + actions */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <NavButton
             icon={isExpanded ? PanelLeftClose : PanelLeftOpen}
@@ -146,18 +156,30 @@ export default function LeftToolbar({
             expanded={isExpanded}
             onClick={onToggleExpanded}
           />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <NavButton icon={Search} label="Search" title="Search (⌘K)" expanded={isExpanded} onClick={onSearchClick} />
-            <NavButton icon={Plus} label="Add Stuff" title="New node (⌘N)" expanded={isExpanded} onClick={onAddStuffClick} />
-            <NavButton icon={RefreshCw} label="Refresh" expanded={isExpanded} onClick={onRefreshClick} />
-          </div>
+
+          {renderActionButtons()}
         </div>
 
-        {/* Middle: view items, vertically centered */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 0 }}>
           <div style={{ borderTop: '1px solid var(--rah-border)', paddingTop: '14px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingTop: '4px' }}>
+              {PRIMARY_VIEW_ITEMS.map((item) => (
+                <NavButton
+                  key={`${item.paneType}-${item.label}`}
+                  icon={item.icon}
+                  label={item.label}
+                  expanded={isExpanded}
+                  active={
+                    item.paneType === 'skills'
+                      ? focusedSkill != null || activeTabType === 'skills' || openTabTypes.has('skills')
+                      : activeTabType === item.paneType || openTabTypes.has(item.paneType)
+                  }
+                  onClick={() => onPaneTypeClick(item.paneType)}
+                  activeTone="green"
+                />
+              ))}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <NavButton
@@ -227,18 +249,6 @@ export default function LeftToolbar({
                   </div>
                 ) : null}
               </div>
-
-              {VIEW_ITEMS.map((item) => (
-                <NavButton
-                  key={`${item.paneType}-${item.label}`}
-                  icon={item.icon}
-                  label={item.label}
-                  expanded={isExpanded}
-                  active={activeTabType === item.paneType || openTabTypes.has(item.paneType)}
-                  onClick={() => onPaneTypeClick(item.paneType)}
-                  activeTone="green"
-                />
-              ))}
             </div>
           </div>
         </div>

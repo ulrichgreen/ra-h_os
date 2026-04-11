@@ -62,8 +62,7 @@ export const queryEdgeTool = tool({
         const formattedConnections = limitedConnections.map(connection => {
           const formattedNode = formatNodeForChat({
             id: connection.connected_node.id,
-            title: connection.connected_node.title,
-            dimensions: connection.connected_node.dimensions || []
+            title: connection.connected_node.title
           });
 
           const context = connection.edge.context as Record<string, unknown> | undefined;
@@ -85,7 +84,7 @@ export const queryEdgeTool = tool({
               id: connection.connected_node.id,
               title: connection.connected_node.title,
               description: truncateText(connection.connected_node.description, 140),
-              dimensions: connection.connected_node.dimensions || [],
+              context: connection.connected_node.context ?? null,
               formatted_display: formattedNode
             }
           };

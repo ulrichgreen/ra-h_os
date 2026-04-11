@@ -119,14 +119,12 @@ export const createEdgeTool = tool({
 
       const fromLabel = formatNodeForChat({
         id: fromNode.id,
-        title: fromNode.title,
-        dimensions: fromNode.dimensions || []
+        title: fromNode.title
       });
 
       const toLabel = formatNodeForChat({
         id: toNode.id,
-        title: toNode.title,
-        dimensions: toNode.dimensions || []
+        title: toNode.title
       });
 
       return {

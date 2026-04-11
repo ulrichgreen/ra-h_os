@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { PanelLeftOpen, GripVertical, X } from 'lucide-react';
 import SettingsModal, { SettingsTab } from '../settings/SettingsModal';
 import SearchModal from '../nodes/SearchModal';
-import { ContextSummary, Node } from '@/types/database';
+import type { ContextSummary, Node } from '@/types/database';
 import { DatabaseEvent } from '@/services/events';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import { useTheme } from '@/hooks/useTheme';
@@ -12,9 +12,10 @@ import { useTheme } from '@/hooks/useTheme';
 import LeftToolbar from './LeftToolbar';
 import SplitHandle from './SplitHandle';
 
-import { NodePane, ContextsPane, DimensionsPane, MapPane, ViewsPane, TablePane, SkillsPane } from '../panes';
+import { NodePane, ContextsPane, MapPane, ViewsPane, TablePane, SkillsPane, SlotTabBar } from '../panes';
 import QuickAddInput from '../agents/QuickAddInput';
-import type { PaneType, SlotState, PaneAction, SlotId } from '../panes/types';
+import type { PaneType, SlotState, SlotTab, PaneAction, SlotId } from '../panes/types';
+import { createTabId, getActiveTab } from '../panes/types';
 
 export interface PendingNode {
   id: string;
@@ -25,9 +26,9 @@ export interface PendingNode {
   error?: string;
 }
 
-const SLOT_A_KEY = 'ui.slotA.v6';
-const SLOT_B_KEY = 'ui.slotB.v6';
-const SLOT_C_KEY = 'ui.slotC.v6';
+const SLOT_A_KEY = 'ui.slotA.v7';
+const SLOT_B_KEY = 'ui.slotB.v7';
+const SLOT_C_KEY = 'ui.slotC.v7';
 const PANEL_A_EXPANDED_KEY = 'ui.panelA.expanded.v1';
 const PANEL_B_EXPANDED_KEY = 'ui.panelB.expanded.v1';
 const PANEL_C_EXPANDED_KEY = 'ui.panelC.expanded.v1';
@@ -36,21 +37,85 @@ const PANEL_B_WEIGHT_KEY = 'ui.panelB.weight.v1';
 const PANEL_C_WEIGHT_KEY = 'ui.panelC.weight.v1';
 const LEFT_NAV_EXPANDED_KEY = 'ui.leftNavExpanded';
 const ACTIVE_CONTEXT_KEY = 'ui.focus.activeContextId';
-const ACTIVE_DIMENSION_KEY = 'ui.focus.activeDimension';
 
-const DEFAULT_SLOT_A: SlotState = { type: 'views' };
-const VALID_PANE_TYPES = new Set<PaneType>(['node', 'contexts', 'dimensions', 'map', 'views', 'table', 'skills']);
+const VALID_PANE_TYPES = new Set<PaneType>(['node', 'contexts', 'map', 'views', 'table', 'skills']);
 
-function normalizeSlotState(raw: SlotState | null): SlotState | null {
-  if (!raw) return null;
-  const rawType = raw.type as string;
-  if (rawType === 'guides') {
-    return { ...raw, type: 'skills' };
-  }
-  if (!VALID_PANE_TYPES.has(raw.type)) {
+const DEFAULT_SLOT_A: SlotState = {
+  tabs: [{ id: 'views', type: 'views' }],
+  activeTabId: 'views',
+};
+
+function createSingletonState(type: Exclude<PaneType, 'node'>): SlotState {
+  return {
+    tabs: [{ id: createTabId(type), type }],
+    activeTabId: createTabId(type),
+  };
+}
+
+function migrateSlotState(raw: unknown): SlotState | null {
+  if (!raw || typeof raw !== 'object') {
     return null;
   }
-  return raw;
+
+  const value = raw as Record<string, unknown>;
+
+  if (Array.isArray(value.tabs)) {
+    const tabs: SlotTab[] = [];
+    for (const tab of value.tabs) {
+      if (!tab || typeof tab !== 'object') continue;
+      const tabValue = tab as Record<string, unknown>;
+      const rawType = tabValue.type === 'guides' ? 'skills' : tabValue.type;
+      if (typeof rawType !== 'string' || !VALID_PANE_TYPES.has(rawType as PaneType)) continue;
+
+      tabs.push({
+        id: typeof tabValue.id === 'string'
+          ? tabValue.id
+          : createTabId(rawType as PaneType, typeof tabValue.nodeId === 'number' ? tabValue.nodeId : undefined),
+        type: rawType as PaneType,
+        ...(typeof tabValue.nodeId === 'number' ? { nodeId: tabValue.nodeId } : {}),
+      });
+    }
+
+    if (tabs.length === 0) return null;
+
+    const activeTabId = typeof value.activeTabId === 'string' && tabs.some((tab) => tab.id === value.activeTabId)
+      ? value.activeTabId
+      : tabs[0].id;
+
+    return { tabs, activeTabId };
+  }
+
+  if (typeof value.type === 'string') {
+    const rawType = value.type === 'guides' ? 'skills' : value.type;
+    if (rawType === 'dimensions') return null;
+    if (!VALID_PANE_TYPES.has(rawType as PaneType)) return null;
+
+    if (rawType === 'node') {
+      const nodeTabs = Array.isArray(value.nodeTabs)
+        ? value.nodeTabs.filter((nodeId): nodeId is number => typeof nodeId === 'number')
+        : [];
+      if (nodeTabs.length === 0) return null;
+      const tabs = nodeTabs.map((nodeId) => ({ id: createTabId('node', nodeId), type: 'node' as const, nodeId }));
+      const preferredNodeId = typeof value.activeNodeTab === 'number' ? value.activeNodeTab : nodeTabs[0];
+      return {
+        tabs,
+        activeTabId: createTabId('node', preferredNodeId),
+      };
+    }
+
+    return createSingletonState(rawType as Exclude<PaneType, 'node'>);
+  }
+
+  return null;
+}
+
+function sanitizeSlotState(state: SlotState | null, fallback: SlotState | null = null): SlotState | null {
+  const migrated = migrateSlotState(state);
+  return migrated ?? fallback;
+}
+
+function getSlotTabsByType(state: SlotState | null, type: PaneType): SlotTab[] {
+  return state?.tabs.filter((tab) => tab.type === type) ?? [];
 }
 
 export default function ThreePanelLayout() {
@@ -69,31 +134,18 @@ export default function ThreePanelLayout() {
   const [panelBWeight, setPanelBWeight] = usePersistentState<number>(PANEL_B_WEIGHT_KEY, 1);
   const [panelCWeight, setPanelCWeight] = usePersistentState<number>(PANEL_C_WEIGHT_KEY, 1);
   const [leftNavExpanded, setLeftNavExpanded] = usePersistentState<boolean>(LEFT_NAV_EXPANDED_KEY, false);
+  const [activeContextId, setActiveContextId] = usePersistentState<number | null>(ACTIVE_CONTEXT_KEY, null);
 
   const [activePane, setActivePane] = useState<SlotId>('A');
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>();
-  const handleCloseSettings = useCallback(() => {
-    setShowSettings(false);
-    setSettingsInitialTab(undefined);
-  }, []);
-
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showAddStuff, setShowAddStuff] = useState(false);
-  const [selectedNodes, setSelectedNodes] = useState<Set<number>>(new Set<number>());
   const [openTabsData, setOpenTabsData] = useState<Node[]>([]);
   const [nodesPanelRefresh, setNodesPanelRefresh] = useState(0);
   const [focusPanelRefresh, setFocusPanelRefresh] = useState(0);
-  const [folderViewRefresh, setFolderViewRefresh] = useState(0);
   const [availableContexts, setAvailableContexts] = useState<ContextSummary[]>([]);
-  const [activeContextId, setActiveContextId] = usePersistentState<number | null>(ACTIVE_CONTEXT_KEY, null);
-  const [activeDimension, setActiveDimension] = usePersistentState<string | null>(ACTIVE_DIMENSION_KEY, null);
   const [browseContextFilters, setBrowseContextFilters] = useState<Record<SlotId, number | null>>({
-    A: null,
-    B: null,
-    C: null,
-  });
-  const [browseDimensionFilters, setBrowseDimensionFilters] = useState<Record<SlotId, string | null>>({
     A: null,
     B: null,
     C: null,
@@ -104,27 +156,32 @@ export default function ThreePanelLayout() {
     selectedText: string;
   } | null>(null);
   const [pendingNodes, setPendingNodes] = useState<PendingNode[]>([]);
-  const openTabsRef = useRef<number[]>([]);
+  const [dragOverSlot, setDragOverSlot] = useState<SlotId | null>(null);
+
+  const handleCloseSettings = useCallback(() => {
+    setShowSettings(false);
+    setSettingsInitialTab(undefined);
+  }, []);
 
   useEffect(() => {
-    setSlotA((prev) => normalizeSlotState(prev) ?? DEFAULT_SLOT_A);
-    setSlotB((prev) => normalizeSlotState(prev));
-    setSlotC((prev) => normalizeSlotState(prev));
+    setSlotA((prev) => sanitizeSlotState(prev, DEFAULT_SLOT_A));
+    setSlotB((prev) => sanitizeSlotState(prev));
+    setSlotC((prev) => sanitizeSlotState(prev));
   }, [setSlotA, setSlotB, setSlotC]);
 
   useEffect(() => {
     void (async () => {
       try {
         const response = await fetch('/api/contexts');
-        const data = await response.json();
-        if (response.ok && data.success) {
-          setAvailableContexts(data.data || []);
+        const payload = await response.json();
+        if (response.ok && payload.success) {
+          setAvailableContexts(payload.data || []);
         }
       } catch (error) {
         console.error('Failed to fetch contexts:', error);
       }
     })();
-  }, [nodesPanelRefresh, folderViewRefresh]);
+  }, [nodesPanelRefresh]);
 
   const getSlotState = useCallback((slot: SlotId): SlotState | null => {
     switch (slot) {
@@ -199,187 +256,137 @@ export default function ThreePanelLayout() {
     }
   }, [setPanelAWeight, setPanelBWeight, setPanelCWeight]);
 
-  const isSlotEmpty = useCallback((slot: SlotId) => {
-    return !getSlotState(slot);
-  }, [getSlotState]);
+  const slotStates = useMemo<Record<SlotId, SlotState | null>>(() => ({ A: slotA, B: slotB, C: slotC }), [slotA, slotB, slotC]);
 
-  const { openTabs, activeTab } = useMemo(() => {
-    const collectTabs = (state: SlotState | null): number[] =>
-      state?.type === 'node' ? (state.nodeTabs ?? []) : [];
+  const allOpenNodeIds = useMemo(() => {
+    const ids = new Set<number>();
+    (Object.values(slotStates) as Array<SlotState | null>).forEach((state) => {
+      getSlotTabsByType(state, 'node').forEach((tab) => {
+        if (tab.nodeId != null) ids.add(tab.nodeId);
+      });
+    });
+    return [...ids];
+  }, [slotStates]);
 
-    const slotStates: Record<SlotId, SlotState | null> = { A: slotA, B: slotB, C: slotC };
+  const activeNodeId = useMemo(() => {
     const activeSlotState = slotStates[activePane];
-    const activeNodes = collectTabs(activeSlotState);
-    const otherNodes = (['A', 'B', 'C'] as SlotId[])
-      .filter((slot) => slot !== activePane)
-      .flatMap((slot) => collectTabs(slotStates[slot]));
-    const allNodes = [...new Set([...activeNodes, ...otherNodes])];
-
-    let active: number | null = null;
-    if (activeSlotState?.type === 'node' && activeSlotState.activeNodeTab != null) {
-      active = activeSlotState.activeNodeTab;
+    const activeTab = activeSlotState ? getActiveTab(activeSlotState) : undefined;
+    if (activeTab?.type === 'node' && activeTab.nodeId != null) {
+      return activeTab.nodeId;
     }
-    if (active == null) {
-      for (const slot of ['A', 'B', 'C'] as SlotId[]) {
-        const state = slotStates[slot];
-        if (slot !== activePane && state?.type === 'node' && state.activeNodeTab != null) {
-          active = state.activeNodeTab;
-          break;
-        }
+
+    for (const slot of ['A', 'B', 'C'] as SlotId[]) {
+      const state = slotStates[slot];
+      const tab = state ? getActiveTab(state) : undefined;
+      if (tab?.type === 'node' && tab.nodeId != null) {
+        return tab.nodeId;
       }
     }
-    if (active == null && allNodes.length > 0) {
-      active = allNodes[0];
-    }
 
-    return { openTabs: allNodes, activeTab: active };
-  }, [slotA, slotB, slotC, activePane]);
+    return allOpenNodeIds[0] ?? null;
+  }, [activePane, allOpenNodeIds, slotStates]);
 
-  const fetchOpenTabsData = async (tabIds: number[]) => {
+  const fetchOpenTabsData = useCallback(async (tabIds: number[]) => {
     if (tabIds.length === 0) {
       setOpenTabsData([]);
       return;
     }
 
     try {
-      const nodePromises = tabIds.map(async (id) => {
-        const response = await fetch(`/api/nodes/${id}`);
-        if (response.ok) {
-          const data = await response.json();
-          return data.node as Node;
-        }
-        return null;
-      });
+      const results = await Promise.all(
+        tabIds.map(async (id) => {
+          const response = await fetch(`/api/nodes/${id}`);
+          if (!response.ok) return null;
+          const payload = await response.json();
+          return payload.node as Node;
+        })
+      );
 
-      const nodes = await Promise.all(nodePromises);
-      const validNodes = nodes.filter((node): node is Node => Boolean(node)).map(node => ({
-        id: node.id,
-        title: node.title,
-        link: node.link,
-        source: node.source,
-        dimensions: node.dimensions,
-        created_at: node.created_at,
-        updated_at: node.updated_at,
-        chunk_status: node.chunk_status,
-        metadata: node.metadata,
-      }));
-      setOpenTabsData(validNodes);
+      setOpenTabsData(results.filter((node): node is Node => Boolean(node)));
     } catch (error) {
-      console.error('Failed to fetch tab data:', error);
+      console.error('Failed to fetch open tab data:', error);
       setOpenTabsData([]);
     }
-  };
-
-  const openTabsKey = openTabs.join(',');
-  useEffect(() => {
-    openTabsRef.current = openTabs;
-    fetchOpenTabsData(openTabs);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openTabsKey, focusPanelRefresh]);
-
-  const handleRefreshAll = useCallback(() => {
-    setNodesPanelRefresh(prev => prev + 1);
-    setFolderViewRefresh(prev => prev + 1);
-    setFocusPanelRefresh(prev => prev + 1);
   }, []);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
+    void fetchOpenTabsData(allOpenNodeIds);
+  }, [allOpenNodeIds, fetchOpenTabsData, focusPanelRefresh]);
+
+  const handleRefreshAll = useCallback(() => {
+    setNodesPanelRefresh((prev) => prev + 1);
+    setFocusPanelRefresh((prev) => prev + 1);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+        event.preventDefault();
         setShowSearchModal(true);
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
-        e.preventDefault();
-        const collapsed = (['A', 'B', 'C'] as SlotId[]).find((slot) => !isPanelExpanded(slot));
-        if (collapsed) {
-          setPanelExpanded(collapsed, true);
-          setActivePane(collapsed);
-        }
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'r') {
-        e.preventDefault();
-        handleRefreshAll();
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'n') {
         if (document.activeElement?.closest('[data-rah-app]')) {
-          e.preventDefault();
+          event.preventDefault();
           setShowAddStuff(true);
         }
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        handleRefreshAll();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleRefreshAll, isPanelExpanded, setPanelExpanded]);
+  }, [handleRefreshAll]);
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
 
     try {
       eventSource = new EventSource('/api/events');
-
       eventSource.onmessage = (event) => {
         try {
           const data: DatabaseEvent = JSON.parse(event.data);
 
           switch (data.type) {
             case 'NODE_CREATED':
-              setNodesPanelRefresh(prev => prev + 1);
+              setNodesPanelRefresh((prev) => prev + 1);
               break;
-            case 'NODE_UPDATED': {
-              const currentOpenTabs = openTabsRef.current;
-              const updatedNodeId = Number(data.data.nodeId);
-              if (currentOpenTabs.includes(updatedNodeId)) {
-                setFocusPanelRefresh(prev => prev + 1);
+            case 'NODE_UPDATED':
+              setNodesPanelRefresh((prev) => prev + 1);
+              if (allOpenNodeIds.includes(Number(data.data.nodeId))) {
+                setFocusPanelRefresh((prev) => prev + 1);
               }
-              setNodesPanelRefresh(prev => prev + 1);
               break;
-            }
             case 'NODE_DELETED':
-              handleNodeDeleted(data.data.nodeId);
-              setNodesPanelRefresh(prev => prev + 1);
+              handleNodeDeleted(Number(data.data.nodeId));
+              setNodesPanelRefresh((prev) => prev + 1);
               break;
             case 'EDGE_CREATED':
-            case 'EDGE_DELETED': {
-              const currentOpenTabsForEdge = openTabsRef.current;
-              if (currentOpenTabsForEdge.includes(data.data.fromNodeId) ||
-                  currentOpenTabsForEdge.includes(data.data.toNodeId)) {
-                setFocusPanelRefresh(prev => prev + 1);
-              }
-              break;
-            }
-            case 'DIMENSION_UPDATED':
-              setNodesPanelRefresh(prev => prev + 1);
-              setFolderViewRefresh(prev => prev + 1);
-              break;
-            case 'HELPER_UPDATED':
-            case 'AGENT_UPDATED':
-              if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('agents:updated', { detail: data.data }));
-              }
+            case 'EDGE_DELETED':
+              setFocusPanelRefresh((prev) => prev + 1);
               break;
             case 'GUIDE_UPDATED':
               if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('guides:updated', { detail: data.data }));
                 window.dispatchEvent(new CustomEvent('skills:updated', { detail: data.data }));
               }
               break;
             case 'QUICK_ADD_COMPLETED':
               if (data.data?.quickAddId) {
-                setPendingNodes(prev => prev.filter(p => p.id !== data.data.quickAddId));
+                setPendingNodes((prev) => prev.filter((item) => item.id !== data.data.quickAddId));
+                setNodesPanelRefresh((prev) => prev + 1);
               }
               break;
             case 'QUICK_ADD_FAILED':
               if (data.data?.quickAddId) {
-                setPendingNodes(prev => prev.map(p =>
-                  p.id === data.data.quickAddId
-                    ? { ...p, status: 'error' as const, error: data.data.error || 'Unknown error' }
-                    : p
-                ));
+                setPendingNodes((prev) => prev.map((item) => (
+                  item.id === data.data.quickAddId
+                    ? { ...item, status: 'error', error: data.data.error || 'Unknown error' }
+                    : item
+                )));
               }
               break;
           }
@@ -394,224 +401,193 @@ export default function ThreePanelLayout() {
     return () => {
       eventSource?.close();
     };
-  }, []);
+  }, [allOpenNodeIds]);
 
   useEffect(() => {
     if (pendingNodes.length === 0) return;
-    const interval = setInterval(() => {
+    const timer = setInterval(() => {
       const now = Date.now();
-      setPendingNodes(prev => prev.filter(p => {
-        const age = now - p.submittedAt;
-        if (p.status === 'processing' && age > 90_000) return false;
-        if (p.status === 'error' && age > 120_000) return false;
+      setPendingNodes((prev) => prev.filter((item) => {
+        const age = now - item.submittedAt;
+        if (item.status === 'processing' && age > 90_000) return false;
+        if (item.status === 'error' && age > 120_000) return false;
         return true;
       }));
     }, 5000);
-    return () => clearInterval(interval);
+
+    return () => clearInterval(timer);
   }, [pendingNodes.length]);
 
-  const setSingletonPaneInSlot = useCallback((slot: SlotId, paneType: Exclude<PaneType, 'node'>) => {
+  const upsertSingletonTab = useCallback((slot: SlotId, paneType: Exclude<PaneType, 'node'>) => {
+    const tabId = createTabId(paneType);
+    const setter = getSlotSetter(slot);
+
+    setter((prev) => {
+      const current = sanitizeSlotState(prev);
+      const existingTabs = current?.tabs ?? [];
+      const tabs = existingTabs.some((tab) => tab.id === tabId)
+        ? existingTabs
+        : [...existingTabs.filter((tab) => tab.type !== paneType), { id: tabId, type: paneType }];
+      return { tabs, activeTabId: tabId };
+    });
+
     setPanelExpanded(slot, true);
-    getSlotSetter(slot)({ type: paneType });
+    setActivePane(slot);
   }, [getSlotSetter, setPanelExpanded]);
 
-  const focusPaneIfOpen = useCallback((paneType: Exclude<PaneType, 'node'>): SlotId | null => {
-    for (const slot of ['A', 'B', 'C'] as SlotId[]) {
-      if (getSlotState(slot)?.type === paneType) {
-        setActivePane(slot);
-        return slot;
-      }
-    }
-    return null;
-  }, [getSlotState]);
-
-  const openPaneSingleton = useCallback((paneType: Exclude<PaneType, 'node'>, preferredSlot?: SlotId) => {
-    const existing = focusPaneIfOpen(paneType);
-    if (existing) return existing;
-
-    const orderedSlots = preferredSlot
-      ? [preferredSlot, ...(['A', 'B', 'C'] as SlotId[]).filter((slot) => slot !== preferredSlot)]
-      : (['A', 'B', 'C'] as SlotId[]);
-
-    const expandedEmpty = orderedSlots.find((slot) => isPanelExpanded(slot) && isSlotEmpty(slot));
-    if (expandedEmpty) {
-      setSingletonPaneInSlot(expandedEmpty, paneType);
-      setActivePane(expandedEmpty);
-      return expandedEmpty;
-    }
-
-    const collapsedFree = orderedSlots.find((slot) => !isPanelExpanded(slot));
-    if (collapsedFree) {
-      setPanelExpanded(collapsedFree, true);
-      setSingletonPaneInSlot(collapsedFree, paneType);
-      setActivePane(collapsedFree);
-      return collapsedFree;
-    }
-
-    const activeHasContext = isPanelExpanded(activePane) && !isSlotEmpty(activePane);
-    const replacementTarget = activeHasContext
-      ? activePane
-      : orderedSlots.find((slot) => isPanelExpanded(slot) && !isSlotEmpty(slot))
-        ?? orderedSlots.find((slot) => isPanelExpanded(slot))
-        ?? orderedSlots[0];
-
-    setSingletonPaneInSlot(replacementTarget, paneType);
-    setActivePane(replacementTarget);
-    return replacementTarget;
-  }, [activePane, focusPaneIfOpen, isPanelExpanded, isSlotEmpty, setPanelExpanded, setSingletonPaneInSlot]);
-
   const addNodeTabToSlot = useCallback((slot: SlotId, nodeId: number) => {
-    setPanelExpanded(slot, true);
-    const state = getSlotState(slot);
-    if (state?.type === 'node') {
-      const currentTabs = state.nodeTabs || [];
-      const newTabs = currentTabs.includes(nodeId) ? currentTabs : [...currentTabs, nodeId];
-      getSlotSetter(slot)({
-        ...state,
-        nodeTabs: newTabs,
-        activeNodeTab: nodeId,
-      });
-      return;
-    }
+    const nodeTabId = createTabId('node', nodeId);
+    const setter = getSlotSetter(slot);
 
-    getSlotSetter(slot)({
-      type: 'node',
-      nodeTabs: [nodeId],
-      activeNodeTab: nodeId,
+    setter((prev) => {
+      const current = sanitizeSlotState(prev);
+      const tabs = current?.tabs ?? [];
+      if (tabs.some((tab) => tab.id === nodeTabId)) {
+        return { tabs, activeTabId: nodeTabId };
+      }
+      return {
+        tabs: [...tabs, { id: nodeTabId, type: 'node', nodeId }],
+        activeTabId: nodeTabId,
+      };
     });
-  }, [getSlotSetter, getSlotState, setPanelExpanded]);
+
+    setPanelExpanded(slot, true);
+    setActivePane(slot);
+  }, [getSlotSetter, setPanelExpanded]);
+
+  const closeTabInSlot = useCallback((slot: SlotId, tabId: string) => {
+    const setter = getSlotSetter(slot);
+
+    setter((prev) => {
+      const current = sanitizeSlotState(prev);
+      if (!current) return null;
+
+      const tabs = current.tabs.filter((tab) => tab.id !== tabId);
+      if (tabs.length === 0) {
+        return null;
+      }
+
+      const activeTabId = current.activeTabId === tabId
+        ? tabs[Math.max(0, tabs.length - 1)].id
+        : current.activeTabId;
+
+      return { tabs, activeTabId };
+    });
+  }, [getSlotSetter]);
 
   const openNodeFromSlot = useCallback((nodeId: number, fromSlot?: SlotId) => {
-    const targetOrder: SlotId[] = fromSlot === 'A'
-      ? ['B', 'C']
-      : fromSlot === 'B'
-        ? ['C', 'A']
-        : fromSlot === 'C'
-          ? ['B', 'A']
-          : ['B', 'C', 'A'];
-
     for (const slot of ['A', 'B', 'C'] as SlotId[]) {
       const state = getSlotState(slot);
-      if (state?.type === 'node' && (state.nodeTabs || []).includes(nodeId)) {
-        getSlotSetter(slot)({ ...state, activeNodeTab: nodeId });
-        setSelectedNodes(new Set([nodeId]));
+      if (state?.tabs.some((tab) => tab.type === 'node' && tab.nodeId === nodeId)) {
+        getSlotSetter(slot)({ tabs: state.tabs, activeTabId: createTabId('node', nodeId) });
         setActivePane(slot);
         return;
       }
     }
 
-    const emptyTarget = targetOrder.find((slot) => slot !== fromSlot && isSlotEmpty(slot));
-    const fallbackTarget = targetOrder.find((slot) => slot !== fromSlot) ?? 'B';
-    const target = emptyTarget ?? fallbackTarget;
+    const preferredOrder: SlotId[] = fromSlot === 'A'
+      ? ['B', 'C', 'A']
+      : fromSlot === 'B'
+        ? ['C', 'A', 'B']
+        : fromSlot === 'C'
+          ? ['B', 'A', 'C']
+          : ['B', 'C', 'A'];
+
+    const target = preferredOrder.find((slot) => !getSlotState(slot))
+      ?? preferredOrder.find((slot) => !isPanelExpanded(slot))
+      ?? preferredOrder[0];
 
     addNodeTabToSlot(target, nodeId);
-    setSelectedNodes(new Set([nodeId]));
-    setActivePane(target);
-  }, [addNodeTabToSlot, getSlotSetter, getSlotState, isSlotEmpty]);
+  }, [addNodeTabToSlot, getSlotSetter, getSlotState, isPanelExpanded]);
 
-  const handleNodeSelect = useCallback((nodeId: number, _multiSelect: boolean) => {
-    openNodeFromSlot(nodeId);
-  }, [openNodeFromSlot]);
+  const openPaneSingleton = useCallback((paneType: Exclude<PaneType, 'node'>, preferredSlot?: SlotId) => {
+    for (const slot of ['A', 'B', 'C'] as SlotId[]) {
+      const state = getSlotState(slot);
+      if (state?.tabs.some((tab) => tab.type === paneType)) {
+        getSlotSetter(slot)({ tabs: state.tabs, activeTabId: createTabId(paneType) });
+        setPanelExpanded(slot, true);
+        setActivePane(slot);
+        return slot;
+      }
+    }
 
-  const handleTabSelect = useCallback((slot: SlotId, tabId: number) => {
+    const orderedSlots: SlotId[] = preferredSlot
+      ? [preferredSlot, ...(['A', 'B', 'C'] as SlotId[]).filter((slot) => slot !== preferredSlot)]
+      : ['A', 'B', 'C'];
+
+    const target = orderedSlots.find((slot) => !getSlotState(slot))
+      ?? orderedSlots.find((slot) => !isPanelExpanded(slot))
+      ?? activePane;
+
+    upsertSingletonTab(target, paneType);
+    return target;
+  }, [activePane, getSlotSetter, getSlotState, isPanelExpanded, setPanelExpanded, upsertSingletonTab]);
+
+  const handleTabSelect = useCallback((slot: SlotId, tabId: string) => {
     const state = getSlotState(slot);
-    if (state?.type !== 'node') return;
-    getSlotSetter(slot)({ ...state, activeNodeTab: tabId });
-    setSelectedNodes(new Set([tabId]));
+    if (!state) return;
+    getSlotSetter(slot)({ tabs: state.tabs, activeTabId: tabId });
     setActivePane(slot);
   }, [getSlotSetter, getSlotState]);
 
-  const handleCloseTab = useCallback((slot: SlotId, tabId: number) => {
-    const state = getSlotState(slot);
-    if (state?.type !== 'node') return;
-
-    const currentTabs = state.nodeTabs || [];
-    const newTabs = currentTabs.filter(id => id !== tabId);
-    const newActiveTab = state.activeNodeTab === tabId
-      ? (newTabs.length > 0 ? newTabs[Math.min(currentTabs.indexOf(tabId), newTabs.length - 1)] : null)
-      : state.activeNodeTab ?? null;
-
-    if (newTabs.length === 0) {
-      getSlotSetter(slot)(null);
-      return;
-    }
-
-    getSlotSetter(slot)({
-      ...state,
-      nodeTabs: newTabs,
-      activeNodeTab: newActiveTab,
-    });
-  }, [getSlotSetter, getSlotState]);
-
   const handleNodeDeleted = useCallback((nodeId: number) => {
-    for (const slot of ['A', 'B', 'C'] as SlotId[]) {
-      handleCloseTab(slot, nodeId);
-    }
-  }, [handleCloseTab]);
+    const tabId = createTabId('node', nodeId);
+    (['A', 'B', 'C'] as SlotId[]).forEach((slot) => closeTabInSlot(slot, tabId));
+  }, [closeTabInSlot]);
 
   const handleReorderTabs = useCallback((slot: SlotId, fromIndex: number, toIndex: number) => {
     const state = getSlotState(slot);
-    if (state?.type !== 'node') return;
-    const currentTabs = state.nodeTabs || [];
-    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= currentTabs.length || toIndex >= currentTabs.length) {
-      return;
-    }
-    const updated = [...currentTabs];
-    const [moved] = updated.splice(fromIndex, 1);
-    updated.splice(toIndex, 0, moved);
-    getSlotSetter(slot)({ ...state, nodeTabs: updated });
+    if (!state || fromIndex === toIndex) return;
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= state.tabs.length || toIndex >= state.tabs.length) return;
+
+    const tabs = [...state.tabs];
+    const [moved] = tabs.splice(fromIndex, 1);
+    tabs.splice(toIndex, 0, moved);
+    getSlotSetter(slot)({ tabs, activeTabId: state.activeTabId });
   }, [getSlotSetter, getSlotState]);
 
-  const handleFolderViewDataChanged = useCallback(() => {
-    setFolderViewRefresh(prev => prev + 1);
-    setNodesPanelRefresh(prev => prev + 1);
-  }, []);
-
-  const handleNodeOpenFromDimensions = useCallback((nodeId: number) => {
-    openNodeFromSlot(nodeId, 'A');
-  }, [openNodeFromSlot]);
+  const handleCrossSlotDrop = useCallback((targetSlot: SlotId, tab: SlotTab, fromSlot: SlotId) => {
+    closeTabInSlot(fromSlot, tab.id);
+    if (tab.type === 'node' && tab.nodeId != null) {
+      addNodeTabToSlot(targetSlot, tab.nodeId);
+      return;
+    }
+    if (tab.type !== 'node') {
+      upsertSingletonTab(targetSlot, tab.type);
+    }
+  }, [addNodeTabToSlot, closeTabInSlot, upsertSingletonTab]);
 
   const handleContextSelect = useCallback((slot: SlotId, contextId: number | null, _contextName?: string | null) => {
     setBrowseContextFilters((prev) => ({ ...prev, [slot]: contextId }));
     setActiveContextId(contextId);
-
-    if (contextId == null) return;
-
-    setPanelExpanded(slot, true);
-    getSlotSetter(slot)({ type: 'views' });
-    setActivePane(slot);
-  }, [getSlotSetter, setActiveContextId, setPanelExpanded]);
-
-  const handleDimensionPaneSelect = useCallback((slot: SlotId, dimensionName: string | null) => {
-    setBrowseDimensionFilters((prev) => ({ ...prev, [slot]: dimensionName }));
-    setActiveDimension(dimensionName);
-
-    if (!dimensionName) return;
-
-    setPanelExpanded(slot, true);
-    getSlotSetter(slot)({ type: 'views' });
-    setActivePane(slot);
-  }, [getSlotSetter, setActiveDimension, setPanelExpanded]);
+    if (contextId != null) {
+      openPaneSingleton('views', slot);
+    }
+  }, [openPaneSingleton, setActiveContextId]);
 
   const handleQuickAddSubmit = useCallback(async ({ input, mode, description }: { input: string; mode: 'link' | 'text'; description?: string }) => {
     try {
       const response = await fetch('/api/quick-add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input, mode, description, contextId: activeContextId }),
+        body: JSON.stringify({
+          input,
+          mode,
+          description,
+          contextId: activeContextId,
+        }),
       });
 
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to submit Quick Add');
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || 'Failed to submit Quick Add');
       }
 
-      const data = await response.json();
-      const result = data.result as { id: string; inputType: string } | undefined;
-
+      const payload = await response.json();
+      const result = payload.result as { id?: string; inputType?: string } | undefined;
       if (result?.id) {
-        setPendingNodes(prev => [{
-          id: result.id,
+        setPendingNodes((prev) => [{
+          id: result.id!,
           input: input.trim(),
           inputType: result.inputType || 'note',
           submittedAt: Date.now(),
@@ -622,55 +598,37 @@ export default function ThreePanelLayout() {
       openPaneSingleton('views', 'A');
       setShowAddStuff(false);
     } catch (error) {
-      console.error('[ThreePanelLayout] Quick Add error:', error);
+      console.error('[ThreePanelLayout] Quick Add failed:', error);
     }
   }, [activeContextId, openPaneSingleton]);
-
-  const handleCloseSlotA = useCallback(() => {
-    setSlotA(null);
-    setPanelAExpanded(false);
-    setActivePane(panelBExpanded ? 'B' : panelCExpanded ? 'C' : 'A');
-  }, [panelBExpanded, panelCExpanded, setPanelAExpanded, setSlotA]);
-
-  const handleCloseSlotB = useCallback(() => {
-    setSlotB(null);
-    setPanelBExpanded(false);
-    setActivePane(panelAExpanded ? 'A' : panelCExpanded ? 'C' : 'B');
-  }, [panelAExpanded, panelCExpanded, setPanelBExpanded, setSlotB]);
-
-  const handleCloseSlotC = useCallback(() => {
-    setSlotC(null);
-    setPanelCExpanded(false);
-    setActivePane(panelBExpanded ? 'B' : panelAExpanded ? 'A' : 'C');
-  }, [panelAExpanded, panelBExpanded, setPanelCExpanded, setSlotC]);
 
   const handleSlotAction = useCallback((slot: SlotId, action: PaneAction) => {
     switch (action.type) {
       case 'switch-pane-type':
         if (action.paneType !== 'node') {
-          setSingletonPaneInSlot(slot, action.paneType);
-          setActivePane(slot);
+          upsertSingletonTab(slot, action.paneType);
         }
         break;
       case 'open-context':
         handleContextSelect(action.targetSlot ?? slot, action.contextId, action.contextName);
         break;
-      case 'open-dimension':
-        setBrowseDimensionFilters((prev) => ({ ...prev, [action.targetSlot ?? slot]: action.dimension }));
-        setActiveDimension(action.dimension);
-        setSingletonPaneInSlot(action.targetSlot ?? slot, 'views');
-        setActivePane(action.targetSlot ?? slot);
-        break;
       case 'open-node':
-        openNodeFromSlot(action.nodeId, slot);
+        openNodeFromSlot(action.nodeId, action.targetSlot ?? slot);
+        break;
+      case 'close-pane':
+        closeActiveSlot(slot);
         break;
     }
-  }, [handleContextSelect, openNodeFromSlot, setActiveDimension, setSingletonPaneInSlot]);
+  }, [handleContextSelect, openNodeFromSlot, upsertSingletonTab]);
 
-  const handleSearchNodeSelect = useCallback((nodeId: number) => {
-    handleNodeSelect(nodeId, false);
-    setShowSearchModal(false);
-  }, [handleNodeSelect]);
+  const closeActiveSlot = useCallback((slot: SlotId) => {
+    getSlotSetter(slot)(null);
+    setPanelExpanded(slot, false);
+    if (activePane === slot) {
+      const fallback = (['A', 'B', 'C'] as SlotId[]).find((candidate) => candidate !== slot && isPanelExpanded(candidate)) ?? 'A';
+      setActivePane(fallback);
+    }
+  }, [activePane, getSlotSetter, isPanelExpanded, setPanelExpanded]);
 
   const handleSwapPanes = useCallback((source: SlotId, target: SlotId) => {
     if (source === target) return;
@@ -679,14 +637,13 @@ export default function ThreePanelLayout() {
     const targetState = getSlotState(target);
     const sourceExpanded = isPanelExpanded(source);
     const targetExpanded = isPanelExpanded(target);
+    const sourceWeight = getPanelWeight(source);
+    const targetWeight = getPanelWeight(target);
 
     getSlotSetter(source)(targetState);
     getSlotSetter(target)(sourceState);
     setPanelExpanded(source, targetExpanded);
     setPanelExpanded(target, sourceExpanded);
-
-    const sourceWeight = getPanelWeight(source);
-    const targetWeight = getPanelWeight(target);
     setPanelWeight(source, targetWeight);
     setPanelWeight(target, sourceWeight);
 
@@ -694,59 +651,34 @@ export default function ThreePanelLayout() {
     else if (activePane === target) setActivePane(source);
   }, [activePane, getPanelWeight, getSlotSetter, getSlotState, isPanelExpanded, setPanelExpanded, setPanelWeight]);
 
-  const [dragOverSlot, setDragOverSlot] = useState<SlotId | null>(null);
-
-  const handleSlotDragOver = useCallback((e: React.DragEvent, slot: SlotId) => {
-    if (e.dataTransfer.types.includes('application/x-rah-pane') ||
-        e.dataTransfer.types.includes('application/x-rah-tab') ||
-        e.dataTransfer.types.includes('application/node-info')) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = e.dataTransfer.types.includes('application/x-rah-pane') ? 'move' : 'copy';
+  const handleSlotDragOver = useCallback((event: React.DragEvent, slot: SlotId) => {
+    if (event.dataTransfer.types.includes('application/x-rah-pane') || event.dataTransfer.types.includes('application/x-rah-tab')) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
       setDragOverSlot(slot);
     }
   }, []);
 
-  const handleSlotDragLeave = useCallback(() => {
-    setDragOverSlot(null);
-  }, []);
-
-  const handleSlotDrop = useCallback((e: React.DragEvent, targetSlot: SlotId) => {
+  const handleSlotDrop = useCallback((event: React.DragEvent, targetSlot: SlotId) => {
+    event.preventDefault();
     setDragOverSlot(null);
 
-    const paneData = e.dataTransfer.getData('application/x-rah-pane');
+    const paneData = event.dataTransfer.getData('application/x-rah-pane');
     if (paneData) {
-      const sourceSlot = paneData as SlotId;
-      if (sourceSlot !== targetSlot) handleSwapPanes(sourceSlot, targetSlot);
+      handleSwapPanes(paneData as SlotId, targetSlot);
       return;
     }
 
-    let tabData = e.dataTransfer.getData('application/x-rah-tab');
-    if (!tabData) {
-      tabData = e.dataTransfer.getData('application/node-info');
-    }
+    const tabData = event.dataTransfer.getData('application/x-rah-tab');
     if (!tabData) return;
 
     try {
-      const parsed = JSON.parse(tabData);
-      const nodeId = parsed.id as number | undefined;
-      const sourceSlot = parsed.sourceSlot as SlotId | undefined;
-      if (typeof nodeId !== 'number') return;
-
-      if (sourceSlot && sourceSlot === targetSlot) {
-        handleTabSelect(targetSlot, nodeId);
-        return;
-      }
-
-      if (sourceSlot) {
-        handleCloseTab(sourceSlot, nodeId);
-      }
-
-      addNodeTabToSlot(targetSlot, nodeId);
-      setActivePane(targetSlot);
-    } catch (err) {
-      console.error('Failed to parse dropped tab data:', err);
+      const parsed = JSON.parse(tabData) as { sourceSlot: SlotId; tab: SlotTab };
+      handleCrossSlotDrop(targetSlot, parsed.tab, parsed.sourceSlot);
+    } catch (error) {
+      console.error('Failed to parse dropped tab payload:', error);
     }
-  }, [addNodeTabToSlot, handleCloseTab, handleSwapPanes, handleTabSelect]);
+  }, [handleCrossSlotDrop, handleSwapPanes]);
 
   const handleResizePanels = useCallback((left: SlotId, right: SlotId, clientX: number) => {
     const leftEl = panelRefs.current[left];
@@ -769,95 +701,75 @@ export default function ThreePanelLayout() {
   }, [getPanelWeight, setPanelWeight]);
 
   const renderSlot = (slot: SlotId, state: SlotState) => {
-    const isActive = activePane === slot;
-    const onCollapse = slot === 'A' ? handleCloseSlotA : slot === 'B' ? handleCloseSlotB : handleCloseSlotC;
+    const activeTab = getActiveTab(state);
+    if (!activeTab) return null;
 
-    switch (state.type) {
-      case 'node':
+    const tabBar = (
+      <SlotTabBar
+        tabs={state.tabs}
+        activeTabId={state.activeTabId}
+        slot={slot}
+        onTabSelect={(tabId) => handleTabSelect(slot, tabId)}
+        onTabClose={(tabId) => closeTabInSlot(slot, tabId)}
+        onReorderTabs={(fromIndex, toIndex) => handleReorderTabs(slot, fromIndex, toIndex)}
+        onCrossSlotDrop={(tab, fromSlot) => handleCrossSlotDrop(slot, tab, fromSlot)}
+      />
+    );
+
+    const commonProps = {
+      slot,
+      isActive: activePane === slot,
+      onPaneAction: (action: PaneAction) => handleSlotAction(slot, action),
+      onCollapse: () => closeActiveSlot(slot),
+      onSwapPanes: handleSwapPanes,
+      tabBar,
+    };
+
+    switch (activeTab.type) {
+      case 'node': {
+        const nodeTabs = getSlotTabsByType(state, 'node').map((tab) => tab.nodeId!).filter((id): id is number => typeof id === 'number');
         return (
           <NodePane
-            slot={slot}
-            isActive={isActive}
-            onPaneAction={(action) => handleSlotAction(slot, action)}
-            onCollapse={onCollapse}
-            onSwapPanes={handleSwapPanes}
-            openTabs={state.nodeTabs || []}
-            activeTab={state.activeNodeTab || null}
-            onTabSelect={(tabId) => handleTabSelect(slot, tabId)}
-            onTabClose={(tabId) => handleCloseTab(slot, tabId)}
-            onNodeClick={(nodeId) => {
-              addNodeTabToSlot(slot, nodeId);
-              setSelectedNodes(new Set([nodeId]));
-              setActivePane(slot);
-            }}
+            {...commonProps}
+            openTabs={nodeTabs}
+            activeTab={activeTab.nodeId ?? null}
+            onTabSelect={(nodeId) => handleTabSelect(slot, createTabId('node', nodeId))}
+            onTabClose={(nodeId) => closeTabInSlot(slot, createTabId('node', nodeId))}
+            onNodeClick={(nodeId) => addNodeTabToSlot(slot, nodeId)}
             onReorderTabs={(fromIndex, toIndex) => handleReorderTabs(slot, fromIndex, toIndex)}
             refreshTrigger={focusPanelRefresh}
             onOpenInOtherSlot={(nodeId) => openNodeFromSlot(nodeId, slot)}
-            onTextSelect={(nodeId, nodeTitle, text) => {
-              setHighlightedPassage({ nodeId, nodeTitle, selectedText: text });
-            }}
+            onTextSelect={(nodeId, nodeTitle, text) => setHighlightedPassage({ nodeId, nodeTitle, selectedText: text })}
             highlightedPassage={highlightedPassage}
           />
         );
-
+      }
       case 'contexts':
         return (
           <ContextsPane
-            slot={slot}
-            isActive={isActive}
-            onPaneAction={(action) => handleSlotAction(slot, action)}
-            onCollapse={onCollapse}
-            onSwapPanes={handleSwapPanes}
+            {...commonProps}
+            onNodeOpen={(nodeId) => openNodeFromSlot(nodeId, slot)}
             onContextSelect={(contextId, contextName) => handleContextSelect(slot, contextId, contextName)}
           />
         );
-
-      case 'dimensions':
-        return (
-          <DimensionsPane
-            slot={slot}
-            isActive={isActive}
-            onPaneAction={(action) => handleSlotAction(slot, action)}
-            onCollapse={onCollapse}
-            onSwapPanes={handleSwapPanes}
-            onNodeOpen={handleNodeOpenFromDimensions}
-            refreshToken={folderViewRefresh}
-            onDataChanged={handleFolderViewDataChanged}
-            onDimensionSelect={(dimension) => handleDimensionPaneSelect(slot, dimension)}
-          />
-        );
-
       case 'map':
         return (
           <MapPane
-            slot={slot}
-            isActive={isActive}
-            onPaneAction={(action) => handleSlotAction(slot, action)}
-            onCollapse={onCollapse}
-            onSwapPanes={handleSwapPanes}
+            {...commonProps}
             onNodeClick={(nodeId) => openNodeFromSlot(nodeId, slot)}
-            activeTabId={activeTab}
+            activeTabId={activeNodeId}
           />
         );
-
       case 'views':
         return (
           <ViewsPane
-            slot={slot}
-            isActive={isActive}
-            onPaneAction={(action) => handleSlotAction(slot, action)}
-            onCollapse={onCollapse}
-            onSwapPanes={handleSwapPanes}
-            onNodeClick={(nodeId) => {
-              openNodeFromSlot(nodeId, slot);
-              setActivePane(slot);
-            }}
+            {...commonProps}
+            onNodeClick={(nodeId) => openNodeFromSlot(nodeId, slot)}
             onNodeOpenInOtherPane={(nodeId) => openNodeFromSlot(nodeId, slot)}
             refreshToken={nodesPanelRefresh}
             pendingNodes={pendingNodes}
-            onDismissPending={(id) => setPendingNodes(prev => prev.filter(p => p.id !== id))}
+            onDismissPending={(id) => setPendingNodes((prev) => prev.filter((item) => item.id !== id))}
             externalContextFilterId={browseContextFilters[slot]}
-            externalDimensionFilter={browseDimensionFilters[slot]}
             onContextFilterSelect={(contextId) => {
               setBrowseContextFilters((prev) => ({ ...prev, [slot]: contextId }));
               setActiveContextId(contextId);
@@ -866,52 +778,39 @@ export default function ThreePanelLayout() {
               setBrowseContextFilters((prev) => ({ ...prev, [slot]: null }));
               setActiveContextId(null);
             }}
-            onClearExternalDimensionFilter={() => {
-              setBrowseDimensionFilters((prev) => ({ ...prev, [slot]: null }));
-              setActiveDimension(null);
-            }}
           />
         );
-
       case 'table':
         return (
           <TablePane
-            slot={slot}
-            isActive={isActive}
-            onPaneAction={(action) => handleSlotAction(slot, action)}
-            onCollapse={onCollapse}
-            onSwapPanes={handleSwapPanes}
-            onNodeClick={(nodeId) => {
-              openNodeFromSlot(nodeId, slot);
-              setActivePane(slot);
-            }}
+            {...commonProps}
+            onNodeClick={(nodeId) => openNodeFromSlot(nodeId, slot)}
             refreshToken={nodesPanelRefresh}
           />
         );
-
       case 'skills':
-        return (
-          <SkillsPane
-            slot={slot}
-            isActive={isActive}
-            onPaneAction={(action) => handleSlotAction(slot, action)}
-            onCollapse={onCollapse}
-            onSwapPanes={handleSwapPanes}
-          />
-        );
-
+        return <SkillsPane {...commonProps} />;
       default:
         return null;
     }
   };
 
-  const slotStates: Record<SlotId, SlotState | null> = { A: slotA, B: slotB, C: slotC };
-  const panelExpandedState: Record<SlotId, boolean> = { A: panelAExpanded, B: panelBExpanded, C: panelCExpanded };
+  const openTabTypes = useMemo(() => {
+    const types = new Set<PaneType>();
+    (Object.values(slotStates) as Array<SlotState | null>).forEach((state) => {
+      state?.tabs.forEach((tab) => types.add(tab.type));
+    });
+    return types;
+  }, [slotStates]);
+
+  const activeTabType = useMemo(() => {
+    const state = getSlotState(activePane);
+    return state ? getActiveTab(state)?.type ?? null : null;
+  }, [activePane, getSlotState]);
 
   const getSlotContainerStyle = (slot: SlotId) => {
     const state = slotStates[slot];
-    const expanded = panelExpandedState[slot];
-    const hasContent = Boolean(state);
+    const expanded = isPanelExpanded(slot);
     const weight = getPanelWeight(slot);
 
     return {
@@ -922,7 +821,7 @@ export default function ThreePanelLayout() {
       flexDirection: 'column' as const,
       background: expanded ? 'var(--rah-bg-surface)' : 'var(--rah-bg-subtle)',
       borderRadius: '10px',
-      border: expanded && hasContent ? '1px solid transparent' : '1px dashed var(--rah-border)',
+      border: expanded && state ? '1px solid transparent' : '1px dashed var(--rah-border)',
       outline: dragOverSlot === slot ? '2px dashed var(--rah-accent-green)' : 'none',
       outlineOffset: '-4px',
       transition: 'outline 0.15s ease, background 0.15s ease',
@@ -930,16 +829,7 @@ export default function ThreePanelLayout() {
   };
 
   const renderCollapsedPanel = (slot: SlotId) => (
-    <div
-      style={{
-        flex: 1,
-        minHeight: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '8px 0',
-      }}
-    >
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 0' }}>
       <button
         type="button"
         onClick={() => {
@@ -969,9 +859,9 @@ export default function ThreePanelLayout() {
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div
         draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData('application/x-rah-pane', slot);
-          e.dataTransfer.effectAllowed = 'move';
+        onDragStart={(event) => {
+          event.dataTransfer.setData('application/x-rah-pane', slot);
+          event.dataTransfer.effectAllowed = 'move';
         }}
         style={{
           minHeight: '48px',
@@ -985,10 +875,7 @@ export default function ThreePanelLayout() {
         <GripVertical size={14} color="var(--rah-text-muted)" />
         <button
           type="button"
-          onClick={() => {
-            getSlotSetter(slot)(null);
-            setPanelExpanded(slot, false);
-          }}
+          onClick={() => closeActiveSlot(slot)}
           title="Collapse panel"
           style={{
             width: '28px',
@@ -1006,17 +893,7 @@ export default function ThreePanelLayout() {
           <X size={14} />
         </button>
       </div>
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'var(--rah-text-muted)',
-          fontSize: '13px',
-        }}
-      >
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rah-text-muted)', fontSize: '13px' }}>
         Select a pane from the nav
       </div>
     </div>
@@ -1036,36 +913,34 @@ export default function ThreePanelLayout() {
       <LeftToolbar
         onSearchClick={() => setShowSearchModal(true)}
         onAddStuffClick={() => setShowAddStuff(true)}
+        onRefreshClick={handleRefreshAll}
         onSettingsClick={() => {
           setSettingsInitialTab(undefined);
           setShowSettings(true);
         }}
-        onPaneTypeClick={openPaneSingleton}
+        onPaneTypeClick={(paneType) => {
+          if (paneType !== 'node') {
+            openPaneSingleton(paneType, 'A');
+          }
+        }}
         isExpanded={leftNavExpanded}
-        onToggleExpanded={() => setLeftNavExpanded(prev => !prev)}
-        openTabTypes={new Set([slotA?.type, slotB?.type, slotC?.type].filter((t): t is PaneType => t != null))}
-        activeTabType={getSlotState(activePane)?.type ?? null}
-        onRefreshClick={handleRefreshAll}
+        onToggleExpanded={() => setLeftNavExpanded((prev) => !prev)}
+        openTabTypes={openTabTypes}
+        activeTabType={activeTabType}
         theme={theme}
         onThemeToggle={toggleTheme}
         contexts={availableContexts}
-        onContextQuickSelect={(contextId, contextName) => {
+        onContextQuickSelect={(contextId) => {
           const target = openPaneSingleton('views', 'A');
           setBrowseContextFilters((prev) => ({ ...prev, [target]: contextId }));
-          setBrowseDimensionFilters((prev) => ({ ...prev, [target]: null }));
           setActiveContextId(contextId);
-          setActivePane(target);
-          void contextName;
         }}
       />
 
-      <div
-        ref={containerRef}
-        style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: '8px', gap: '4px' }}
-      >
+      <div ref={containerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: '8px', gap: '4px' }}>
         {(['A', 'B', 'C'] as SlotId[]).flatMap((slot, index, allSlots) => {
           const state = slotStates[slot];
-          const expanded = panelExpandedState[slot];
+          const expanded = isPanelExpanded(slot);
           const items: React.ReactNode[] = [];
 
           items.push(
@@ -1075,9 +950,9 @@ export default function ThreePanelLayout() {
                 panelRefs.current[slot] = node;
               }}
               onClick={() => setActivePane(slot)}
-              onDragOver={(e) => handleSlotDragOver(e, slot)}
-              onDragLeave={handleSlotDragLeave}
-              onDrop={(e) => handleSlotDrop(e, slot)}
+              onDragOver={(event) => handleSlotDragOver(event, slot)}
+              onDragLeave={() => setDragOverSlot(null)}
+              onDrop={(event) => handleSlotDrop(event, slot)}
               style={getSlotContainerStyle(slot)}
             >
               {!expanded ? renderCollapsedPanel(slot) : state ? renderSlot(slot, state) : renderExpandedEmptyPanel(slot)}
@@ -1085,7 +960,7 @@ export default function ThreePanelLayout() {
           );
 
           const nextSlot = allSlots[index + 1];
-          if (nextSlot && expanded && panelExpandedState[nextSlot]) {
+          if (nextSlot && expanded && isPanelExpanded(nextSlot)) {
             items.push(
               <SplitHandle
                 key={`split-${slot}-${nextSlot}`}
@@ -1102,7 +977,10 @@ export default function ThreePanelLayout() {
       <SearchModal
         isOpen={showSearchModal}
         onClose={() => setShowSearchModal(false)}
-        onNodeSelect={handleSearchNodeSelect}
+        onNodeSelect={(nodeId) => {
+          openNodeFromSlot(nodeId);
+          setShowSearchModal(false);
+        }}
         existingFilters={[]}
       />
 

@@ -15,6 +15,7 @@ export interface QuickAddInput {
   rawInput: string;
   mode?: QuickAddMode;
   description?: string;
+  contextId?: number | null;
 }
 
 export interface QuickAddResult {
@@ -65,7 +66,7 @@ function buildTaskPrompt(type: QuickAddInputType, input: string): string {
     case 'pdf':
       return `Quick Add: extract PDF and create node → ${input}`;
     case 'note':
-      return `Quick Add note: create a node from this text with no dimensions → ${input}`;
+      return `Quick Add note: create a node from this text with optional context → ${input}`;
     case 'chat':
       return `Quick Add: import chat transcript and summarize → ${input.slice(0, 120)}${input.length > 120 ? '…' : ''}`;
   }
@@ -199,12 +200,11 @@ function isCreateNodeResponse(value: unknown): value is CreateNodeResponse {
   return true;
 }
 
-async function handleExtractionQuickAdd(type: ExtractionQuickAddType, url: string, task: string): Promise<string> {
+async function handleExtractionQuickAdd(type: ExtractionQuickAddType, url: string, task: string, contextId?: number | null): Promise<string> {
   const { toolName, execute } = EXTRACTION_TOOL_MAP[type];
   if (!execute) {
     throw new Error(`Tool ${toolName} does not have an execute function`);
   }
-
   try {
     const rawResult = await execute({ url }, { toolCallId: 'quickadd-extract', messages: [] });
 
@@ -263,6 +263,7 @@ async function handleExtractionQuickAdd(type: ExtractionQuickAddType, url: strin
             refined_at: new Date().toISOString(),
           },
         },
+        context_id: contextId,
       }),
     });
 
@@ -289,7 +290,7 @@ async function handleExtractionQuickAdd(type: ExtractionQuickAddType, url: strin
   }
 }
 
-async function handleNoteQuickAdd(rawInput: string, task: string, userDescription?: string): Promise<string> {
+async function handleNoteQuickAdd(rawInput: string, task: string, userDescription?: string, contextId?: number | null): Promise<string> {
   const content = rawInput.trim();
   if (!content) {
     throw new Error('Input is required to create a note');
@@ -299,6 +300,7 @@ async function handleNoteQuickAdd(rawInput: string, task: string, userDescriptio
   const nodePayload: Record<string, unknown> = {
     title,
     source: content,
+    context_id: contextId,
     metadata: {
       type: 'note',
       state: 'not_processed',
@@ -310,6 +312,7 @@ async function handleNoteQuickAdd(rawInput: string, task: string, userDescriptio
     },
   };
 
+  // If user provided a description, use it instead of auto-generating
   if (userDescription && userDescription.trim()) {
     nodePayload.description = userDescription.trim();
   }
@@ -342,7 +345,7 @@ async function handleNoteQuickAdd(rawInput: string, task: string, userDescriptio
   });
 }
 
-async function handleChatTranscriptQuickAdd(rawInput: string, task: string): Promise<string> {
+async function handleChatTranscriptQuickAdd(rawInput: string, task: string, contextId?: number | null): Promise<string> {
   const transcript = rawInput.trim();
   if (!transcript) {
     throw new Error('Input is required to import a chat transcript');
@@ -401,8 +404,9 @@ async function handleChatTranscriptQuickAdd(rawInput: string, task: string): Pro
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title,
-      source: transcript,
       description: nodeDescription,
+      source: transcript,
+      context_id: contextId,
       metadata,
     }),
   });
@@ -429,7 +433,7 @@ async function handleChatTranscriptQuickAdd(rawInput: string, task: string): Pro
   });
 }
 
-export async function enqueueQuickAdd({ rawInput, mode, description }: QuickAddInput): Promise<QuickAddResult> {
+export async function enqueueQuickAdd({ rawInput, mode, description, contextId }: QuickAddInput): Promise<QuickAddResult> {
   const inputType = detectInputType(rawInput, mode);
   const task = buildTaskPrompt(inputType, rawInput);
   const id = `qa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -441,21 +445,25 @@ export async function enqueueQuickAdd({ rawInput, mode, description }: QuickAddI
     status: 'queued',
   };
 
+  // Run async - fire and forget
   setImmediate(async () => {
     try {
+      let summary: string;
       if (inputType === 'note') {
-        await handleNoteQuickAdd(rawInput, task, description);
+        summary = await handleNoteQuickAdd(rawInput, task, description, contextId);
       } else if (inputType === 'chat') {
-        await handleChatTranscriptQuickAdd(rawInput, task);
+        summary = await handleChatTranscriptQuickAdd(rawInput, task, contextId);
       } else {
-        await handleExtractionQuickAdd(inputType as ExtractionQuickAddType, rawInput, task);
+        summary = await handleExtractionQuickAdd(inputType as ExtractionQuickAddType, rawInput, task, contextId);
       }
 
       console.log(`[QuickAdd] Completed: ${task}`);
+      // Broadcast completion so ThreePanelLayout can remove the pending placeholder
       eventBroadcaster.broadcast({
         type: 'QUICK_ADD_COMPLETED',
         data: { quickAddId: id, source: 'quick-add' }
       });
+      // Also broadcast NODE_CREATED to refresh the feed
       eventBroadcaster.broadcast({
         type: 'NODE_CREATED',
         data: { node: { title: task }, source: 'quick-add' }

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Filter, ChevronDown, ChevronLeft, ChevronRight, X, ArrowUpDown, Search, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, X, ArrowUpDown, Search, ExternalLink } from 'lucide-react';
 import type { Node } from '@/types/database';
 import { formatRelativeDate } from '@/utils/formatDate';
 
@@ -16,12 +16,6 @@ const SORT_LABELS: Record<SortOrder, string> = {
 };
 
 const PAGE_SIZE = 50;
-
-interface DimensionSummary {
-  dimension: string;
-  count: number;
-  isPriority: boolean;
-}
 
 interface DatabaseTableViewProps {
   onNodeClick: (nodeId: number) => void;
@@ -46,40 +40,10 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
   const [sortOrder, setSortOrder] = useState<SortOrder>('updated');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearch, setActiveSearch] = useState('');
-  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
-  const [dimensions, setDimensions] = useState<DimensionSummary[]>([]);
-  const [showFilterPicker, setShowFilterPicker] = useState(false);
-  const [filterSearchQuery, setFilterSearchQuery] = useState('');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
 
-  const filterPickerRef = useRef<HTMLDivElement>(null);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
-
-  const sortedDimensions = useMemo(() => {
-    return [...dimensions].sort((a, b) => {
-      if (a.isPriority && !b.isPriority) return -1;
-      if (!a.isPriority && b.isPriority) return 1;
-      return a.dimension.localeCompare(b.dimension);
-    });
-  }, [dimensions]);
-
-  const filterPickerDimensions = sortedDimensions.filter(d =>
-    d.dimension.toLowerCase().includes(filterSearchQuery.toLowerCase())
-  );
-
-  // Fetch dimensions
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/api/dimensions');
-        const data = await res.json();
-        if (data.success) setDimensions(data.data || []);
-      } catch (e) {
-        console.error('Error fetching dimensions:', e);
-      }
-    })();
-  }, [refreshToken]);
 
   // Fetch nodes
   const fetchNodes = useCallback(async () => {
@@ -91,10 +55,6 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
         sortBy: sortOrder,
       });
       if (activeSearch) params.set('search', activeSearch);
-      if (selectedFilters.length > 0) {
-        params.set('dimensions', selectedFilters.join(','));
-        params.set('dimensionsMatch', 'all');
-      }
 
       const res = await fetch(`/api/nodes?${params}`);
       const data = await res.json();
@@ -107,32 +67,27 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
     } finally {
       setLoading(false);
     }
-  }, [page, sortOrder, activeSearch, selectedFilters]);
+  }, [page, sortOrder, activeSearch]);
 
   useEffect(() => {
     fetchNodes();
   }, [fetchNodes, refreshToken]);
 
   // Reset to page 1 when filters/sort/search change
-  const filtersKey = selectedFilters.join(',');
   useEffect(() => {
     setPage(1);
-  }, [sortOrder, activeSearch, filtersKey]);
+  }, [sortOrder, activeSearch]);
 
   // Close dropdowns on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (showFilterPicker && filterPickerRef.current && !filterPickerRef.current.contains(e.target as HTMLElement)) {
-        setShowFilterPicker(false);
-        setFilterSearchQuery('');
-      }
       if (showSortDropdown && sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as HTMLElement)) {
         setShowSortDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showFilterPicker, showSortDropdown]);
+  }, [showSortDropdown]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,108 +144,7 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
           </div>
         </form>
 
-        {/* Filter chips + button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, flexWrap: 'wrap' }}>
-          {selectedFilters.map(f => (
-            <div key={f} style={{
-              display: 'flex', alignItems: 'center', gap: '4px',
-              padding: '2px 7px',
-              background: 'rgba(34, 197, 94, 0.06)',
-              border: '1px solid rgba(34, 197, 94, 0.12)',
-              borderRadius: '4px', fontSize: '11px', color: '#5a9'
-            }}>
-              {f}
-              <button
-                onClick={() => setSelectedFilters(selectedFilters.filter(x => x !== f))}
-                style={{ background: 'transparent', border: 'none', color: '#5a9', cursor: 'pointer', padding: 0, display: 'flex' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = '#5a9'; }}
-              >
-                <X size={10} />
-              </button>
-            </div>
-          ))}
-          <div style={{ position: 'relative' }} ref={filterPickerRef}>
-            <button
-              onClick={() => setShowFilterPicker(!showFilterPicker)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '4px',
-                padding: '4px 7px', background: 'transparent',
-                border: '1px solid var(--rah-border)', borderRadius: '5px',
-                color: 'var(--rah-text-soft)', fontSize: '11px', cursor: 'pointer',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-            >
-              <Filter size={11} />
-              Filter
-            </button>
-
-            {showFilterPicker && (
-              <div style={{
-                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                background: 'var(--rah-bg-panel)', border: '1px solid var(--rah-border)', borderRadius: '10px',
-                padding: '6px', minWidth: '220px', maxHeight: '320px', overflowY: 'auto',
-                zIndex: 1000, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-              }}>
-                <input
-                  type="text"
-                  value={filterSearchQuery}
-                  onChange={(e) => setFilterSearchQuery(e.target.value)}
-                  placeholder="Search dimensions..."
-                  autoFocus
-                  style={{
-                    width: '100%', padding: '7px 10px', background: 'var(--rah-bg-base)',
-                    border: '1px solid transparent', borderRadius: '6px',
-                    color: 'var(--rah-text-active)', fontSize: '12px', marginBottom: '4px', outline: 'none',
-                  }}
-                />
-                {filterPickerDimensions.length === 0 ? (
-                  <div style={{ padding: '12px', color: 'var(--rah-text-muted)', fontSize: '12px', textAlign: 'center' }}>
-                    No matching dimensions
-                  </div>
-                ) : (
-                  filterPickerDimensions.map(d => (
-                    <button
-                      key={d.dimension}
-                      onClick={() => {
-                        if (!selectedFilters.includes(d.dimension)) {
-                          setSelectedFilters([...selectedFilters, d.dimension]);
-                        }
-                        setShowFilterPicker(false);
-                        setFilterSearchQuery('');
-                      }}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        width: '100%', padding: '7px 10px', background: 'transparent',
-                        border: 'none', borderRadius: '5px', color: 'var(--rah-text-secondary)',
-                        fontSize: '12px', cursor: 'pointer', textAlign: 'left',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                    >
-                      <span>{d.dimension}</span>
-                      <span style={{ color: 'var(--rah-text-muted)', fontSize: '10px', background: 'var(--rah-bg-active)', padding: '1px 6px', borderRadius: '10px' }}>
-                        {d.count}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {selectedFilters.length > 0 && (
-            <button
-              onClick={() => setSelectedFilters([])}
-              style={{ padding: '4px 6px', background: 'transparent', border: 'none', color: 'var(--rah-text-muted)', fontSize: '11px', cursor: 'pointer' }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--rah-text-muted)'; }}
-            >
-              Clear
-            </button>
-          )}
-        </div>
+        <div style={{ flex: 1 }} />
 
         {/* Sort dropdown */}
         <div style={{ position: 'relative' }} ref={sortDropdownRef}>
@@ -393,7 +247,7 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
           <div style={{ padding: '40px', color: 'var(--rah-text-muted)', textAlign: 'center', fontSize: '13px' }}>Loading...</div>
         ) : nodes.length === 0 ? (
           <div style={{ padding: '40px', color: 'var(--rah-text-muted)', textAlign: 'center', fontSize: '13px' }}>
-            {activeSearch || selectedFilters.length > 0 ? 'No nodes match your filters.' : 'No nodes yet.'}
+            {activeSearch ? 'No nodes match your search.' : 'No nodes yet.'}
           </div>
         ) : (
           <table style={{ minWidth: '1600px', width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
@@ -402,9 +256,9 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
                 <th style={thStyle({ width: '240px' })}>TITLE</th>
                 <th style={thStyle({ width: '55px', textAlign: 'right' })}>ID</th>
                 <th style={thStyle({ width: '200px' })}>DESCRIPTION</th>
-                <th style={thStyle({ width: '160px' })}>NOTES</th>
+                <th style={thStyle({ width: '160px' })}>SOURCE</th>
                 <th style={thStyle({ width: '180px' })}>LINK</th>
-                <th style={thStyle({ width: '160px' })}>DIMENSIONS</th>
+                <th style={thStyle({ width: '160px' })}>CONTEXT</th>
                 <th style={thStyle({ width: '50px', textAlign: 'right' })}>EDGES</th>
                 <th style={thStyle({ width: '90px' })}>EVENT</th>
                 <th style={thStyle({ width: '85px' })}>UPDATED</th>
@@ -488,26 +342,19 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
                       </div>
                     </td>
 
-                    {/* Dimensions */}
+                    {/* Context */}
                     <td style={tdStyle()}>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', overflow: 'hidden', maxHeight: '36px' }}>
-                        {node.dimensions && node.dimensions.length > 0 ? (
+                        {node.context?.name ? (
                           <>
-                            {node.dimensions.slice(0, 3).map(d => (
-                              <span key={d} style={{
-                                fontSize: '9px', padding: '1px 5px',
-                                background: 'var(--rah-accent-green-soft)', border: '1px solid var(--rah-accent-green-soft-strong)',
-                                color: 'var(--rah-accent-green)', borderRadius: '3px',
-                                whiteSpace: 'nowrap',
-                              }}>
-                                {d}
-                              </span>
-                            ))}
-                            {node.dimensions.length > 3 && (
-                              <span style={{ fontSize: '9px', color: 'var(--rah-text-muted)' }}>
-                                +{node.dimensions.length - 3}
-                              </span>
-                            )}
+                            <span style={{
+                              fontSize: '9px', padding: '1px 5px',
+                              background: 'var(--rah-accent-green-soft)', border: '1px solid var(--rah-accent-green-soft-strong)',
+                              color: 'var(--rah-accent-green)', borderRadius: '3px',
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {node.context.name}
+                            </span>
                           </>
                         ) : (
                           <span style={{ fontSize: '10px', color: 'var(--rah-text-muted)' }}>{'\u2014'}</span>

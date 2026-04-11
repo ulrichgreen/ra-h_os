@@ -6,7 +6,6 @@ import type { Node } from '@/types/database';
 import { scoreNodeSearchMatch } from '@/services/database/searchRanking';
 
 type QueryNodeFilters = {
-  dimensions?: string[];
   contextId?: number;
   search?: string;
   limit?: number;
@@ -17,10 +16,9 @@ type QueryNodeFilters = {
 };
 
 export const queryNodesTool = tool({
-  description: 'Search nodes across title, description, and source. For free-text lookups, search the graph broadly and prioritize title/description matches. Do not use dimensions to constrain keyword search unless the user is explicitly asking about a known dimension.',
+  description: 'Search nodes across title, description, and source. For free-text lookups, search the graph broadly and prioritize title/description matches. Use context filtering only when the user is explicitly asking about a known context.',
   inputSchema: z.object({
     filters: z.object({
-      dimensions: z.array(z.string()).describe('Filter by dimensions (e.g., ["research", "ai", "technology"]). Replaces old type/stage filtering.').optional(),
       contextId: z.number().int().positive().describe('Optional primary context filter.').optional(),
       search: z.string().describe('Search term to match against node title, description, or source').optional(),
       limit: z.number().min(1).max(50).default(10).describe('Maximum number of results to return'),
@@ -54,7 +52,6 @@ export const queryNodesTool = tool({
         const formatted = formatNodeForChat({
           id: node.id,
           title: node.title,
-          dimensions: node.dimensions || [],
         });
 
         return {
@@ -63,7 +60,6 @@ export const queryNodesTool = tool({
             nodes: [{
               id: node.id,
               title: node.title,
-              dimensions: node.dimensions || [],
               created_at: node.created_at,
               updated_at: node.updated_at,
               event_date: node.event_date ?? null,
@@ -83,7 +79,6 @@ export const queryNodesTool = tool({
 
         const nodesPromise: Promise<Node[] | undefined> = nodeService.getNodes({
           limit,
-          dimensions: queryFilters.dimensions,
           contextId: queryFilters.contextId,
           search: queryFilters.search,
           searchMode: searchTerm ? 'hybrid' : 'standard',
@@ -97,9 +92,7 @@ export const queryNodesTool = tool({
         return Array.isArray(nodes) ? nodes : [];
       };
 
-      const effectiveFilters = searchTerm
-        ? { ...filters, dimensions: undefined }
-        : { ...filters };
+      const effectiveFilters = { ...filters };
 
       let safeNodes = await runQuery(effectiveFilters);
 
@@ -118,12 +111,10 @@ export const queryNodesTool = tool({
         const formatted = formatNodeForChat({
           id: node.id,
           title: node.title,
-          dimensions: node.dimensions || []
         });
         return {
           id: node.id,
           title: node.title,
-          dimensions: node.dimensions || [],
           created_at: node.created_at,
           updated_at: node.updated_at,
           event_date: node.event_date ?? null,
@@ -133,7 +124,7 @@ export const queryNodesTool = tool({
 
       // Create message with formatted node labels only (no full node payload)
       const formattedLabels = formattedNodes.map(node => node.formatted_display).join(', ');
-      const message = `Found ${safeNodes.length} nodes${effectiveFilters.dimensions ? ` with dimensions: ${effectiveFilters.dimensions.join(', ')}` : ''}${effectiveFilters.search ? ` matching: "${effectiveFilters.search}"` : ''}${formattedLabels ? `:\n${formattedLabels}` : ''}`;
+      const message = `Found ${safeNodes.length} nodes${effectiveFilters.search ? ` matching: "${effectiveFilters.search}"` : ''}${formattedLabels ? `:\n${formattedLabels}` : ''}`;
 
       return {
         success: true,

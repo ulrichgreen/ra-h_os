@@ -3,7 +3,7 @@ import { Scenario } from '../types';
 export const scenario: Scenario = {
   id: 'search-doc-to-lora',
   name: 'Search Doc-to-LoRA',
-  description: 'Free-text graph search should find the Doc-to-LoRA node by title without speculative dimension constraints or unnecessary web search.',
+  description: 'Free-text graph search should find the Doc-to-LoRA node by title without speculative context constraints or unnecessary web search.',
   categories: ['search'],
   tools: ['queryNodes'],
   input: {
@@ -17,5 +17,5 @@ export const scenario: Scenario = {
     maxTotalTokens: 8000,
     maxEstimatedCostUsd: 0.08,
   },
-  notes: 'Regression for the failure where free-text search was over-constrained by guessed dimensions and missed the existing Doc-to-LoRA node.',
+  notes: 'Regression for the failure where free-text search was over-constrained by guessed organization hints and missed the existing Doc-to-LoRA node.',
 };

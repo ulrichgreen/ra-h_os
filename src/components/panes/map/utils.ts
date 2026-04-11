@@ -1,55 +1,44 @@
 import type { Node as DbNode, Edge as DbEdge } from '@/types/database';
 import type { Node as RFNode, Edge as RFEdge } from '@xyflow/react';
 
-// Fixed palette for dimension border colors (muted, dark-theme-friendly)
-const DIMENSION_COLORS = [
-  '#22c55e', // green
-  '#3b82f6', // blue
-  '#f59e0b', // amber
-  '#ef4444', // red
-  '#8b5cf6', // violet
-  '#ec4899', // pink
-  '#06b6d4', // cyan
-  '#f97316', // orange
-  '#14b8a6', // teal
-  '#a855f7', // purple
+const CLUSTER_COLORS = [
+  '#22c55e',
+  '#3b82f6',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#ec4899',
+  '#06b6d4',
+  '#f97316',
+  '#14b8a6',
+  '#a855f7',
 ];
 
-export type MapViewMode = 'dimension' | 'hub';
+export type MapViewMode = 'context' | 'hub';
 
-function hashDimensionColor(dimension: string): string {
+function hashClusterColor(label: string): string {
   let hash = 0;
-  for (let i = 0; i < dimension.length; i++) {
-    hash = ((hash << 5) - hash + dimension.charCodeAt(i)) | 0;
+  for (let i = 0; i < label.length; i++) {
+    hash = ((hash << 5) - hash + label.charCodeAt(i)) | 0;
   }
-  return DIMENSION_COLORS[Math.abs(hash) % DIMENSION_COLORS.length];
+  return CLUSTER_COLORS[Math.abs(hash) % CLUSTER_COLORS.length];
 }
 
-export function getOrderedDimensions(dimensions: string[] | undefined): string[] {
-  if (!dimensions || dimensions.length === 0) {
-    return [];
-  }
-  return [...dimensions].sort((a, b) => a.localeCompare(b));
+export function getNodeClusterLabel(node: DbNode): string {
+  return node.context?.name?.trim() || 'Unscoped';
 }
 
-export function getPrimaryDimension(dimensions: string[] | undefined): string {
-  const ordered = getOrderedDimensions(dimensions);
-  return ordered[0] || 'Unsorted';
-}
-
-export function getDimensionColor(dimensions: string[] | undefined): string | undefined {
-  const primary = getPrimaryDimension(dimensions);
-  return primary === 'Unsorted' ? '#4b5563' : hashDimensionColor(primary);
+export function getClusterColor(label: string): string {
+  return label === 'Unscoped' ? '#4b5563' : hashClusterColor(label);
 }
 
 export interface RahNodeData {
   label: string;
-  dimensions: string[];
+  clusterLabel: string;
   edgeCount: number;
   isExpanded: boolean;
   dbNode: DbNode;
-  dimensionIcons?: Record<string, string>;
-  primaryDimensionColor?: string;
+  clusterColor?: string;
   clusterKey?: string;
   [key: string]: unknown;
 }
@@ -64,12 +53,15 @@ export function getSavedMapPosition(
   const metadata = typeof node.metadata === 'string'
     ? safeParseJSON(node.metadata)
     : node.metadata;
+
   const nested = metadata?.map_positions as Record<string, { x?: number; y?: number }> | undefined;
   const scoped = metadata?.[`map_position_${viewMode}`] as { x?: number; y?: number } | undefined;
   const saved = nested?.[viewMode] || scoped;
+
   if (saved?.x !== undefined && saved?.y !== undefined) {
     return { x: saved.x, y: saved.y };
   }
+
   return null;
 }
 
@@ -78,11 +70,12 @@ function getAllNodes(baseNodes: DbNode[], expandedNodes: DbNode[]): DbNode[] {
   return [...baseNodes, ...expandedNodes.filter((node) => !baseIds.has(node.id))];
 }
 
-function buildDimensionLayout(nodes: DbNode[], centerX: number, centerY: number): Map<string, { x: number; y: number }> {
+function buildContextLayout(nodes: DbNode[], centerX: number, centerY: number): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
   const groups = new Map<string, DbNode[]>();
+
   for (const node of nodes) {
-    const key = getPrimaryDimension(node.dimensions);
+    const key = getNodeClusterLabel(node);
     const existing = groups.get(key) || [];
     existing.push(node);
     groups.set(key, existing);
@@ -97,7 +90,10 @@ function buildDimensionLayout(nodes: DbNode[], centerX: number, centerY: number)
   const originY = centerY - ((rows - 1) * clusterGapY) / 2;
 
   clusterKeys.forEach((clusterKey, clusterIndex) => {
-    const clusterNodes = (groups.get(clusterKey) || []).sort((a, b) => (b.edge_count ?? 0) - (a.edge_count ?? 0));
+    const clusterNodes = (groups.get(clusterKey) || []).sort((a, b) => {
+      return (b.edge_count ?? 0) - (a.edge_count ?? 0);
+    });
+
     const clusterColumn = clusterIndex % columns;
     const clusterRow = Math.floor(clusterIndex / columns);
     const clusterCenterX = originX + clusterColumn * clusterGapX;
@@ -147,6 +143,7 @@ function buildHubLayout(
   const orphanNodes: DbNode[] = [];
   for (const node of sortedNodes) {
     if (hubIds.has(node.id)) continue;
+
     const neighbours = adjacency.get(node.id) || [];
     const connectedHub = hubs
       .filter((hub) => neighbours.includes(hub.id))
@@ -193,9 +190,10 @@ function buildHubLayout(
 }
 
 export function getClusterKey(node: DbNode, viewMode: MapViewMode, dbEdges: DbEdge[]): string {
-  if (viewMode === 'dimension') {
-    return getPrimaryDimension(node.dimensions);
+  if (viewMode === 'context') {
+    return getNodeClusterLabel(node);
   }
+
   return `hub:${node.id}`;
 }
 
@@ -207,14 +205,13 @@ export function toRFNodes(
   selectedNodeId: number | null,
   connectedNodeIds: Set<number>,
   existingPositions: Map<string, { x: number; y: number }>,
-  dimensionIcons: Record<string, string> | undefined,
   viewMode: MapViewMode,
   dbEdges: DbEdge[],
 ): RFNode<RahNodeData>[] {
   const allNodes = getAllNodes(baseNodes, expandedNodes);
   const hasSelection = selectedNodeId !== null;
-  const clusterLayout = viewMode === 'dimension'
-    ? buildDimensionLayout(allNodes, centerX, centerY)
+  const clusterLayout = viewMode === 'context'
+    ? buildContextLayout(allNodes, centerX, centerY)
     : buildHubLayout(allNodes, dbEdges, centerX, centerY);
   const baseNodeIds = new Set(baseNodes.map((node) => node.id));
 
@@ -225,6 +222,7 @@ export function toRFNodes(
     const fallbackPos = clusterLayout.get(id) || { x: centerX, y: centerY };
     const pos = existingPos || savedPos || fallbackPos;
     const isDimmed = hasSelection && node.id !== selectedNodeId && !connectedNodeIds.has(node.id);
+    const clusterLabel = getNodeClusterLabel(node);
 
     return {
       id,
@@ -233,23 +231,17 @@ export function toRFNodes(
       className: isDimmed ? 'dimmed' : undefined,
       data: {
         label: node.title || 'Untitled',
-        dimensions: getOrderedDimensions(node.dimensions),
+        clusterLabel,
         edgeCount: node.edge_count ?? 0,
         isExpanded: !baseNodeIds.has(node.id),
         dbNode: node,
-        dimensionIcons,
-        primaryDimensionColor: getDimensionColor(node.dimensions),
-        clusterKey: viewMode === 'dimension' ? getPrimaryDimension(node.dimensions) : undefined,
+        clusterColor: getClusterColor(clusterLabel),
+        clusterKey: viewMode === 'context' ? clusterLabel : undefined,
       },
     };
   });
 }
 
-/**
- * Transform DB edges into React Flow edges, filtering to only those
- * connecting nodes currently in the graph.
- * When a node is selected, connected edges are highlighted and others dimmed.
- */
 export function toRFEdges(
   dbEdges: DbEdge[],
   nodeIds: Set<string>,
@@ -258,19 +250,18 @@ export function toRFEdges(
   const hasSelection = selectedNodeId !== null;
 
   return dbEdges
-    .filter(e => nodeIds.has(String(e.from_node_id)) && nodeIds.has(String(e.to_node_id)))
-    .map(e => {
+    .filter((edge) => nodeIds.has(String(edge.from_node_id)) && nodeIds.has(String(edge.to_node_id)))
+    .map((edge) => {
       const isConnected = hasSelection && (
-        e.from_node_id === selectedNodeId || e.to_node_id === selectedNodeId
+        edge.from_node_id === selectedNodeId || edge.to_node_id === selectedNodeId
       );
       const isDimmed = hasSelection && !isConnected;
-
-      const explanation = typeof e.context?.explanation === 'string' ? e.context.explanation : '';
+      const explanation = typeof edge.context?.explanation === 'string' ? edge.context.explanation : '';
 
       return {
-        id: String(e.id),
-        source: String(e.from_node_id),
-        target: String(e.to_node_id),
+        id: String(edge.id),
+        source: String(edge.from_node_id),
+        target: String(edge.to_node_id),
         type: 'rahEdge',
         animated: isConnected,
         data: { explanation },
@@ -284,7 +275,7 @@ export function toRFEdges(
     });
 }
 
-function safeParseJSON(str: string | null | undefined): Record<string, unknown> | null {
+function safeParseJSON(str: string | null | undefined): Record<string, any> | null {
   if (!str || str === 'null') return null;
   try {
     return JSON.parse(str);

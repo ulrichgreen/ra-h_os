@@ -4,13 +4,9 @@
  */
 
 import Database from 'better-sqlite3';
-import {
-  ensureDatabaseDirectory,
-  getDatabasePath,
-  getDbVectorCapability,
-  getVecExtensionPath,
-  loadVecExtension,
-} from '@/services/database/sqlite-runtime';
+import path from 'path';
+import os from 'os';
+import { getDbVectorCapability as getVectorCapability } from '@/services/database/sqlite-runtime';
 
 /**
  * Serialize a float array to binary format for vec0 storage
@@ -36,23 +32,55 @@ export function deserializeFloat32Vector(blob: Buffer): number[] {
 }
 
 /**
+ * Get SQLite database path from environment or default location
+ */
+export function getDatabasePath(): string {
+  const envPath = process.env.SQLITE_DB_PATH;
+  if (envPath) {
+    return envPath;
+  }
+
+  // Default path: ~/Library/Application Support/RA-H/db/rah.sqlite
+  const homeDir = os.homedir();
+  return path.join(homeDir, 'Library', 'Application Support', 'RA-H', 'db', 'rah.sqlite');
+}
+
+/**
+ * Get vec extension path from environment or default location
+ */
+export function getVecExtensionPath(): string {
+  const envPath = process.env.SQLITE_VEC_EXTENSION_PATH;
+  if (envPath) {
+    return envPath;
+  }
+
+  // Default path relative to project root
+  return path.join(process.cwd(), 'vendor', 'sqlite-extensions', 'vec0.dylib');
+}
+
+/**
  * Create database connection with vec0 extension loaded
  */
 export function createDatabaseConnection(): Database.Database {
   const dbPath = getDatabasePath();
   const vecPath = getVecExtensionPath();
-  ensureDatabaseDirectory(dbPath);
+
   const db = new Database(dbPath);
 
-  const capability = loadVecExtension(db, vecPath);
-  if (!capability.available) {
-    console.warn(`Warning: ${capability.reason}`);
+  // Load vec0 extension
+  try {
+    db.loadExtension(vecPath);
+  } catch (error) {
+    console.error('Warning: Could not load vec0 extension:', error);
+    // Continue without vector support for non-vector operations
   }
 
   return db;
 }
 
-export { getDatabasePath, getDbVectorCapability, getVecExtensionPath };
+export function getDbVectorCapability(db: Database.Database) {
+  return getVectorCapability(db);
+}
 
 /**
  * Format embedding text for node metadata
@@ -60,12 +88,12 @@ export { getDatabasePath, getDbVectorCapability, getVecExtensionPath };
 export function formatEmbeddingText(
   title: string,
   content: string,
-  dimensions: string[],
-  description?: string | null
+  description?: string | null,
+  contextName?: string | null
 ): string {
   const descriptionText = description && description.trim() ? description.trim() : 'none';
-  const dimensionsText = dimensions.length > 0 ? dimensions.join(', ') : 'none';
-  return `Title: ${title}\n\nDescription: ${descriptionText}\n\nContent: ${content}\n\nDimensions: ${dimensionsText}`;
+  const contextText = contextName && contextName.trim() ? contextName.trim() : 'none';
+  return `Title: ${title}\n\nDescription: ${descriptionText}\n\nContent: ${content}\n\nContext: ${contextText}`;
 }
 
 /**
@@ -78,16 +106,16 @@ export async function batchProcess<T, R>(
   onProgress?: (processed: number, total: number) => void
 ): Promise<R[]> {
   const results: R[] = [];
-  
+
   for (let i = 0; i < items.length; i += batchSize) {
     const batch = items.slice(i, Math.min(i + batchSize, items.length));
     const batchResults = await Promise.all(batch.map(processor));
     results.push(...batchResults);
-    
+
     if (onProgress) {
       onProgress(Math.min(i + batchSize, items.length), items.length);
     }
   }
-  
+
   return results;
 }

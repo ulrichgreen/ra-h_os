@@ -177,7 +177,9 @@ export class ContextService {
   }
 
   async resolveContextId(input: { context_id?: number | null; context_name?: string | null }): Promise<number | null | undefined> {
-    const hasContextId = Object.prototype.hasOwnProperty.call(input, 'context_id');
+    const hasContextId =
+      Object.prototype.hasOwnProperty.call(input, 'context_id') &&
+      input.context_id !== undefined;
     const hasContextName = typeof input.context_name === 'string' && input.context_name.trim().length > 0;
 
     if (!hasContextId && !hasContextName) {

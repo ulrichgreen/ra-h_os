@@ -29,7 +29,6 @@ export async function GET(request: NextRequest) {
     const results = nodes.map(node => ({
       id: node.id,
       title: node.title,
-      dimensions: node.dimensions
     }));
     
     return NextResponse.json({

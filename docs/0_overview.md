@@ -12,7 +12,7 @@ RA-OS is a minimal knowledge graph UI with MCP server integration. It provides a
 
 **Agent-agnostic** — No built-in AI chat. Instead, RA-OS exposes an MCP server that any AI agent (Claude Code, custom agents) can connect to.
 
-**Simple & focused** — 2-panel UI for browsing and editing your knowledge graph. No bloat.
+**Simple & focused** — A compact multi-pane UI for browsing and editing your knowledge graph. No bloat.
 
 ## Tech Stack
 
@@ -23,8 +23,8 @@ RA-OS is a minimal knowledge graph UI with MCP server integration. It provides a
 
 ## What's Included
 
-- 2-panel UI (nodes list + focus panel)
-- Node/Edge/Dimension CRUD
+- Multi-pane UI for nodes, contexts, map, table, and focus work
+- Node/Edge CRUD with optional contexts
 - Full-text and semantic search
 - MCP server with graph and skill tools
 - Skills system (shared instructions for internal + external agents)
@@ -49,7 +49,7 @@ RA-OS is a minimal knowledge graph UI with MCP server integration. It provides a
 │             │                         │
 │ • Search    │ • Node content          │
 │ • Filters   │ • Connections           │
-│ • List      │ • Dimensions            │
+│ • List      │ • Context + metadata    │
 │             │                         │
 └─────────────┴─────────────────────────┘
 ```
@@ -71,7 +71,7 @@ RA-OS is designed to be the knowledge backend for your AI workflows:
 
 Add this to `~/.claude.json` and restart Claude. Works without RA-OS running.
 
-Core tools include: `createNode`, `queryNodes`, `updateNode`, `getNodesById`, `createEdge`, `queryEdge`, `queryDimensions`, `createDimension`, `updateDimension`, `deleteDimension`, `listSkills`, `readSkill`
+Core tools include: `createNode`, `queryNodes`, `updateNode`, `getNodesById`, `createEdge`, `queryEdge`, `queryContexts`, `listSkills`, `readSkill`
 
 ## Documentation
 

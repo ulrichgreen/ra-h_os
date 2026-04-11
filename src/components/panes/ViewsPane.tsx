@@ -13,10 +13,8 @@ export interface ViewsPaneProps extends BasePaneProps {
   pendingNodes?: PendingNode[];
   onDismissPending?: (id: string) => void;
   externalContextFilterId?: number | null;
-  externalDimensionFilter?: string | null;
   onContextFilterSelect?: (contextId: number | null, contextName?: string | null) => void;
   onClearExternalContextFilter?: () => void;
-  onClearExternalDimensionFilter?: () => void;
 }
 
 export default function ViewsPane({
@@ -32,12 +30,11 @@ export default function ViewsPane({
   pendingNodes,
   onDismissPending,
   externalContextFilterId,
-  externalDimensionFilter,
   onContextFilterSelect,
   onClearExternalContextFilter,
-  onClearExternalDimensionFilter,
 }: ViewsPaneProps) {
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
+
   const handleTypeChange = (type: PaneType) => {
     onPaneAction?.({ type: 'switch-pane-type', paneType: type });
   };
@@ -65,10 +62,8 @@ export default function ViewsPane({
           pendingNodes={pendingNodes}
           onDismissPending={onDismissPending}
           externalContextFilterId={externalContextFilterId}
-          externalDimensionFilter={externalDimensionFilter}
           onContextFilterSelect={onContextFilterSelect}
           onClearExternalContextFilter={onClearExternalContextFilter}
-          onClearExternalDimensionFilter={onClearExternalDimensionFilter}
           toolbarHost={toolbarHost}
         />
       </div>

@@ -1,40 +1,23 @@
-# RA-OS
+# Open Source Surface
 
-This is **RA-OS** — a minimal, local-first knowledge graph UI with MCP server integration.
+The open-source RA-H surface should match the main app contract:
 
-## What is RA-OS?
+- no runtime `dimensions` model,
+- optional soft `contexts`,
+- no automatic context assignment on write,
+- node quality driven by title, description, source, metadata, and edges.
 
-RA-OS is a stripped-down version of [RA-H](https://ra-h.app) focused on:
+## Important App Routes
 
-- **2-panel UI** for browsing and editing your knowledge graph
-- **MCP server** so external AI agents (like Claude Code) can access your notes
-- **Local SQLite** database with vector search
-- **BYO API keys** — no cloud dependencies
+- `app/api/nodes/`
+- `app/api/contexts/`
+- `app/api/edges/`
+- `app/api/rah/chat/`
+- extraction routes
+- eval / verification helpers
 
-## What's NOT Included
+## Porting Rule
 
-RA-OS intentionally excludes:
+Main `ra-h` ships first.
 
-- Chat interface (use external agents via MCP)
-- Voice features
-- Built-in AI agents
-- Auth/subscription system
-- Desktop packaging (Tauri)
-
-## Relationship to RA-H
-
-This repo (`ra-h_os`) is derived from the private `ra-h` repository. Shared features (database, UI components, MCP server) are synced from private to public.
-
-## Getting Started
-
-See [README.md](../README.md) for installation.
-
-## Contributing
-
-- **Bug reports** — Open an issue
-- **Feature requests** — Open an issue
-- **Pull requests** — Welcome for bug fixes and improvements
-
-## License
-
-MIT — See [LICENSE](../LICENSE)
+`ra-h_os` is a required follow-up port of the same contract, not a place to preserve older taxonomy behavior.

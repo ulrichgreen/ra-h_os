@@ -11,12 +11,9 @@ const packageJson = require('../../package.json');
 
 const instructions = [
   'RA-H is a personal knowledge graph — local-first, vendor-neutral.',
-  'Core concepts: contexts (primary scopes), nodes (knowledge units), edges (connections with explanations), and dimensions (secondary metadata and filters).',
-  'Always call rah_get_context first to orient yourself — it returns contexts, hub nodes, dimensions, stats, and available guides.',
-  'Use contexts as the primary scope layer. Use rah_query_contexts before assigning or filtering by context when needed.',
-  'When assigning dimensions, use only existing dimensions returned by rah_get_context or rah_query_dimensions.',
-  'Do not invent new dimensions from node titles, concepts, or phrasing.',
-  'Only call rah_create_dimension when the user explicitly instructs you to create a new dimension.',
+  'Core concepts: contexts (optional soft scopes), nodes (knowledge units), and edges (connections with explanations).',
+  'Always call rah_get_context first to orient yourself — it returns contexts, hub nodes, stats, and available guides.',
+  'Use contexts only when they are explicit and helpful. Do not expect automatic context assignment.',
   'Search before creating: use rah_search_nodes to check if content already exists.',
   'Every edge needs an explanation: why does this connection exist?',
   'All data stays local on this device; nothing leaves 127.0.0.1.',
@@ -44,7 +41,6 @@ const addNodeInputSchema = {
   description: z.string().max(500).optional().describe('Description of the node. Write it as natural prose, not labels or a checklist. It must still make clear what the artifact is, why it is in the graph (infer from conversation context; ask the user if needed), and its current workflow status. Max 500 characters. If the reason is unclear, say that naturally instead of inventing it. Never use filler phrases like "insightful for understanding" or "relevant to the user\'s work".'),
   context_id: z.number().int().positive().nullable().optional(),
   context_name: z.string().optional(),
-  dimensions: z.array(z.string()).min(1).max(5),
   metadata: z.record(z.any()).optional().describe('Optional metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.'),
   chunk: z.string().max(50000).optional()
 };
@@ -52,23 +48,13 @@ const addNodeInputSchema = {
 const addNodeOutputSchema = {
   nodeId: z.number(),
   title: z.string(),
-  dimensions: z.array(z.string()),
   message: z.string()
 };
 
 const searchNodesInputSchema = {
   query: z.string().min(1).max(400),
   limit: z.number().min(1).max(25).optional(),
-  dimensions: z.array(z.string()).max(5).optional(),
   contextId: z.number().int().positive().optional()
-};
-
-const queryContextsInputSchema = {
-  contextId: z.number().int().positive().optional(),
-  name: z.string().optional(),
-  search: z.string().optional(),
-  limit: z.number().min(1).max(100).optional(),
-  includeNodes: z.boolean().optional()
 };
 
 const searchNodesOutputSchema = {
@@ -80,8 +66,38 @@ const searchNodesOutputSchema = {
       source: z.string().nullable(),
       description: z.string().nullable(),
       link: z.string().nullable(),
-      dimensions: z.array(z.string()),
       updated_at: z.string()
+    })
+  )
+};
+
+const queryContextsInputSchema = {
+  contextId: z.number().int().positive().optional(),
+  name: z.string().optional(),
+  search: z.string().optional(),
+  limit: z.number().min(1).max(100).optional(),
+  includeNodes: z.boolean().optional()
+};
+
+const queryContextsOutputSchema = {
+  count: z.number(),
+  contexts: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      description: z.string().nullable(),
+      icon: z.string().nullable(),
+      count: z.number(),
+      nodes: z.array(
+        z.object({
+          id: z.number(),
+          title: z.string(),
+          description: z.string().nullable(),
+          link: z.string().nullable(),
+          context_id: z.number().nullable().optional(),
+          updated_at: z.string()
+        })
+      ).optional()
     })
   )
 };
@@ -96,7 +112,6 @@ const updateNodeInputSchema = {
     source: z.string().optional().describe('Canonical source text for embedding.'),
     link: z.string().optional().describe('New link'),
     context_id: z.number().int().positive().nullable().optional().describe('Primary context ID. Omit to preserve existing context; use null to clear.'),
-    dimensions: z.array(z.string()).optional().describe('New dimensions (replaces existing)'),
     metadata: z.record(z.any()).optional().describe('Metadata patch. This now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
   }).describe('Fields to update')
 };
@@ -120,7 +135,6 @@ const getNodesOutputSchema = {
       title: z.string(),
       source: z.string().nullable(),
       link: z.string().nullable(),
-      dimensions: z.array(z.string()),
       updated_at: z.string()
     })
   )
@@ -165,43 +179,6 @@ const updateEdgeInputSchema = {
 };
 
 const updateEdgeOutputSchema = {
-  success: z.boolean(),
-  message: z.string()
-};
-
-// rah_create_dimension schemas
-const createDimensionInputSchema = {
-  name: z.string().min(1).describe('Dimension name'),
-  description: z.string().max(500).optional().describe('Dimension description'),
-  isPriority: z.boolean().optional().describe('Lock dimension for auto-assignment')
-};
-
-const createDimensionOutputSchema = {
-  success: z.boolean(),
-  dimension: z.string(),
-  message: z.string()
-};
-
-// rah_update_dimension schemas
-const updateDimensionInputSchema = {
-  name: z.string().min(1).describe('Current dimension name'),
-  newName: z.string().optional().describe('New name (for renaming)'),
-  description: z.string().max(500).optional().describe('New description'),
-  isPriority: z.boolean().optional().describe('Lock/unlock dimension')
-};
-
-const updateDimensionOutputSchema = {
-  success: z.boolean(),
-  dimension: z.string(),
-  message: z.string()
-};
-
-// rah_delete_dimension schemas
-const deleteDimensionInputSchema = {
-  name: z.string().min(1).describe('Dimension name to delete')
-};
-
-const deleteDimensionOutputSchema = {
   success: z.boolean(),
   message: z.string()
 };
@@ -267,23 +244,6 @@ function logError(...args) {
   console.error('[ra-h-stdio]', ...args);
 }
 
-const sanitizeDimensions = (raw) => {
-  if (!Array.isArray(raw)) return [];
-  const result = [];
-  const seen = new Set();
-  for (const value of raw) {
-    if (typeof value !== 'string') continue;
-    const trimmed = value.trim();
-    if (!trimmed) continue;
-    const lowered = trimmed.toLowerCase();
-    if (seen.has(lowered)) continue;
-    seen.add(lowered);
-    result.push(trimmed);
-    if (result.length >= 5) break;
-  }
-  return result;
-};
-
 function readStatusFile() {
   try {
     if (!fs.existsSync(STATUS_PATH)) {
@@ -335,24 +295,18 @@ server.registerTool(
   'rah_add_node',
   {
     title: 'Add RA-H node',
-    description: 'Create a new node in the local RA-H knowledge base. Set context explicitly when clear; otherwise RA-H will infer the best-fit context automatically on create. Use only existing dimensions; do not invent new ones.',
+    description: 'Create a new node in the local RA-H knowledge base. Set context explicitly when clear and useful; otherwise leave it empty.',
     inputSchema: addNodeInputSchema,
     outputSchema: addNodeOutputSchema
   },
-  async ({ title, content, source, link, description, context_id, context_name, dimensions, metadata, chunk }) => {
-    const normalizedDimensions = sanitizeDimensions(dimensions);
-    if (normalizedDimensions.length === 0) {
-      throw new Error('At least one dimension/tag is required when creating a node.');
-    }
-
+  async ({ title, content, source, link, description, context_id, context_name, metadata, chunk }) => {
     const payload = {
       title: title.trim(),
       source: source?.trim() || content?.trim() || chunk?.trim() || undefined,
       link: link?.trim() || undefined,
       description: description?.trim() || undefined,
-      context_id: context_id === null ? null : context_id,
+      context_id,
       context_name: context_name?.trim() || undefined,
-      dimensions: normalizedDimensions,
       metadata: metadata || {}
     };
 
@@ -362,14 +316,13 @@ server.registerTool(
     });
 
     const node = result.data;
-    const summary = `Created node #${node.id}: ${node.title} [${(node.dimensions || normalizedDimensions).join(', ')}]`;
+    const summary = `Created node #${node.id}: ${node.title}`;
 
     return {
       content: [{ type: 'text', text: summary }],
       structuredContent: {
         nodeId: node.id,
         title: node.title,
-        dimensions: node.dimensions || normalizedDimensions,
         message: result.message || summary
       }
     };
@@ -384,15 +337,11 @@ server.registerTool(
     inputSchema: searchNodesInputSchema,
     outputSchema: searchNodesOutputSchema
   },
-  async ({ query, limit = 10, dimensions, contextId }) => {
+  async ({ query, limit = 10, contextId }) => {
     const params = new URLSearchParams();
     params.set('search', query.trim());
     params.set('limit', String(Math.min(Math.max(limit, 1), 25)));
 
-    const dimensionList = sanitizeDimensions(dimensions || []);
-    if (dimensionList.length > 0) {
-      params.set('dimensions', dimensionList.join(','));
-    }
     if (contextId) {
       params.set('contextId', String(contextId));
     }
@@ -417,7 +366,6 @@ server.registerTool(
           source: node.source ?? null,
           description: node.description ?? null,
           link: node.link ?? null,
-          dimensions: node.dimensions || [],
           updated_at: node.updated_at
         }))
       }
@@ -429,45 +377,81 @@ server.registerTool(
   'rah_query_contexts',
   {
     title: 'Query RA-H contexts',
-    description: 'List contexts, inspect a specific context, or search contexts by name/description.',
-    inputSchema: queryContextsInputSchema
+    description: 'List or inspect contexts, the soft organizational layer for the graph. Use this before assigning or filtering by context.',
+    inputSchema: queryContextsInputSchema,
+    outputSchema: queryContextsOutputSchema
   },
   async ({ contextId, name, search, limit = 50, includeNodes = false }) => {
-    const normalizedName = typeof name === 'string' ? name.trim().toLowerCase() : '';
+    const normalizedName = typeof name === 'string' ? name.trim() : '';
+    const normalizedSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
+
     let contexts = [];
 
     if (contextId) {
       const result = await callRaHApi(`/api/contexts/${contextId}`, { method: 'GET' });
-      if (result?.data) {
-        contexts = [result.data];
-      }
+      contexts = result.data ? [result.data] : [];
     } else {
       const result = await callRaHApi('/api/contexts', { method: 'GET' });
-      const all = Array.isArray(result.data) ? result.data : [];
-      contexts = all.filter((context) => {
-        if (normalizedName && context.name?.trim().toLowerCase() !== normalizedName) {
-          return false;
-        }
-        if (search) {
-          const haystack = `${context.name || ''} ${context.description || ''}`.toLowerCase();
-          return haystack.includes(search.trim().toLowerCase());
-        }
-        return true;
-      }).slice(0, Math.min(Math.max(limit, 1), 100));
+      contexts = Array.isArray(result.data) ? result.data : [];
     }
 
+    if (normalizedName) {
+      contexts = contexts.filter((context) => context.name.toLowerCase() === normalizedName.toLowerCase());
+    }
+
+    if (normalizedSearch) {
+      contexts = contexts.filter((context) =>
+        context.name.toLowerCase().includes(normalizedSearch) ||
+        (context.description || '').toLowerCase().includes(normalizedSearch)
+      );
+    }
+
+    contexts = contexts.slice(0, Math.min(Math.max(limit, 1), 100));
+
     const includeContextNodes = includeNodes && contexts.length === 1 && (contextId || normalizedName);
-    const enriched = await Promise.all(contexts.map(async (context) => {
-      if (!includeContextNodes) return context;
-      const nodeResult = await callRaHApi(`/api/contexts/${context.id}/nodes`, { method: 'GET' });
-      return { ...context, nodes: Array.isArray(nodeResult.data) ? nodeResult.data : [] };
-    }));
+    const structuredContexts = await Promise.all(
+      contexts.map(async (context) => {
+        if (!includeContextNodes) {
+          return {
+            id: context.id,
+            name: context.name,
+            description: context.description ?? null,
+            icon: context.icon ?? null,
+            count: context.count ?? 0
+          };
+        }
+
+        const nodesResult = await callRaHApi(`/api/contexts/${context.id}/nodes`, { method: 'GET' });
+        const nodes = Array.isArray(nodesResult.data) ? nodesResult.data : [];
+
+        return {
+          id: context.id,
+          name: context.name,
+          description: context.description ?? null,
+          icon: context.icon ?? null,
+          count: context.count ?? nodes.length,
+          nodes: nodes.map((node) => ({
+            id: node.id,
+            title: node.title,
+            description: node.description ?? null,
+            link: node.link ?? null,
+            context_id: node.context_id ?? null,
+            updated_at: node.updated_at
+          }))
+        };
+      })
+    );
+
+    const summary =
+      structuredContexts.length === 0
+        ? 'No contexts found.'
+        : `Found ${structuredContexts.length} context(s).`;
 
     return {
-      content: [{ type: 'text', text: enriched.length === 0 ? 'No matching contexts found.' : `Found ${enriched.length} context(s).` }],
+      content: [{ type: 'text', text: summary }],
       structuredContent: {
-        count: enriched.length,
-        contexts: enriched
+        count: structuredContexts.length,
+        contexts: structuredContexts
       }
     };
   }
@@ -477,7 +461,7 @@ server.registerTool(
   'rah_update_node',
   {
     title: 'Update RA-H node',
-    description: 'Update an existing node. Dimensions must be existing canonical dimensions; do not invent new ones.',
+    description: 'Update an existing node. Context remains optional and explicit.',
     inputSchema: updateNodeInputSchema,
     outputSchema: updateNodeOutputSchema
   },
@@ -538,7 +522,6 @@ server.registerTool(
             title: result.node.title,
             source: result.node.source ?? null,
             link: result.node.link ?? null,
-            dimensions: result.node.dimensions || [],
             updated_at: result.node.updated_at
           });
         }
@@ -650,95 +633,6 @@ server.registerTool(
       structuredContent: {
         success: true,
         message: result.message || `Updated edge #${id}`
-      }
-    };
-  }
-);
-
-server.registerTool(
-  'rah_create_dimension',
-  {
-    title: 'Create RA-H dimension',
-    description: 'Create a new dimension/tag for organizing nodes only when the user explicitly instructs you to do so.',
-    inputSchema: createDimensionInputSchema,
-    outputSchema: createDimensionOutputSchema
-  },
-  async ({ name, description, isPriority }) => {
-    const payload = { name };
-    if (description) payload.description = description;
-    if (isPriority !== undefined) payload.isPriority = isPriority;
-
-    const result = await callRaHApi('/api/dimensions', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-
-    const dim = result.data?.dimension || name;
-    return {
-      content: [{ type: 'text', text: `Created dimension: ${dim}` }],
-      structuredContent: {
-        success: true,
-        dimension: dim,
-        message: `Created dimension: ${dim}`
-      }
-    };
-  }
-);
-
-server.registerTool(
-  'rah_update_dimension',
-  {
-    title: 'Update RA-H dimension',
-    description: 'Update dimension properties (rename, description, lock/unlock).',
-    inputSchema: updateDimensionInputSchema,
-    outputSchema: updateDimensionOutputSchema
-  },
-  async ({ name, newName, description, isPriority }) => {
-    const payload = {};
-    if (newName) {
-      payload.currentName = name;
-      payload.newName = newName;
-    } else {
-      payload.name = name;
-    }
-    if (description !== undefined) payload.description = description;
-    if (isPriority !== undefined) payload.isPriority = isPriority;
-
-    const result = await callRaHApi('/api/dimensions', {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-
-    const dim = result.data?.dimension || newName || name;
-    return {
-      content: [{ type: 'text', text: `Updated dimension: ${dim}` }],
-      structuredContent: {
-        success: true,
-        dimension: dim,
-        message: `Updated dimension: ${dim}`
-      }
-    };
-  }
-);
-
-server.registerTool(
-  'rah_delete_dimension',
-  {
-    title: 'Delete RA-H dimension',
-    description: 'Delete a dimension and remove it from all nodes.',
-    inputSchema: deleteDimensionInputSchema,
-    outputSchema: deleteDimensionOutputSchema
-  },
-  async ({ name }) => {
-    const result = await callRaHApi(`/api/dimensions?name=${encodeURIComponent(name)}`, {
-      method: 'DELETE'
-    });
-
-    return {
-      content: [{ type: 'text', text: `Deleted dimension: ${name}` }],
-      structuredContent: {
-        success: true,
-        message: `Deleted dimension: ${name}`
       }
     };
   }
@@ -864,7 +758,6 @@ const getContextOutputSchema = {
   stats: z.object({
     nodeCount: z.number(),
     edgeCount: z.number(),
-    dimensionCount: z.number(),
     contextCount: z.number().optional()
   }),
   hubNodes: z.array(z.object({
@@ -880,11 +773,6 @@ const getContextOutputSchema = {
     icon: z.string().nullable().optional(),
     count: z.number()
   })).optional(),
-  dimensions: z.array(z.object({
-    name: z.string(),
-    nodeCount: z.number(),
-    description: z.string().nullable()
-  })),
   guides: z.array(z.string())
 };
 
@@ -892,7 +780,7 @@ server.registerTool(
   'rah_get_context',
   {
     title: 'Get RA-H context',
-    description: 'Get orientation context: contexts, hub nodes, dimensions, stats, and available guides. Call this first.',
+    description: 'Get orientation context: contexts, hub nodes, stats, and available guides. Call this first.',
     inputSchema: {},
     outputSchema: getContextOutputSchema
   },
@@ -904,14 +792,6 @@ server.registerTool(
       title: n.title,
       description: n.description ?? null,
       edgeCount: n.edge_count ?? 0
-    })) : [];
-
-    // Fetch dimensions
-    const dimResult = await callRaHApi('/api/dimensions', { method: 'GET' });
-    const dimensions = Array.isArray(dimResult.data) ? dimResult.data.map(d => ({
-      name: d.name,
-      nodeCount: d.node_count ?? 0,
-      description: d.description ?? null
     })) : [];
 
     const contextResult = await callRaHApi('/api/contexts', { method: 'GET' });
@@ -932,7 +812,6 @@ server.registerTool(
     const stats = {
       nodeCount: nodeCount ?? hubNodes.reduce((_, n) => 0, 0),
       edgeCount: 0,
-      dimensionCount: dimensions.length,
       contextCount: contexts.length
     };
 
@@ -944,7 +823,7 @@ server.registerTool(
       }
     } catch { /* use defaults */ }
 
-    const summary = `Knowledge graph: ${stats.contextCount} contexts, ${stats.dimensionCount} dimensions, ${hubNodes.length} hub nodes. ${guides.length} guides available.`;
+    const summary = `Knowledge graph: ${stats.contextCount} contexts, ${hubNodes.length} hub nodes for graph grounding, ${guides.length} guides available.`;
 
     return {
       content: [{ type: 'text', text: summary }],
@@ -952,7 +831,6 @@ server.registerTool(
         stats,
         hubNodes,
         contexts,
-        dimensions,
         guides
       }
     };

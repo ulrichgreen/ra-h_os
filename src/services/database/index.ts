@@ -2,7 +2,6 @@
 export { nodeService, NodeService } from './nodes';
 export { chunkService, ChunkService } from './chunks';
 export { edgeService, EdgeService } from './edges';
-export { dimensionService, DimensionService } from './dimensionService';
 export { contextService, ContextService } from './contextService';
 // export { HelperService } from './helpers'; // Removed - migrated to JSON-based service
 
@@ -39,7 +38,6 @@ async function checkSQLiteDatabaseHealth(): Promise<{
     const sqlite = getSQLiteClient();
     
     const connected = await sqlite.testConnection();
-    const vectorCapability = sqlite.getVectorCapability();
     if (!connected) {
       return {
         connected: false,
@@ -49,7 +47,7 @@ async function checkSQLiteDatabaseHealth(): Promise<{
       };
     }
 
-    const vectorExtension = vectorCapability.available;
+    const vectorExtension = await sqlite.checkVectorExtension();
     
     // Check if main tables exist
     const tables = await sqlite.checkTables();

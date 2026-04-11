@@ -23,7 +23,7 @@ export default function ApiKeysViewer() {
         <div style={featuresHeaderStyle}>OpenAI API Key enables:</div>
         <ul style={featuresListStyle}>
           <li>Auto-generated descriptions for new nodes</li>
-          <li>Smart dimension assignment</li>
+          <li>Edge explanation inference</li>
           <li>Semantic search via embeddings</li>
         </ul>
         <div style={noteStyle}>

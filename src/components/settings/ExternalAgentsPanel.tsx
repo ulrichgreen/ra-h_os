@@ -127,7 +127,7 @@ export default function ExternalAgentsPanel() {
       <div style={{ display: 'grid', gap: '16px' }}>
         <HelperCard
           title="Add to RA-H"
-          body={`"Summarize our meeting and add it to RA-H under dimensions Strategy, Q1 Execution."`}
+          body={`"Summarize our meeting and add it to RA-H. If a context is obvious, use it. If not, leave context blank."`}
         />
         <HelperCard
           title="Search RA-H"

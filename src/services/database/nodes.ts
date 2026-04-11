@@ -5,7 +5,9 @@ import { EmbeddingService } from '@/services/embeddings';
 import { scoreNodeSearchMatch } from './searchRanking';
 import { buildCanonicalNodeMetadata, mergeNodeMetadata } from '@/services/nodes/metadata';
 
-type NodeRow = Node & { dimensions_json: string; context_json: string | null };
+type NodeRow = Node & {
+  context_json: string | null;
+};
 type NodeSearchRow = NodeRow & { rank?: number; similarity?: number };
 
 function sanitizeFtsQuery(input: string): string {
@@ -81,8 +83,15 @@ export class NodeService {
   }
 
   async countNodes(filters: NodeFilters = {}): Promise<number> {
-    const { dimensions, search, dimensionsMatch = 'any',
-            createdAfter, createdBefore, eventAfter, eventBefore, chunkStatus, contextId } = filters;
+    const {
+      search,
+      createdAfter,
+      createdBefore,
+      eventAfter,
+      eventBefore,
+      chunkStatus,
+      contextId,
+    } = filters;
 
     if (search?.trim()) {
       return this.countSearchNodesSQLite(filters);
@@ -92,24 +101,6 @@ export class NodeService {
 
     let query = `SELECT COUNT(*) as total FROM nodes n WHERE 1=1`;
     const params: any[] = [];
-
-    if (dimensions && dimensions.length > 0) {
-      if (dimensionsMatch === 'all' && dimensions.length > 1) {
-        query += ` AND (
-          SELECT COUNT(DISTINCT nd.dimension) FROM node_dimensions nd
-          WHERE nd.node_id = n.id
-          AND nd.dimension IN (${dimensions.map(() => '?').join(',')})
-        ) = ?`;
-        params.push(...dimensions, dimensions.length);
-      } else {
-        query += ` AND EXISTS (
-          SELECT 1 FROM node_dimensions nd
-          WHERE nd.node_id = n.id
-          AND nd.dimension IN (${dimensions.map(() => '?').join(',')})
-        )`;
-        params.push(...dimensions);
-      }
-    }
 
     if (search) {
       query += ` AND (n.title LIKE ? COLLATE NOCASE OR n.description LIKE ? COLLATE NOCASE OR n.source LIKE ? COLLATE NOCASE)`;
@@ -130,8 +121,18 @@ export class NodeService {
   // PostgreSQL path removed in SQLite-only consolidation
 
   private async getNodesSQLite(filters: NodeFilters = {}): Promise<Node[]> {
-    const { dimensions, search, limit = 100, offset = 0, sortBy, dimensionsMatch = 'any',
-            createdAfter, createdBefore, eventAfter, eventBefore, chunkStatus, contextId } = filters;
+    const {
+      search,
+      limit = 100,
+      offset = 0,
+      sortBy,
+      createdAfter,
+      createdBefore,
+      eventAfter,
+      eventBefore,
+      chunkStatus,
+      contextId,
+    } = filters;
 
     if (search?.trim()) {
       return this.searchNodesSQLite(filters);
@@ -139,13 +140,10 @@ export class NodeService {
 
     const sqlite = getSQLiteClient();
     
-    // Use nodes_v view for array-like dimensions behavior (exclude embedding BLOB for performance)
     let query = `
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
              n.created_at, n.updated_at, n.context_id,
-             COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                       FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
              CASE
                WHEN c.id IS NULL THEN NULL
                ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
@@ -156,27 +154,6 @@ export class NodeService {
       WHERE 1=1
     `;
     const params: any[] = [];
-
-    // Filter by dimensions (SQLite JOIN with node_dimensions)
-    if (dimensions && dimensions.length > 0) {
-      if (dimensionsMatch === 'all' && dimensions.length > 1) {
-        // AND logic: node must have ALL specified dimensions
-        query += ` AND (
-          SELECT COUNT(DISTINCT nd.dimension) FROM node_dimensions nd
-          WHERE nd.node_id = n.id
-          AND nd.dimension IN (${dimensions.map(() => '?').join(',')})
-        ) = ?`;
-        params.push(...dimensions, dimensions.length);
-      } else {
-        // OR logic: node must have at least one of the specified dimensions
-        query += ` AND EXISTS (
-          SELECT 1 FROM node_dimensions nd
-          WHERE nd.node_id = n.id
-          AND nd.dimension IN (${dimensions.map(() => '?').join(',')})
-        )`;
-        params.push(...dimensions);
-      }
-    }
 
     // Text search in title, description, and source (SQLite LIKE with COLLATE NOCASE)
     if (search) {
@@ -251,7 +228,7 @@ export class NodeService {
 
     const result = sqlite.query<NodeRow>(query, params);
     
-    // Parse dimensions_json and metadata back for compatibility
+    // Parse metadata and normalize deprecated compatibility fields.
     return result.rows.map(row => this.mapNodeRow(row));
   }
 
@@ -267,8 +244,6 @@ export class NodeService {
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
              n.created_at, n.updated_at, n.context_id,
-             COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension) 
-                       FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
              CASE
                WHEN c.id IS NULL THEN NULL
                ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
@@ -298,7 +273,6 @@ export class NodeService {
       source,
       link,
       event_date,
-      dimensions = [],
       chunk_status,
       metadata = {},
       context_id,
@@ -327,20 +301,10 @@ export class NodeService {
 
       const id = Number(nodeResult.lastInsertRowid);
 
-      // Insert dimensions separately with INSERT OR IGNORE for safety
-      if (dimensions.length > 0) {
-        const stmt = sqlite.prepare(
-          "INSERT OR IGNORE INTO node_dimensions (node_id, dimension) VALUES (?, ?)"
-        );
-        for (const dimension of dimensions) {
-          stmt.run(id, dimension);
-        }
-      }
-
       return id; // Returns number directly
     });
 
-    // Get the created node with dimensions (outside transaction)
+    // Re-read the created node outside the transaction so callers get the canonical shape.
     const createdNode = await this.getNodeByIdSQLite(nodeId);
     if (!createdNode) {
       throw new Error('Failed to create node');
@@ -363,7 +327,7 @@ export class NodeService {
   // PostgreSQL path removed in SQLite-only consolidation
 
   private async updateNodeSQLite(id: number, updates: Partial<Node>): Promise<Node> {
-    const { title, description, source, link, event_date, dimensions, metadata } = updates;
+    const { title, description, source, link, event_date, metadata } = updates;
     const now = new Date().toISOString();
     const sqlite = getSQLiteClient();
 
@@ -411,14 +375,6 @@ export class NodeService {
         stmt.run(...params);
       }
 
-      // Handle dimensions separately
-      if (Array.isArray(dimensions)) {
-        sqlite.prepare('DELETE FROM node_dimensions WHERE node_id = ?').run(id);
-        const dimStmt = sqlite.prepare('INSERT OR IGNORE INTO node_dimensions (node_id, dimension) VALUES (?, ?)');
-        for (const dim of dimensions) {
-          dimStmt.run(id, dim);
-        }
-      }
     });
 
     // Get updated node
@@ -458,28 +414,21 @@ export class NodeService {
     });
   }
 
-  // Dimension-based filtering methods
-  async getNodesByDimension(dimension: string): Promise<Node[]> {
-    return this.getNodes({ dimensions: [dimension] });
-  }
-
   async searchNodes(searchTerm: string, limit = 50): Promise<Node[]> {
     return this.getNodes({ search: searchTerm, limit });
   }
 
   private mapNodeRow(row: NodeRow): Node {
+    const { context_json, ...baseRow } = row;
     return {
-      ...row,
-      dimensions: JSON.parse(row.dimensions_json || '[]'),
-      metadata: row.metadata ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : null,
-      context: row.context_json ? JSON.parse(row.context_json) : null,
+      ...baseRow,
+      metadata: baseRow.metadata ? (typeof baseRow.metadata === 'string' ? JSON.parse(baseRow.metadata) : baseRow.metadata) : null,
+      context: context_json ? JSON.parse(context_json) : null,
     };
   }
 
   private buildNodeFilterClauses(filters: NodeFilters, alias = 'n'): { clauses: string[]; params: any[] } {
     const {
-      dimensions,
-      dimensionsMatch = 'any',
       createdAfter,
       createdBefore,
       eventAfter,
@@ -489,24 +438,6 @@ export class NodeService {
 
     const clauses: string[] = [];
     const params: any[] = [];
-
-    if (dimensions && dimensions.length > 0) {
-      if (dimensionsMatch === 'all' && dimensions.length > 1) {
-        clauses.push(`(
-          SELECT COUNT(DISTINCT nd.dimension) FROM node_dimensions nd
-          WHERE nd.node_id = ${alias}.id
-          AND nd.dimension IN (${dimensions.map(() => '?').join(',')})
-        ) = ?`);
-        params.push(...dimensions, dimensions.length);
-      } else {
-        clauses.push(`EXISTS (
-          SELECT 1 FROM node_dimensions nd
-          WHERE nd.node_id = ${alias}.id
-          AND nd.dimension IN (${dimensions.map(() => '?').join(',')})
-        )`);
-        params.push(...dimensions);
-      }
-    }
 
     if (createdAfter) { clauses.push(`${alias}.created_at >= ?`); params.push(createdAfter); }
     if (createdBefore) { clauses.push(`${alias}.created_at < ?`); params.push(createdBefore); }
@@ -567,26 +498,30 @@ export class NodeService {
     if (!search) return 0;
 
     const ftsQuery = sanitizeFtsQuery(search);
-    const ftsExists = sqlite.prepare(
+    const ftsExists = sqlite.isNodesFtsUsable() && sqlite.prepare(
       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes_fts'"
     ).get();
     const { clauses, params } = this.buildNodeFilterClauses(filters);
 
     if (ftsExists && ftsQuery) {
       const whereClauses = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-      const result = sqlite.query<{ total: number }>(`
-        WITH matched_nodes AS (
-          SELECT rowid
-          FROM nodes_fts
-          WHERE nodes_fts MATCH ?
-        )
-        SELECT COUNT(*) as total
-        FROM matched_nodes mn
-        JOIN nodes n ON n.id = mn.rowid
-        ${whereClauses}
-      `, [ftsQuery, ...params]);
+      try {
+        const result = sqlite.query<{ total: number }>(`
+          WITH matched_nodes AS (
+            SELECT rowid
+            FROM nodes_fts
+            WHERE nodes_fts MATCH ?
+          )
+          SELECT COUNT(*) as total
+          FROM matched_nodes mn
+          JOIN nodes n ON n.id = mn.rowid
+          ${whereClauses}
+        `, [ftsQuery, ...params]);
 
-      return Number(result.rows[0]?.total ?? 0);
+        return Number(result.rows[0]?.total ?? 0);
+      } catch (error) {
+        sqlite.disableNodesFts('nodes_fts query failed during count search', error);
+      }
     }
 
     const words = search.split(/\s+/).filter(Boolean);
@@ -615,7 +550,7 @@ export class NodeService {
     const ftsQuery = sanitizeFtsQuery(search);
     if (!ftsQuery) return [];
 
-    const ftsExists = sqlite.prepare(
+    const ftsExists = sqlite.isNodesFtsUsable() && sqlite.prepare(
       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes_fts'"
     ).get();
     if (!ftsExists) return [];
@@ -633,12 +568,15 @@ export class NodeService {
         )
         SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
                n.chunk_status, n.embedding_updated_at, n.embedding_text,
-               n.created_at, n.updated_at,
-               COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                         FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
+               n.created_at, n.updated_at, n.context_id,
+               CASE
+                 WHEN c.id IS NULL THEN NULL
+                 ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
+               END as context_json,
                fm.rank
         FROM fts_matches fm
         JOIN nodes n ON n.id = fm.rowid
+        LEFT JOIN contexts c ON c.id = n.context_id
         ${whereClauses}
         ORDER BY fm.rank
         LIMIT ?
@@ -646,7 +584,7 @@ export class NodeService {
 
       return result.rows;
     } catch (error) {
-      console.warn('[NodeSearch] FTS search failed, falling back to LIKE:', error);
+      sqlite.disableNodesFts('nodes_fts query failed during node search', error);
       return [];
     }
   }
@@ -662,10 +600,13 @@ export class NodeService {
     let query = `
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
-             n.created_at, n.updated_at,
-             COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                       FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json
+             n.created_at, n.updated_at, n.context_id,
+             CASE
+               WHEN c.id IS NULL THEN NULL
+               ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
+             END as context_json
       FROM nodes n
+      LEFT JOIN contexts c ON c.id = n.context_id
       WHERE 1=1
     `;
     const queryParams = [...params];
@@ -707,10 +648,13 @@ export class NodeService {
     let query = `
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
-             n.created_at, n.updated_at,
-             COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                       FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json
+             n.created_at, n.updated_at, n.context_id,
+             CASE
+               WHEN c.id IS NULL THEN NULL
+               ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
+             END as context_json
       FROM nodes n
+      LEFT JOIN contexts c ON c.id = n.context_id
       WHERE 1=1
     `;
     const queryParams = [...params];
@@ -781,12 +725,15 @@ export class NodeService {
         )
         SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
                n.chunk_status, n.embedding_updated_at, n.embedding_text,
-               n.created_at, n.updated_at,
-               COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                         FROM node_dimensions d WHERE d.node_id = n.id), '[]') as dimensions_json,
+               n.created_at, n.updated_at, n.context_id,
+               CASE
+                 WHEN c.id IS NULL THEN NULL
+                 ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
+               END as context_json,
                (1.0 / (1.0 + vm.distance)) AS similarity
         FROM vector_matches vm
         JOIN nodes n ON n.id = vm.node_id
+        LEFT JOIN contexts c ON c.id = n.context_id
         ${whereClauses}
         ORDER BY vm.distance
         LIMIT ?
@@ -827,31 +774,6 @@ export class NodeService {
       updatedNodes.push(updated);
     }
     return updatedNodes;
-  }
-
-  // Get all unique dimensions for UI filtering
-  async getAllDimensions(): Promise<string[]> {
-    const sqlite = getSQLiteClient();
-    const query = `
-      SELECT DISTINCT dimension 
-      FROM node_dimensions 
-      ORDER BY dimension
-    `;
-    const result = sqlite.query<{dimension: string}>(query);
-    return result.rows.map(row => row.dimension);
-  }
-
-  // Get dimension usage statistics
-  async getDimensionStats(): Promise<{dimension: string, count: number}[]> {
-    const sqlite = getSQLiteClient();
-    const query = `
-      SELECT dimension, COUNT(*) as count
-      FROM node_dimensions 
-      GROUP BY dimension
-      ORDER BY count DESC
-    `;
-    const result = sqlite.query<{dimension: string, count: number}>(query);
-    return result.rows;
   }
 
 }

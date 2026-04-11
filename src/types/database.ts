@@ -36,7 +36,6 @@ export interface Node {
   notes?: string;             // Deprecated legacy field - do not write
   link?: string;
   event_date?: string | null; // When the thing actually happened (ISO 8601)
-  dimensions: string[];       // Flexible dimensions replacing type + stage + segment + tags
   embedding?: Buffer;         // Node-level embedding (BLOB data)
   chunk?: string;             // Deprecated legacy field - do not write
   metadata?: CanonicalNodeMetadata | null; // Flexible metadata storage with canonical contract
@@ -97,7 +96,6 @@ export interface EdgeContext {
 
 // New NodeFilters interface replacing rigid ItemFilters
 export interface NodeFilters {
-  dimensions?: string[];      // Filter by dimensions (replaces stage/type filtering)
   contextId?: number;
   search?: string;           // Text search in title/content
   searchMode?: 'standard' | 'hybrid'; // standard = FTS/LIKE, hybrid = add node-vector retrieval
@@ -105,7 +103,6 @@ export interface NodeFilters {
   limit?: number;
   offset?: number;
   sortBy?: 'updated' | 'edges' | 'created' | 'event_date';  // Sort by updated_at, edge count, created_at, or event_date
-  dimensionsMatch?: 'any' | 'all';  // 'any' = OR (default), 'all' = AND
   createdAfter?: string;     // ISO date (YYYY-MM-DD) — nodes created on or after
   createdBefore?: string;    // ISO date (YYYY-MM-DD) — nodes created before
   eventAfter?: string;       // ISO date (YYYY-MM-DD) — nodes with event_date on or after
@@ -150,13 +147,4 @@ export interface DatabaseError {
   message: string;
   code?: string;
   details?: any;
-}
-
-// Dimension interface for dimension management
-export interface Dimension {
-  name: string;
-  description?: string | null;
-  icon?: string | null;
-  is_priority: boolean;
-  updated_at: string;
 }

@@ -2,9 +2,17 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { getDatabasePath } from '@/services/database/sqlite-runtime';
+import path from 'path';
 
 const execAsync = promisify(exec);
+
+// Get database path (same logic as sqlite-client.ts)
+function getDatabasePath(): string {
+  return process.env.SQLITE_DB_PATH || path.join(
+    process.env.HOME || '~',
+    'Library/Application Support/RA-H/db/rah.sqlite'
+  );
+}
 
 // Security: Only allow SELECT statements
 function isReadOnlyQuery(sql: string): boolean {
@@ -37,7 +45,7 @@ function isReadOnlyQuery(sql: string): boolean {
 }
 
 export const sqliteQueryTool = tool({
-  description: 'Execute read-only SQL queries (SELECT/WITH/PRAGMA). Tables: nodes, edges, dimensions, chunks. Use PRAGMA table_info(tablename) for schema.',
+  description: 'Execute read-only SQL queries (SELECT/WITH/PRAGMA). Tables: nodes, contexts, edges, chunks, logs, and migration snapshots. Use PRAGMA table_info(tablename) for schema.',
 
   inputSchema: z.object({
     sql: z.string().describe('The SQL query to execute. Must be a SELECT, WITH, or PRAGMA statement.'),

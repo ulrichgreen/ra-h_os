@@ -2,7 +2,6 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { getInternalApiBaseUrl } from '@/services/runtime/apiBase';
 import { formatNodeForChat } from '../infrastructure/nodeFormatter';
-import { normalizeDimensions } from '@/services/database/quality';
 
 function extractTextFromMessageContent(content: unknown): string {
   if (typeof content === 'string') {
@@ -57,7 +56,7 @@ function inferSourceFromContext(params: { title: string; description?: string; s
 }
 
 export const createNodeTool = tool({
-  description: 'Create node. Set the primary context explicitly when it is clear; otherwise the server will infer the best-fit context automatically so the node is not left unscoped. Infer a clean title, dimensions, and natural description with best effort. When the node comes from the user\'s own idea, note, or dictated thought, preserve their actual wording in source with only minimal cleanup instead of flattening it into a summary. Do not block creation if the description is incomplete. If the description framing is materially inferred, create the node first and then invite one concise user correction pass.',
+  description: 'Create a node. Set context explicitly only when it is clear and useful; otherwise leave it blank. Focus on a clean title, a strong natural description, preserved source text, and the right metadata. When the node comes from the user\'s own idea, note, or dictated thought, preserve their actual wording in source with only minimal cleanup instead of flattening it into a summary. Do not block creation if the description is incomplete. If the description framing is materially inferred, create the node first and then invite one concise user correction pass.',
   inputSchema: z.object({
     title: z.string().describe('The title of the node'),
     description: z.string().max(500).optional().describe('Optional natural description. If you have enough context, describe what this is, why it belongs in Brad\'s graph, and its current workflow status in normal prose. Do not use labels like WHAT:, WHY:, or STATUS:.'),
@@ -66,23 +65,18 @@ export const createNodeTool = tool({
     event_date: z.string().optional().describe('When the thing actually happened (ISO 8601). Not when it was added to the graph.'),
     context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Use when the node clearly belongs to a known context.'),
     context_name: z.string().optional().describe('Optional convenience context name. Resolved to a stable context_id before persistence.'),
-    dimensions: z
-      .array(z.string())
-      .max(5)
-      .optional()
-      .describe('Optional secondary dimension tags to apply to this node (0-5 items).'),
     metadata: z.record(z.any()).optional().describe('Optional node metadata. Use canonical keys when known: type, state, captured_method, captured_by, and source_metadata. Source-specific facts belong inside source_metadata.')
   }),
   execute: async (params, context) => {
     console.log('🎯 CreateNode tool called with params:', JSON.stringify(params, null, 2));
     try {
-      const trimmedDimensions = normalizeDimensions(params.dimensions || [], 5);
       const canonicalSource = inferSourceFromContext(params, context);
 
+      // Call the nodes API endpoint
       const response = await fetch(`${getInternalApiBaseUrl()}/api/nodes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...params, source: canonicalSource, dimensions: trimmedDimensions })
+        body: JSON.stringify({ ...params, source: canonicalSource })
       });
 
       const result = await response.json();
@@ -95,10 +89,18 @@ export const createNodeTool = tool({
         };
       }
 
+      const formattedDisplay = formatNodeForChat({
+        id: result.data.id,
+        title: result.data.title,
+      });
+
       return {
         success: true,
-        data: result.data,
-        message: `Created: ${formatNodeForChat(result.data)}`
+        data: {
+          ...result.data,
+          formatted_display: formattedDisplay,
+        },
+        message: `Created: ${formattedDisplay}`
       };
     } catch (error) {
       return {

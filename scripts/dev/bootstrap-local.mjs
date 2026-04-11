@@ -133,11 +133,10 @@ function ensureCoreSchema(db) {
       source TEXT,
       created_at TEXT,
       context TEXT,
+      explanation TEXT,
       FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
       FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
     );
-    CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node_id);
-    CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node_id);
 
     CREATE TABLE IF NOT EXISTS chats (
       id INTEGER PRIMARY KEY,
@@ -153,24 +152,16 @@ function ensureCoreSchema(db) {
       metadata TEXT,
       FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);
 
-    CREATE TABLE IF NOT EXISTS node_dimensions (
-      node_id INTEGER NOT NULL,
-      dimension TEXT NOT NULL,
-      PRIMARY KEY (node_id, dimension),
-      FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
-    ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS idx_dim_by_dimension ON node_dimensions(dimension, node_id);
-    CREATE INDEX IF NOT EXISTS idx_dim_by_node ON node_dimensions(node_id, dimension);
-
-    CREATE TABLE IF NOT EXISTS dimensions (
-      name TEXT PRIMARY KEY,
-      description TEXT,
+    CREATE TABLE IF NOT EXISTS contexts (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
       icon TEXT,
-      is_priority INTEGER DEFAULT 0,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized ON contexts(LOWER(TRIM(name)));
 
     CREATE TABLE IF NOT EXISTS logs (
       id INTEGER PRIMARY KEY,
@@ -219,15 +210,6 @@ function ensureCoreSchema(db) {
   `);
 
   const now = new Date().toISOString();
-  const lockedDimensions = ['research', 'ideas', 'projects', 'memory', 'preferences'];
-  const insertDimension = db.prepare(`
-    INSERT INTO dimensions (name, is_priority, updated_at)
-    VALUES (?, 1, ?)
-    ON CONFLICT(name) DO UPDATE SET is_priority = 1, updated_at = excluded.updated_at
-  `);
-  for (const dimension of lockedDimensions) {
-    insertDimension.run(dimension, now);
-  }
 
   const agentCount = Number(db.prepare('SELECT COUNT(*) as count FROM agents').get().count || 0);
   if (agentCount === 0) {
@@ -249,6 +231,165 @@ function ensureCoreSchema(db) {
     );
   }
 
+  const edgeCols = db.prepare('PRAGMA table_info(edges)').all().map(col => col.name);
+  const hasEdgeCol = (name) => edgeCols.includes(name);
+  const needsLegacyEdgeRewrite =
+    !hasEdgeCol('from_node_id') ||
+    !hasEdgeCol('to_node_id') ||
+    !hasEdgeCol('source') ||
+    !hasEdgeCol('created_at') ||
+    !hasEdgeCol('context') ||
+    hasEdgeCol('from_id') ||
+    hasEdgeCol('to_id') ||
+    hasEdgeCol('description') ||
+    hasEdgeCol('updated_at');
+
+  if (needsLegacyEdgeRewrite) {
+    const fromExpr = hasEdgeCol('from_node_id')
+      ? 'from_node_id'
+      : hasEdgeCol('from_id')
+        ? 'from_id'
+        : 'NULL';
+    const toExpr = hasEdgeCol('to_node_id')
+      ? 'to_node_id'
+      : hasEdgeCol('to_id')
+        ? 'to_id'
+        : 'NULL';
+    const sourceExpr = hasEdgeCol('source') ? 'source' : "'legacy'";
+    const createdAtExpr = hasEdgeCol('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP';
+    const contextExpr = hasEdgeCol('context') ? 'context' : 'NULL';
+    const explanationExpr = hasEdgeCol('explanation')
+      ? 'explanation'
+      : hasEdgeCol('description')
+        ? 'description'
+        : hasEdgeCol('context')
+          ? "CASE WHEN json_valid(context) THEN json_extract(context, '$.explanation') ELSE NULL END"
+          : 'NULL';
+
+    console.log('Migrating legacy edges table to canonical schema');
+    db.exec('PRAGMA foreign_keys=OFF;');
+    db.exec(`
+      BEGIN TRANSACTION;
+      DROP INDEX IF EXISTS idx_edges_from;
+      DROP INDEX IF EXISTS idx_edges_to;
+      ALTER TABLE edges RENAME TO edges_legacy_migration;
+      CREATE TABLE edges (
+        id INTEGER PRIMARY KEY,
+        from_node_id INTEGER NOT NULL,
+        to_node_id INTEGER NOT NULL,
+        source TEXT,
+        created_at TEXT,
+        context TEXT,
+        explanation TEXT,
+        FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+        FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+      );
+      INSERT INTO edges (id, from_node_id, to_node_id, source, created_at, context, explanation)
+      SELECT
+        id,
+        ${fromExpr},
+        ${toExpr},
+        ${sourceExpr},
+        COALESCE(${createdAtExpr}, CURRENT_TIMESTAMP),
+        ${contextExpr},
+        ${explanationExpr}
+      FROM edges_legacy_migration
+      WHERE ${fromExpr} IS NOT NULL
+        AND ${toExpr} IS NOT NULL;
+      DROP TABLE edges_legacy_migration;
+      COMMIT;
+    `);
+    db.exec('PRAGMA foreign_keys=ON;');
+  }
+
+  const refreshedEdgeCols = db.prepare('PRAGMA table_info(edges)').all().map(col => col.name);
+  if (!refreshedEdgeCols.includes('explanation')) {
+    db.exec('ALTER TABLE edges ADD COLUMN explanation TEXT;');
+    db.exec(`
+      UPDATE edges
+      SET explanation = CASE
+        WHEN json_valid(context) THEN json_extract(context, '$.explanation')
+        ELSE explanation
+      END
+      WHERE explanation IS NULL
+        AND context IS NOT NULL;
+    `);
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node_id);
+    CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node_id);
+  `);
+
+  const chatCols = db.prepare('PRAGMA table_info(chats)').all().map(col => col.name);
+  const hasChatCol = (name) => chatCols.includes(name);
+  const needsLegacyChatRewrite =
+    hasChatCol('focused_memory_id') ||
+    ['chat_type', 'helper_name', 'agent_type', 'delegation_id', 'user_message', 'assistant_message', 'thread_id', 'focused_node_id', 'created_at', 'metadata']
+      .some((name) => !hasChatCol(name));
+
+  if (needsLegacyChatRewrite) {
+    const chatTypeExpr = hasChatCol('chat_type') ? 'chat_type' : 'NULL';
+    const helperNameExpr = hasChatCol('helper_name')
+      ? 'helper_name'
+      : hasChatCol('title')
+        ? 'title'
+        : 'NULL';
+    const agentTypeExpr = hasChatCol('agent_type')
+      ? "COALESCE(agent_type, 'orchestrator')"
+      : "'orchestrator'";
+    const delegationIdExpr = hasChatCol('delegation_id') ? 'delegation_id' : 'NULL';
+    const userMessageExpr = hasChatCol('user_message') ? 'user_message' : 'NULL';
+    const assistantMessageExpr = hasChatCol('assistant_message') ? 'assistant_message' : 'NULL';
+    const threadIdExpr = hasChatCol('thread_id') ? 'thread_id' : 'NULL';
+    const focusedNodeIdExpr = hasChatCol('focused_node_id') ? 'focused_node_id' : 'NULL';
+    const createdAtChatExpr = hasChatCol('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP';
+    const metadataChatExpr = hasChatCol('metadata') ? 'metadata' : 'NULL';
+
+    console.log('Migrating legacy chats table to canonical schema');
+    db.exec('PRAGMA foreign_keys=OFF;');
+    db.exec(`
+      BEGIN TRANSACTION;
+      DROP INDEX IF EXISTS idx_chats_thread;
+      ALTER TABLE chats RENAME TO chats_legacy_cleanup;
+      CREATE TABLE chats (
+        id INTEGER PRIMARY KEY,
+        chat_type TEXT,
+        helper_name TEXT,
+        agent_type TEXT DEFAULT 'orchestrator',
+        delegation_id INTEGER,
+        user_message TEXT,
+        assistant_message TEXT,
+        thread_id TEXT,
+        focused_node_id INTEGER,
+        created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+        metadata TEXT,
+        FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
+      );
+      INSERT INTO chats (
+        id, chat_type, helper_name, agent_type, delegation_id,
+        user_message, assistant_message, thread_id, focused_node_id,
+        created_at, metadata
+      )
+      SELECT
+        id,
+        ${chatTypeExpr},
+        ${helperNameExpr},
+        ${agentTypeExpr},
+        ${delegationIdExpr},
+        ${userMessageExpr},
+        ${assistantMessageExpr},
+        ${threadIdExpr},
+        ${focusedNodeIdExpr},
+        COALESCE(${createdAtChatExpr}, CURRENT_TIMESTAMP),
+        ${metadataChatExpr}
+      FROM chats_legacy_cleanup;
+      DROP TABLE chats_legacy_cleanup;
+      COMMIT;
+    `);
+    db.exec('PRAGMA foreign_keys=ON;');
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);");
+
   const nodeCols = db.prepare('PRAGMA table_info(nodes)').all().map(col => col.name);
   const hasNodeCol = (name) => nodeCols.includes(name);
 
@@ -264,6 +405,34 @@ function ensureCoreSchema(db) {
   if (!hasNodeCol('event_date')) {
     db.exec('ALTER TABLE nodes ADD COLUMN event_date TEXT;');
   }
+  if (!hasNodeCol('chunk_status')) {
+    db.exec("ALTER TABLE nodes ADD COLUMN chunk_status TEXT DEFAULT 'not_chunked';");
+  }
+  if (!hasNodeCol('context_id')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN context_id INTEGER REFERENCES contexts(id) ON DELETE SET NULL;');
+  }
+
+  const contextCols = db.prepare('PRAGMA table_info(contexts)').all().map(col => col.name);
+  const hasContextCol = (name) => contextCols.includes(name);
+  if (!hasContextCol('description')) {
+    db.exec("ALTER TABLE contexts ADD COLUMN description TEXT NOT NULL DEFAULT '';");
+  }
+  if (!hasContextCol('icon')) {
+    db.exec('ALTER TABLE contexts ADD COLUMN icon TEXT;');
+  }
+  if (!hasContextCol('created_at')) {
+    db.exec("ALTER TABLE contexts ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
+  }
+  if (!hasContextCol('updated_at')) {
+    db.exec("ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
+  }
+
+  db.exec(`
+    UPDATE contexts
+    SET description = COALESCE(NULLIF(TRIM(description), ''), name)
+    WHERE description IS NULL OR LENGTH(TRIM(description)) = 0;
+    CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);
+  `);
 
   if (hasNodeCol('content')) {
     db.exec(`
@@ -315,6 +484,60 @@ function ensureCoreSchema(db) {
       AND (chunk_status IS NULL OR chunk_status != 'chunked');
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dimension_migration_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      migrated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      dimension_count INTEGER NOT NULL,
+      assignment_count INTEGER NOT NULL,
+      payload TEXT
+    );
+  `);
+
+  const hasLegacyDimensions = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dimensions'").get();
+  const hasLegacyNodeDimensions = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='node_dimensions'").get();
+  if (hasLegacyDimensions || hasLegacyNodeDimensions) {
+    const existingSnapshotCount = Number(db.prepare('SELECT COUNT(*) as count FROM dimension_migration_snapshots').get().count || 0);
+    if (existingSnapshotCount === 0) {
+      const dimensionCount = hasLegacyDimensions
+        ? Number(db.prepare('SELECT COUNT(*) as count FROM dimensions').get().count || 0)
+        : 0;
+      const assignmentCount = hasLegacyNodeDimensions
+        ? Number(db.prepare('SELECT COUNT(*) as count FROM node_dimensions').get().count || 0)
+        : 0;
+      const payload = hasLegacyNodeDimensions
+        ? (db.prepare(`
+            SELECT COALESCE(
+              json_group_array(
+                json_object(
+                  'node_id', nd.node_id,
+                  'dimension', nd.dimension,
+                  'description', d.description,
+                  'icon', d.icon,
+                  'is_priority', d.is_priority
+                )
+              ),
+              '[]'
+            ) AS payload
+            FROM node_dimensions nd
+            LEFT JOIN dimensions d ON d.name = nd.dimension
+          `).get().payload || '[]')
+        : '[]';
+
+      db.prepare(`
+        INSERT INTO dimension_migration_snapshots (dimension_count, assignment_count, payload)
+        VALUES (?, ?, ?)
+      `).run(dimensionCount, assignmentCount, payload);
+    }
+
+    db.exec(`
+      DROP INDEX IF EXISTS idx_dim_by_dimension;
+      DROP INDEX IF EXISTS idx_dim_by_node;
+      DROP TABLE IF EXISTS node_dimensions;
+      DROP TABLE IF EXISTS dimensions;
+    `);
+  }
+
   db.exec('DROP VIEW IF EXISTS nodes_v;');
   db.exec(`
     CREATE VIEW nodes_v AS
@@ -326,10 +549,7 @@ function ensureCoreSchema(db) {
            n.event_date,
            n.metadata,
            n.created_at,
-           n.updated_at,
-           COALESCE((SELECT JSON_GROUP_ARRAY(d.dimension)
-                     FROM node_dimensions d
-                     WHERE d.node_id = n.id), '[]') AS dimensions_json
+           n.updated_at
     FROM nodes n;
   `);
 }

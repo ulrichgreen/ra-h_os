@@ -25,6 +25,8 @@ class SQLiteClient {
   private config: SQLiteConfig;
   private readonly readOnly: boolean;
   private readonly vectorCapability: VectorCapability;
+  private nodesFtsUsable = true;
+  private nodesFtsDisabledReason: string | null = null;
 
   private constructor() {
     this.config = this.getSQLiteConfig();
@@ -61,6 +63,7 @@ class SQLiteClient {
       this.db.pragma('temp_store = memory');
       this.db.pragma('busy_timeout = 5000');
 
+      this.ensureCoreSchema();
       // Ensure vector virtual tables are present and healthy
       if (this.vectorCapability.available) {
         this.ensureVectorTables();
@@ -162,6 +165,25 @@ class SQLiteClient {
     return this.vectorCapability;
   }
 
+  public isNodesFtsUsable(): boolean {
+    return this.nodesFtsUsable;
+  }
+
+  public disableNodesFts(reason: string, error?: unknown): void {
+    this.nodesFtsUsable = false;
+    if (this.nodesFtsDisabledReason === reason) {
+      return;
+    }
+    this.nodesFtsDisabledReason = reason;
+
+    if (error && !this.isSqliteCorruptError(error)) {
+      console.warn(`[SQLite] nodes_fts disabled: ${reason}`, error);
+      return;
+    }
+
+    console.warn(`[SQLite] nodes_fts disabled: ${reason}. Falling back to LIKE search for this database session.`);
+  }
+
   public async checkTables(): Promise<string[]> {
     try {
       const result = this.query(
@@ -215,17 +237,283 @@ class SQLiteClient {
     this.ensureVectorExtensions();
   }
 
+  private ensureCoreSchema(): void {
+    if (this.readOnly) {
+      return;
+    }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS nodes (
+        id INTEGER PRIMARY KEY,
+        title TEXT,
+        description TEXT,
+        source TEXT,
+        link TEXT,
+        event_date TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        metadata TEXT,
+        embedding BLOB,
+        embedding_updated_at TEXT,
+        embedding_text TEXT,
+        chunk_status TEXT DEFAULT 'not_chunked',
+        context_id INTEGER,
+        FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS contexts (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        icon TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized
+        ON contexts(LOWER(TRIM(name)));
+
+      CREATE TABLE IF NOT EXISTS chunks (
+        id INTEGER PRIMARY KEY,
+        node_id INTEGER NOT NULL,
+        chunk_idx INTEGER,
+        text TEXT NOT NULL,
+        embedding BLOB,
+        embedding_type TEXT DEFAULT 'openai',
+        metadata TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS chats (
+        id INTEGER PRIMARY KEY,
+        chat_type TEXT,
+        helper_name TEXT,
+        agent_type TEXT DEFAULT 'orchestrator',
+        delegation_id INTEGER,
+        user_message TEXT,
+        assistant_message TEXT,
+        thread_id TEXT,
+        focused_node_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        metadata TEXT,
+        FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_chunks_node_id ON chunks(node_id);
+    `);
+
+    this.ensureEdgesTableSchema();
+  }
+
+  private ensureEdgesTableSchema(): void {
+    const hasEdgesTable = this.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='edges'")
+      .get();
+
+    if (!hasEdgesTable) {
+      this.db.exec(`
+        CREATE TABLE edges (
+          id INTEGER PRIMARY KEY,
+          from_node_id INTEGER NOT NULL,
+          to_node_id INTEGER NOT NULL,
+          source TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          context TEXT,
+          explanation TEXT,
+          FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+          FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+        );
+      `);
+    } else {
+      const edgeCols = this.db.prepare('PRAGMA table_info(edges)').all() as Array<{ name: string }>;
+      const edgeColNames = new Set(edgeCols.map((col) => col.name));
+      const needsLegacyRewrite =
+        !edgeColNames.has('from_node_id') ||
+        !edgeColNames.has('to_node_id') ||
+        !edgeColNames.has('source') ||
+        !edgeColNames.has('created_at') ||
+        !edgeColNames.has('context') ||
+        edgeColNames.has('from_id') ||
+        edgeColNames.has('to_id') ||
+        edgeColNames.has('description') ||
+        edgeColNames.has('updated_at');
+
+      if (needsLegacyRewrite) {
+        this.rebuildLegacyEdgesTable(edgeColNames);
+      }
+    }
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node_id);
+      CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node_id);
+    `);
+  }
+
+  private rebuildLegacyEdgesTable(edgeColNames: Set<string>): void {
+    const fromExpr = edgeColNames.has('from_node_id')
+      ? 'from_node_id'
+      : edgeColNames.has('from_id')
+        ? 'from_id'
+        : 'NULL';
+    const toExpr = edgeColNames.has('to_node_id')
+      ? 'to_node_id'
+      : edgeColNames.has('to_id')
+        ? 'to_id'
+        : 'NULL';
+    const sourceExpr = edgeColNames.has('source') ? 'source' : "'legacy'";
+    const createdAtExpr = edgeColNames.has('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP';
+    const contextExpr = edgeColNames.has('context') ? 'context' : 'NULL';
+    const explanationExpr = edgeColNames.has('explanation')
+      ? 'explanation'
+      : edgeColNames.has('description')
+        ? 'description'
+        : edgeColNames.has('context')
+          ? "CASE WHEN json_valid(context) THEN json_extract(context, '$.explanation') ELSE NULL END"
+          : 'NULL';
+
+    console.log('Migrating legacy edges table to canonical schema');
+
+    let flippedForeignKeys = false;
+    try {
+      this.db.exec('PRAGMA foreign_keys=OFF;');
+      flippedForeignKeys = true;
+    } catch {}
+
+    try {
+      this.db.exec('BEGIN TRANSACTION;');
+      this.db.exec(`
+        DROP INDEX IF EXISTS idx_edges_from;
+        DROP INDEX IF EXISTS idx_edges_to;
+        ALTER TABLE edges RENAME TO edges_legacy_migration;
+        CREATE TABLE edges (
+          id INTEGER PRIMARY KEY,
+          from_node_id INTEGER NOT NULL,
+          to_node_id INTEGER NOT NULL,
+          source TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          context TEXT,
+          explanation TEXT,
+          FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+          FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+        );
+        INSERT INTO edges (id, from_node_id, to_node_id, source, created_at, context, explanation)
+        SELECT
+          id,
+          ${fromExpr},
+          ${toExpr},
+          ${sourceExpr},
+          COALESCE(${createdAtExpr}, CURRENT_TIMESTAMP),
+          ${contextExpr},
+          ${explanationExpr}
+        FROM edges_legacy_migration
+        WHERE ${fromExpr} IS NOT NULL
+          AND ${toExpr} IS NOT NULL;
+        DROP TABLE edges_legacy_migration;
+        COMMIT;
+      `);
+    } catch (error) {
+      try {
+        this.db.exec('ROLLBACK;');
+      } catch {}
+      throw error;
+    } finally {
+      if (flippedForeignKeys) {
+        try {
+          this.db.exec('PRAGMA foreign_keys=ON;');
+        } catch {}
+      }
+    }
+  }
+
+  private rebuildLegacyChatsTable(chatColNames: Set<string>): void {
+    const chatTypeExpr = chatColNames.has('chat_type') ? 'chat_type' : 'NULL';
+    const helperNameExpr = chatColNames.has('helper_name')
+      ? 'helper_name'
+      : chatColNames.has('title')
+        ? 'title'
+        : 'NULL';
+    const agentTypeExpr = chatColNames.has('agent_type')
+      ? "COALESCE(agent_type, 'orchestrator')"
+      : "'orchestrator'";
+    const delegationIdExpr = chatColNames.has('delegation_id') ? 'delegation_id' : 'NULL';
+    const userMessageExpr = chatColNames.has('user_message') ? 'user_message' : 'NULL';
+    const assistantMessageExpr = chatColNames.has('assistant_message') ? 'assistant_message' : 'NULL';
+    const threadIdExpr = chatColNames.has('thread_id') ? 'thread_id' : 'NULL';
+    const focusedNodeIdExpr = chatColNames.has('focused_node_id') ? 'focused_node_id' : 'NULL';
+    const createdAtExpr = chatColNames.has('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP';
+    const metadataExpr = chatColNames.has('metadata') ? 'metadata' : 'NULL';
+
+    console.log('Migrating legacy chats table to canonical schema');
+
+    let flippedForeignKeys = false;
+    try {
+      this.db.exec('PRAGMA foreign_keys=OFF;');
+      flippedForeignKeys = true;
+    } catch {}
+
+    try {
+      this.db.exec('BEGIN TRANSACTION;');
+      this.db.exec(`
+        DROP INDEX IF EXISTS idx_chats_thread;
+        ALTER TABLE chats RENAME TO chats_legacy_cleanup;
+        CREATE TABLE chats (
+          id INTEGER PRIMARY KEY,
+          chat_type TEXT,
+          helper_name TEXT,
+          agent_type TEXT DEFAULT 'orchestrator',
+          delegation_id INTEGER,
+          user_message TEXT,
+          assistant_message TEXT,
+          thread_id TEXT,
+          focused_node_id INTEGER,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          metadata TEXT,
+          FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
+        );
+        INSERT INTO chats (
+          id, chat_type, helper_name, agent_type, delegation_id,
+          user_message, assistant_message, thread_id, focused_node_id,
+          created_at, metadata
+        )
+        SELECT
+          id,
+          ${chatTypeExpr},
+          ${helperNameExpr},
+          ${agentTypeExpr},
+          ${delegationIdExpr},
+          ${userMessageExpr},
+          ${assistantMessageExpr},
+          ${threadIdExpr},
+          ${focusedNodeIdExpr},
+          COALESCE(${createdAtExpr}, CURRENT_TIMESTAMP),
+          ${metadataExpr}
+        FROM chats_legacy_cleanup;
+        DROP TABLE chats_legacy_cleanup;
+        COMMIT;
+      `);
+    } catch (error) {
+      try {
+        this.db.exec('ROLLBACK;');
+      } catch {}
+      throw error;
+    } finally {
+      if (flippedForeignKeys) {
+        try {
+          this.db.exec('PRAGMA foreign_keys=ON;');
+        } catch {}
+      }
+    }
+  }
+
   private ensureLoggingAndMemorySchema(): void {
     if (this.readOnly) {
       return;
     }
     try {
-      const hasReadyLogs = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='logs'").get();
-      if (hasReadyLogs) {
-        return;
-      }
-
-      // 1) If logs table missing but legacy memory table exists, migrate
+      // Existing installs may already have logs but still need the idempotent schema pass below.
+      // Only skip the legacy memory rename step when logs already exists.
       const hasLogs = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='logs'").get();
       const hasLegacyMemory = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory'").get();
       if (!hasLogs && hasLegacyMemory) {
@@ -263,6 +551,11 @@ class SQLiteClient {
           }
         };
         ensureNodeCol('description', "ALTER TABLE nodes ADD COLUMN description TEXT;");
+        ensureNodeCol('link', 'ALTER TABLE nodes ADD COLUMN link TEXT;');
+        ensureNodeCol('source', 'ALTER TABLE nodes ADD COLUMN source TEXT;');
+        ensureNodeCol('metadata', 'ALTER TABLE nodes ADD COLUMN metadata TEXT;');
+        ensureNodeCol('created_at', "ALTER TABLE nodes ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP;");
+        ensureNodeCol('updated_at', "ALTER TABLE nodes ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP;");
       } catch (nodeErr) {
         console.warn('Failed to ensure nodes columns:', nodeErr);
       }
@@ -277,6 +570,25 @@ class SQLiteClient {
         }
       } catch (chatErr) {
         console.warn('Failed to ensure chats.created_at column:', chatErr);
+      }
+
+      // Normalize legacy chats table before creating chat triggers or views that reference modern columns.
+      try {
+        const hasChatsTable = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chats'").get();
+        if (hasChatsTable) {
+          const chatCols = this.db.prepare('PRAGMA table_info(chats)').all() as Array<{ name: string }>;
+          const chatColNames = new Set(chatCols.map((col) => col.name));
+          const needsChatRewrite =
+            chatColNames.has('focused_memory_id') ||
+            ['chat_type', 'helper_name', 'agent_type', 'delegation_id', 'user_message', 'assistant_message', 'thread_id', 'focused_node_id', 'created_at', 'metadata']
+              .some((name) => !chatColNames.has(name));
+
+          if (needsChatRewrite) {
+            this.rebuildLegacyChatsTable(chatColNames);
+          }
+        }
+      } catch (chatSchemaErr) {
+        console.warn('Failed to normalize chats schema before log setup:', chatSchemaErr);
       }
 
       // 3) Helpful indexes on logs (clean up old names first)
@@ -494,55 +806,20 @@ class SQLiteClient {
       if (hasChats) {
         try {
           let chatCols = this.db.prepare('PRAGMA table_info(chats)').all() as any[];
-          const hasFocusedMemoryId = chatCols.some((c: any) => c.name === 'focused_memory_id');
-          if (hasFocusedMemoryId) {
-            console.log('Removing legacy chats.focused_memory_id column');
-            let flippedForeignKeys = false;
-            try {
-              this.db.exec('PRAGMA foreign_keys=OFF;');
-              flippedForeignKeys = true;
-              this.db.exec(`
-                BEGIN TRANSACTION;
-                ALTER TABLE chats RENAME TO chats_legacy_cleanup;
-                CREATE TABLE chats (
-                  id INTEGER PRIMARY KEY,
-                  chat_type TEXT,
-                  helper_name TEXT,
-                  agent_type TEXT DEFAULT 'orchestrator',
-                  delegation_id INTEGER,
-                  user_message TEXT,
-                  assistant_message TEXT,
-                  thread_id TEXT,
-                  focused_node_id INTEGER,
-                  created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
-                  metadata TEXT,
-                  FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
-                );
-                INSERT INTO chats (
-                  id, chat_type, helper_name, agent_type, delegation_id,
-                  user_message, assistant_message, thread_id, focused_node_id,
-                  created_at, metadata
-                )
-                SELECT id, chat_type, helper_name, agent_type, delegation_id,
-                       user_message, assistant_message, thread_id, focused_node_id,
-                       created_at, metadata
-                  FROM chats_legacy_cleanup;
-                DROP TABLE chats_legacy_cleanup;
-                CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);
-                COMMIT;
-              `);
-            } catch (migrationErr) {
-              console.warn('Failed to migrate chats table (focused_memory_id removal):', migrationErr);
-              try { this.db.exec('ROLLBACK;'); } catch {}
-            } finally {
-              if (flippedForeignKeys) {
-                try { this.db.exec('PRAGMA foreign_keys=ON;'); } catch {}
-              }
-            }
+          const chatColNames = new Set(chatCols.map((c: any) => c.name));
+          const needsChatRewrite =
+            chatColNames.has('focused_memory_id') ||
+            ['chat_type', 'helper_name', 'agent_type', 'delegation_id', 'user_message', 'assistant_message', 'thread_id', 'focused_node_id', 'created_at', 'metadata']
+              .some((name) => !chatColNames.has(name));
+
+          if (needsChatRewrite) {
+            this.rebuildLegacyChatsTable(chatColNames);
             chatCols = this.db.prepare('PRAGMA table_info(chats)').all() as any[];
           }
 
-          this.db.exec("CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);");
+          if (chatCols.some((c: any) => c.name === 'thread_id')) {
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);");
+          }
 
           const ensureCol = (name: string, ddl: string) => {
             if (!chatCols.some((c: any) => c.name === name)) {
@@ -578,51 +855,7 @@ class SQLiteClient {
         console.warn('Failed to drop legacy memory pipeline tables:', dropLegacyErr);
       }
 
-      // 9) Ensure dimensions table exists (v0.1.16+ schema migration)
-      const hasDimensions = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='dimensions'").get();
-      if (!hasDimensions) {
-        console.log('Creating dimensions table for v0.1.16+ features...');
-        this.db.exec(`
-          CREATE TABLE dimensions (
-            name TEXT PRIMARY KEY,
-            description TEXT,
-            is_priority INTEGER DEFAULT 0,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-          );
-        `);
-        
-        // Seed default locked dimensions
-        const defaultDimensions = ['research', 'ideas', 'projects', 'memory', 'preferences'];
-        const insertDimension = this.db.prepare(`
-          INSERT INTO dimensions (name, is_priority, updated_at)
-          VALUES (?, 1, datetime('now'))
-          ON CONFLICT(name) DO UPDATE SET is_priority = 1, updated_at = datetime('now')
-        `);
-        
-        for (const dimension of defaultDimensions) {
-          try {
-            insertDimension.run(dimension);
-          } catch (e) {
-            console.warn(`Failed to seed dimension '${dimension}':`, e);
-          }
-        }
-        console.log('Dimensions table created and seeded with default locked dimensions');
-      } else {
-        // Check if existing dimensions table has description column
-        const dimensionCols = this.db.prepare('PRAGMA table_info(dimensions)').all() as Array<{ name: string }>;
-        const hasDescription = dimensionCols.some(col => col.name === 'description');
-        if (!hasDescription) {
-          console.log('Adding description column to existing dimensions table...');
-          try {
-            this.db.exec('ALTER TABLE dimensions ADD COLUMN description TEXT;');
-            console.log('Description column added to dimensions table');
-          } catch (e) {
-            console.warn('Failed to add description column to dimensions table:', e);
-          }
-        }
-      }
-
-      // 10) Final schema pass migrations (source canonicalization, event_date, dimensions.icon, drop dead columns)
+      // 9) Final schema pass migrations (source-first backfill, event_date, soft contexts, drop dimensions)
       try {
         let nodeCols2 = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
         let nodeColNames = nodeCols2.map(c => c.name);
@@ -630,6 +863,12 @@ class SQLiteClient {
         if (!nodeColNames.includes('source')) {
           console.log('Adding nodes.source column...');
           this.db.exec('ALTER TABLE nodes ADD COLUMN source TEXT;');
+          nodeCols2 = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
+          nodeColNames = nodeCols2.map(c => c.name);
+        }
+
+        if (!nodeColNames.includes('chunk_status')) {
+          this.db.exec("ALTER TABLE nodes ADD COLUMN chunk_status TEXT DEFAULT 'not_chunked';");
           nodeCols2 = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
           nodeColNames = nodeCols2.map(c => c.name);
         }
@@ -691,19 +930,121 @@ class SQLiteClient {
         // Add event_date
         if (!nodeColNames.includes('event_date')) {
           this.db.exec('ALTER TABLE nodes ADD COLUMN event_date TEXT;');
-          // Backfill from metadata.published_date where available
+          // Backfill from metadata.published_date or metadata.source_metadata.published_date where available
           try {
             this.db.exec(`
-              UPDATE nodes SET event_date = json_extract(metadata, '$.published_date')
-              WHERE event_date IS NULL AND json_extract(metadata, '$.published_date') IS NOT NULL;
+              UPDATE nodes
+              SET event_date = COALESCE(
+                json_extract(metadata, '$.source_metadata.published_date'),
+                json_extract(metadata, '$.published_date')
+              )
+              WHERE event_date IS NULL
+                AND COALESCE(
+                  json_extract(metadata, '$.source_metadata.published_date'),
+                  json_extract(metadata, '$.published_date')
+                ) IS NOT NULL;
             `);
           } catch {}
         }
 
-        // Add dimensions.icon
-        const dimCols2 = this.db.prepare('PRAGMA table_info(dimensions)').all() as Array<{ name: string }>;
-        if (!dimCols2.some(c => c.name === 'icon')) {
-          this.db.exec('ALTER TABLE dimensions ADD COLUMN icon TEXT;');
+        if (!nodeColNames.includes('context_id')) {
+          this.db.exec('ALTER TABLE nodes ADD COLUMN context_id INTEGER REFERENCES contexts(id) ON DELETE SET NULL;');
+        }
+
+        const hasContexts = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='contexts'").get();
+        if (!hasContexts) {
+          this.db.exec(`
+            CREATE TABLE contexts (
+              id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL,
+              description TEXT NOT NULL,
+              icon TEXT,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+          `);
+        }
+
+        const contextCols = this.db.prepare('PRAGMA table_info(contexts)').all() as Array<{ name: string }>;
+        const ensureContextCol = (name: string, ddl: string) => {
+          if (!contextCols.some(col => col.name === name)) {
+            this.db.exec(ddl);
+          }
+        };
+        ensureContextCol('description', "ALTER TABLE contexts ADD COLUMN description TEXT NOT NULL DEFAULT '';");
+        ensureContextCol('icon', 'ALTER TABLE contexts ADD COLUMN icon TEXT;');
+        ensureContextCol('created_at', "ALTER TABLE contexts ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
+        ensureContextCol('updated_at', "ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
+
+        this.db.exec(`
+          UPDATE contexts
+          SET description = COALESCE(NULLIF(TRIM(description), ''), name)
+          WHERE description IS NULL OR LENGTH(TRIM(description)) = 0;
+        `);
+
+        this.db.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized
+            ON contexts(LOWER(TRIM(name)));
+          CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);
+        `);
+
+        const hasLegacyDimensions = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dimensions'").get();
+        const hasLegacyNodeDimensions = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='node_dimensions'").get();
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS dimension_migration_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            migrated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            dimension_count INTEGER NOT NULL,
+            assignment_count INTEGER NOT NULL,
+            payload TEXT
+          );
+        `);
+
+        if (hasLegacyDimensions || hasLegacyNodeDimensions) {
+          const existingSnapshotCount = Number(
+            (this.db.prepare('SELECT COUNT(*) as count FROM dimension_migration_snapshots').get() as { count?: number } | undefined)?.count ?? 0
+          );
+
+          if (existingSnapshotCount === 0) {
+            const dimensionCount = hasLegacyDimensions
+              ? Number((this.db.prepare('SELECT COUNT(*) as count FROM dimensions').get() as { count?: number } | undefined)?.count ?? 0)
+              : 0;
+            const assignmentCount = hasLegacyNodeDimensions
+              ? Number((this.db.prepare('SELECT COUNT(*) as count FROM node_dimensions').get() as { count?: number } | undefined)?.count ?? 0)
+              : 0;
+            const payload = hasLegacyNodeDimensions
+              ? (
+                  this.db.prepare(`
+                    SELECT COALESCE(
+                      json_group_array(
+                        json_object(
+                          'node_id', nd.node_id,
+                          'dimension', nd.dimension,
+                          'description', d.description,
+                          'icon', d.icon,
+                          'is_priority', d.is_priority
+                        )
+                      ),
+                      '[]'
+                    ) AS payload
+                    FROM node_dimensions nd
+                    LEFT JOIN dimensions d ON d.name = nd.dimension
+                  `).get() as { payload?: string } | undefined
+                )?.payload ?? '[]'
+              : '[]';
+
+            this.db.prepare(`
+              INSERT INTO dimension_migration_snapshots (dimension_count, assignment_count, payload)
+              VALUES (?, ?, ?)
+            `).run(dimensionCount, assignmentCount, payload);
+          }
+
+          this.db.exec(`
+            DROP INDEX IF EXISTS idx_dim_by_dimension;
+            DROP INDEX IF EXISTS idx_dim_by_node;
+            DROP TABLE IF EXISTS node_dimensions;
+            DROP TABLE IF EXISTS dimensions;
+          `);
         }
 
         // Drop dead columns (requires SQLite 3.35+)
@@ -742,7 +1083,11 @@ class SQLiteClient {
             this.db.exec("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild');");
           }
         } catch (ftsErr) {
-          console.warn('Failed to rebuild nodes_fts:', ftsErr);
+          if (this.isSqliteCorruptError(ftsErr)) {
+            this.disableNodesFts('existing nodes_fts is corrupt and could not be rebuilt', ftsErr);
+          } else {
+            console.warn('Failed to rebuild nodes_fts:', ftsErr);
+          }
         }
       } catch (schemaErr) {
         console.warn('Final schema pass migration error:', schemaErr);
@@ -853,6 +1198,15 @@ class SQLiteClient {
 
   public close(): void {
     this.db.close();
+  }
+
+  private isSqliteCorruptError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const sqliteError = error as Error & { code?: string };
+    return sqliteError.code === 'SQLITE_CORRUPT' || /database disk image is malformed/i.test(sqliteError.message || '');
   }
 }
 

@@ -1,10 +1,11 @@
 import './globals.css';
-import { DimensionIconsProvider } from '@/context/DimensionIconsContext';
+import { AuthProvider } from '@/context/AuthContext';
+import AutoUpdateManager from '@/components/system/AutoUpdateManager';
 import ExternalNavigationManager from '@/components/system/ExternalNavigationManager';
 
 export const metadata = {
-  title: 'RA-H Open Source',
-  description: 'Local-first research workspace with a BYO-key AI orchestrator',
+  title: 'RA-H - Knowledge Management System',
+  description: 'A simplified, open-source knowledge management system',
 };
 
 export default function RootLayout({
@@ -39,10 +40,11 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <DimensionIconsProvider>
+        <AuthProvider>
+          <AutoUpdateManager />
           <ExternalNavigationManager />
           {children}
-        </DimensionIconsProvider>
+        </AuthProvider>
       </body>
     </html>
   );

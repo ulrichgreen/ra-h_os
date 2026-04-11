@@ -1,9 +1,9 @@
 // View system types
 
-export type ViewType = 'focus' | 'list' | 'kanban' | 'grid';
+export type ViewType = 'focus' | 'list' | 'grid' | 'table' | 'map';
 
 export interface ViewFilter {
-  dimension: string;
+  context: string;
   operator: 'includes' | 'excludes';
 }
 
@@ -12,18 +12,10 @@ export interface ViewSort {
   direction: 'asc' | 'desc';
 }
 
-export interface KanbanColumn {
-  id: string;
-  dimension: string;
-  order: number;
-}
-
 export interface ViewConfig {
   filters: ViewFilter[];
   filterLogic: 'and' | 'or';
   sort: ViewSort;
-  // Kanban-specific
-  columns?: KanbanColumn[];
 }
 
 export interface SavedView {
@@ -41,5 +33,4 @@ export const DEFAULT_VIEW_CONFIG: ViewConfig = {
   filters: [],
   filterLogic: 'and',
   sort: { field: 'updated_at', direction: 'desc' },
-  columns: []
 };

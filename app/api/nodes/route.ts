@@ -4,11 +4,9 @@ import { Node, NodeFilters } from '@/types/database';
 import { autoEmbedQueue } from '@/services/embedding/autoEmbedQueue';
 import { generateDescription } from '@/services/database/descriptionService';
 import { scheduleAutoEdgeCreation } from '@/services/agents/autoEdge';
-import { coerceDescriptionForStorage, normalizeDimensions } from '@/services/database/quality';
-import { formatUnknownDimensionsError, getUnknownDimensions } from '@/services/database/dimensionValidation';
+import { coerceDescriptionForStorage } from '@/services/database/quality';
 import { normalizeNodeLink } from '@/utils/nodeLink';
 import { buildCanonicalNodeMetadata } from '@/services/nodes/metadata';
-import { inferBestContextIdForNode } from '@/services/context/contextAssignment';
 
 export const runtime = 'nodejs';
 
@@ -28,18 +26,6 @@ export async function GET(request: NextRequest) {
       if (!Number.isNaN(parsed)) {
         filters.contextId = parsed;
       }
-    }
-
-    // Handle dimensions parameter (comma-separated)
-    const dimensionsParam = searchParams.get('dimensions');
-    if (dimensionsParam) {
-      filters.dimensions = dimensionsParam.split(',').map(dim => dim.trim()).filter(Boolean);
-    }
-
-    // Handle dimensionsMatch parameter (any|all)
-    const dimensionsMatchParam = searchParams.get('dimensionsMatch');
-    if (dimensionsMatchParam === 'all') {
-      filters.dimensionsMatch = 'all';
     }
 
     // Handle sortBy parameter (sortBy=edges|updated|created)
@@ -115,16 +101,6 @@ export async function POST(request: NextRequest) {
     }
     const eventDate = typeof body.event_date === 'string' ? body.event_date : null;
 
-    // Process provided dimensions first (needed for description generation)
-    const trimmedProvidedDimensions = normalizeDimensions(body.dimensions, 5);
-    const unknownDimensions = getUnknownDimensions(trimmedProvidedDimensions);
-    if (unknownDimensions.length > 0) {
-      return NextResponse.json({
-        success: false,
-        error: formatUnknownDimensionsError(unknownDimensions)
-      }, { status: 400 });
-    }
-
     // Use provided description if present, otherwise auto-generate
     const isUserSuppliedDescription = typeof body.description === 'string' && body.description.trim().length > 0;
     let nodeDescription: string | undefined = isUserSuppliedDescription
@@ -138,7 +114,6 @@ export async function POST(request: NextRequest) {
           source: rawSource?.slice(0, 2000) || undefined,
           link: normalizedLink || undefined,
           metadata: body.metadata,
-          dimensions: trimmedProvidedDimensions
         });
       } catch (error) {
         console.error('Error generating description:', error);
@@ -160,14 +135,19 @@ export async function POST(request: NextRequest) {
       console.warn(`[DescriptionQuality] Weak description for node "${body.title}": "${finalDescription}"`);
     }
 
-    // Use only provided dimensions (no auto-assignment)
-    const finalDimensions = trimmedProvidedDimensions;
     const sourceToStore = rawSource || [body.title, nodeDescription].filter(Boolean).join('\n\n').trim() || null;
     let chunkStatus: Node['chunk_status'];
 
     if (sourceToStore && sourceToStore.trim().length > 0) {
       chunkStatus = 'not_chunked';
     }
+
+    const inferredType =
+      typeof body.metadata?.type === 'string'
+        ? body.metadata.type
+        : typeof body.metadata?.source === 'string'
+          ? body.metadata.source
+          : undefined;
 
     let resolvedContextId: number | null | undefined;
     try {
@@ -176,25 +156,10 @@ export async function POST(request: NextRequest) {
         context_name: body.context_name,
       });
     } catch (error) {
-      console.warn('[nodes.create] Invalid explicit context input, falling back to inheritance/inference:', error);
-      resolvedContextId = undefined;
-    }
-
-    if (resolvedContextId === undefined && typeof body.active_context_id === 'number' && Number.isInteger(body.active_context_id) && body.active_context_id > 0) {
-      const inherited = await contextService.getContextById(body.active_context_id);
-      if (inherited) {
-        resolvedContextId = inherited.id;
-      }
-    }
-
-    if (resolvedContextId == null) {
-      resolvedContextId = await inferBestContextIdForNode({
-        title: body.title,
-        description: finalDescription,
-        source: sourceToStore,
-        dimensions: finalDimensions,
-        metadata: body.metadata,
-      });
+      return NextResponse.json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Invalid context input'
+      }, { status: 400 });
     }
 
     const node = await nodeService.createNode({
@@ -203,16 +168,11 @@ export async function POST(request: NextRequest) {
       source: sourceToStore ?? undefined,
       event_date: eventDate ?? undefined,
       link: normalizedLink ?? undefined,
-      dimensions: finalDimensions,
       chunk_status: chunkStatus,
       context_id: resolvedContextId,
       metadata: buildCanonicalNodeMetadata({
         metadata: body.metadata || {},
-        type: typeof body.metadata?.type === 'string'
-          ? body.metadata.type
-          : typeof body.metadata?.source === 'string'
-            ? body.metadata.source
-            : undefined,
+        type: inferredType,
         state: body.metadata?.state === 'processed' ? 'processed' : 'not_processed',
       })
     });
@@ -229,7 +189,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: node,
-      message: `Node created successfully with dimensions: ${finalDimensions.join(', ')}`
+      message: `Node created successfully`
     }, { status: 201 });
   } catch (error) {
     console.error('Error creating node:', error);

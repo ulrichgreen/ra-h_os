@@ -1,20 +1,13 @@
 import { getToolGroup, groupTools, getAllToolsByGroup } from './groups';
 import { queryNodesTool } from '../database/queryNodes';
 import { getNodesByIdTool } from '../database/getNodesById';
+import { queryEdgeTool } from '../database/queryEdge';
+import { queryContextsTool } from '../database/queryContexts';
 import { createNodeTool } from '../database/createNode';
 import { updateNodeTool } from '../database/updateNode';
 import { deleteNodeTool } from '../database/deleteNode';
 import { createEdgeTool } from '../database/createEdge';
-import { queryEdgeTool } from '../database/queryEdge';
 import { updateEdgeTool } from '../database/updateEdge';
-import { createDimensionTool } from '../database/createDimension';
-import { updateDimensionTool } from '../database/updateDimension';
-// lockDimension and unlockDimension consolidated into updateDimension (use isPriority param)
-import { deleteDimensionTool } from '../database/deleteDimension';
-import { queryDimensionsTool } from '../database/queryDimensions';
-import { getDimensionTool } from '../database/getDimension';
-import { queryDimensionNodesTool } from '../database/queryDimensionNodes';
-import { queryContextsTool } from '../database/queryContexts';
 import { searchContentEmbeddingsTool } from '../other/searchContentEmbeddings';
 import { webSearchTool } from '../other/webSearch';
 import { thinkTool } from '../other/think';
@@ -24,34 +17,29 @@ import { paperExtractTool } from '../other/paperExtract';
 import { sqliteQueryTool } from '../other/sqliteQuery';
 import { logEvalToolCall } from '@/services/evals/evalsLogger';
 
-// Core tools available to all agents (read-only graph operations)
+// Read tools (graph queries)
 const CORE_TOOLS: Record<string, any> = {
   sqliteQuery: sqliteQueryTool,
   queryNodes: queryNodesTool,
   getNodesById: getNodesByIdTool,
   queryEdge: queryEdgeTool,
-  queryDimensions: queryDimensionsTool,
-  getDimension: getDimensionTool,
-  queryDimensionNodes: queryDimensionNodesTool,
   queryContexts: queryContextsTool,
   searchContentEmbeddings: searchContentEmbeddingsTool,
 };
 
+// Utility tools
 const ORCHESTRATION_TOOLS: Record<string, any> = {
   webSearch: webSearchTool,
   think: thinkTool,
 };
 
-// Execution tools for worker agents (includes write operations)
+// Write tools (includes extraction)
 const EXECUTION_TOOLS: Record<string, any> = {
   createNode: createNodeTool,
   updateNode: updateNodeTool,
   deleteNode: deleteNodeTool,
   createEdge: createEdgeTool,
   updateEdge: updateEdgeTool,
-  createDimension: createDimensionTool,
-  updateDimension: updateDimensionTool,
-  deleteDimension: deleteDimensionTool,
   youtubeExtract: youtubeExtractTool,
   websiteExtract: websiteExtractTool,
   paperExtract: paperExtractTool,
@@ -69,28 +57,9 @@ export const TOOLS: Record<string, any> = {
   ...EXECUTION_TOOLS,
 };
 
-const ORCHESTRATOR_TOOL_NAMES = Array.from(new Set([
-  ...Object.keys(CORE_TOOLS),
-  'webSearch',
-  'think',
-  'createNode',
-  'updateNode',
-  'deleteNode',
-  'createEdge',
-  'updateEdge',
-  'createDimension',
-  'updateDimension',
-  'deleteDimension',
-  'youtubeExtract',
-  'websiteExtract',
-  'paperExtract',
-]));
+const ORCHESTRATOR_TOOL_NAMES = Object.keys(TOOLS);
 
-const EXECUTOR_TOOL_NAMES = [
-  ...Object.keys(CORE_TOOLS),
-  ...Object.keys(ORCHESTRATION_TOOLS),
-  ...Object.keys(EXECUTION_TOOLS),
-];
+const EXECUTOR_TOOL_NAMES = Object.keys(TOOLS);
 
 // Note: PLANNER_TOOL_NAMES kept for backwards compatibility but workflows now use specific tool sets
 const PLANNER_TOOL_NAMES = [
@@ -99,7 +68,6 @@ const PLANNER_TOOL_NAMES = [
   'think',
   'updateNode',
   'createEdge',
-  'updateDimension',
 ];
 
 /**
