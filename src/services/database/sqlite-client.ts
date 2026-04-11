@@ -1073,21 +1073,16 @@ class SQLiteClient {
           } catch {}
         }
 
-        // Recreate nodes_fts to index title + source + description
+        // Only create nodes_fts when it does not exist yet.
+        // Do not rewrite existing FTS tables on startup in the OS app.
         try {
           const ftsCheck = this.db.prepare("SELECT sql FROM sqlite_master WHERE name='nodes_fts'").get() as { sql?: string } | undefined;
-          const needsRebuild = !ftsCheck?.sql || !ftsCheck.sql.includes('source') || ftsCheck.sql.includes('notes') || ftsCheck.sql.includes('content');
-          if (needsRebuild) {
-            this.db.exec('DROP TABLE IF EXISTS nodes_fts;');
+          if (!ftsCheck?.sql) {
             this.db.exec("CREATE VIRTUAL TABLE nodes_fts USING fts5(title, source, description, content='nodes', content_rowid='id');");
             this.db.exec("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild');");
           }
         } catch (ftsErr) {
-          if (this.isSqliteCorruptError(ftsErr)) {
-            this.disableNodesFts('existing nodes_fts is corrupt and could not be rebuilt', ftsErr);
-          } else {
-            console.warn('Failed to rebuild nodes_fts:', ftsErr);
-          }
+          console.warn('Failed to initialize nodes_fts:', ftsErr);
         }
       } catch (schemaErr) {
         console.warn('Final schema pass migration error:', schemaErr);
