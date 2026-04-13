@@ -115,6 +115,16 @@ function getNodes(filters = {}) {
 }
 
 /**
+ * Search nodes using the same filter object as getNodes.
+ */
+function searchNodes(filters = {}) {
+  if (typeof filters === 'string') {
+    return getNodes({ search: filters });
+  }
+  return getNodes(filters);
+}
+
+/**
  * Get a single node by ID.
  */
 function getNodeById(id) {
@@ -316,6 +326,7 @@ function getContext() {
 
 module.exports = {
   getNodes,
+  searchNodes,
   getNodeById,
   createNode,
   updateNode,

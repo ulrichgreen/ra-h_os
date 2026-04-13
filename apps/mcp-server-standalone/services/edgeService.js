@@ -151,7 +151,23 @@ function getNodeConnections(nodeId) {
       CASE
         WHEN e.from_node_id = ? THEN n_to.description
         ELSE n_from.description
-      END as connected_node_description
+      END as connected_node_description,
+      CASE
+        WHEN e.from_node_id = ? THEN n_to.link
+        ELSE n_from.link
+      END as connected_node_link,
+      CASE
+        WHEN e.from_node_id = ? THEN n_to.source
+        ELSE n_from.source
+      END as connected_node_source,
+      CASE
+        WHEN e.from_node_id = ? THEN n_to.updated_at
+        ELSE n_from.updated_at
+      END as connected_node_updated_at,
+      CASE
+        WHEN e.from_node_id = ? THEN n_to.metadata
+        ELSE n_from.metadata
+      END as connected_node_metadata
     FROM edges e
     LEFT JOIN nodes n_from ON e.from_node_id = n_from.id
     LEFT JOIN nodes n_to ON e.to_node_id = n_to.id
@@ -159,7 +175,7 @@ function getNodeConnections(nodeId) {
     ORDER BY e.created_at DESC
   `;
 
-  const rows = query(sql, [nodeId, nodeId, nodeId, nodeId, nodeId]);
+  const rows = query(sql, [nodeId, nodeId, nodeId, nodeId, nodeId, nodeId, nodeId, nodeId, nodeId]);
 
   return rows.map(row => ({
     edgeId: row.id,
@@ -169,7 +185,11 @@ function getNodeConnections(nodeId) {
     connected_node: {
       id: row.connected_node_id,
       title: row.connected_node_title,
-      description: row.connected_node_description
+      description: row.connected_node_description,
+      link: row.connected_node_link,
+      source: row.connected_node_source,
+      updated_at: row.connected_node_updated_at,
+      metadata: parseContext(row.connected_node_metadata)
     }
   }));
 }

@@ -44,10 +44,15 @@ let logger = (message) => console.log(`[mcp] ${message}`);
 
 const instructions = [
   'RA-H is a personal knowledge graph — local-first, vendor-neutral.',
-  'Core concepts: contexts (optional soft scopes), nodes (knowledge units), and edges (connections with explanations).',
-  'Always call rah_get_context first to orient yourself — it returns contexts, hub nodes, stats, and available guides.',
-  'Use contexts only when they are explicit and helpful. Do not expect automatic context assignment.',
+  'Core concepts: contexts (optional soft scopes, max 10), nodes (knowledge units), and edges (connections with explanations).',
+  'If the user is trying to find a specific existing node, use rah_search_nodes first.',
+  'If graph context would help with a broader task, use rah_retrieve_query_context.',
+  'Use rah_get_context only when high-level graph orientation would actually help.',
+  'Do not keep re-running retrieval if you already have enough relevant graph context in play.',
+  'Use contexts only when one obvious existing context is explicitly helpful. If unsure or if none exist, leave context empty. Do not assume the server will infer a best-fit context.',
   'Search before creating: use rah_search_nodes to check if content already exists.',
+  'Only suggest saving context when it is unusually durable and valuable. Keep the ask brief, for example: Add "X" as a node?',
+  'Never write via rah_write_context unless the user has explicitly confirmed yes.',
   'Every edge needs an explanation: why does this connection exist?',
   'All data stays local on this device; nothing leaves 127.0.0.1.',
 ].join(' ');
@@ -73,7 +78,7 @@ const addNodeInputSchema = {
   source: z.string().max(50000).optional(),
   link: z.string().url().optional(),
   description: z.string().max(500).optional().describe('Description of the node. Write it as natural prose, not labels or a checklist. It must still make clear what the artifact is, why it is in the graph (infer from conversation context; ask the user if needed), and its current workflow status. Max 500 characters. If the reason is unclear, say that naturally instead of inventing it. Never use filler phrases like "insightful for understanding" or "relevant to the user\'s work".'),
-  context_id: z.number().int().positive().nullable().optional(),
+  context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Usually omit this field entirely unless you already know a real matching context.'),
   context_name: z.string().optional(),
   metadata: z.record(z.any()).optional().describe('Optional metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.'),
   chunk: z.string().max(50000).optional()
@@ -103,6 +108,55 @@ const searchNodesOutputSchema = {
       updated_at: z.string()
     })
   )
+};
+
+const retrieveQueryContextInputSchema = {
+  query: z.string().min(1).max(800),
+  focused_node_id: z.number().int().positive().nullable().optional(),
+  active_context_id: z.number().int().positive().nullable().optional(),
+  limit: z.number().min(1).max(12).optional()
+};
+
+const retrieveQueryContextOutputSchema = {
+  query: z.string(),
+  shouldRetrieve: z.boolean(),
+  mode: z.enum(['skip', 'focused', 'query']),
+  reason: z.string(),
+  focused_node_id: z.number().nullable(),
+  active_context_id: z.number().nullable(),
+  nodes: z.array(z.object({
+    id: z.number(),
+    title: z.string(),
+    description: z.string().nullable(),
+    link: z.string().nullable(),
+    updated_at: z.string(),
+    kind: z.enum(['focused', 'query_match', 'context_hint', 'neighbor']),
+    reason: z.string(),
+    seed_node_id: z.number().optional()
+  })),
+  chunks: z.array(z.object({
+    id: z.number(),
+    node_id: z.number(),
+    node_title: z.string(),
+    preview: z.string(),
+    similarity: z.number()
+  }))
+};
+
+const writeContextInputSchema = {
+  title: z.string().min(1).max(160),
+  description: z.string().min(1).max(500),
+  source: z.string().max(50000).optional(),
+  context_id: z.number().int().positive().nullable().optional(),
+  metadata: z.record(z.any()).optional(),
+  confirmed_by_user: z.boolean()
+};
+
+const writeContextOutputSchema = {
+  success: z.boolean(),
+  nodeId: z.number(),
+  title: z.string(),
+  message: z.string()
 };
 
 const queryContextsInputSchema = {
@@ -145,7 +199,7 @@ const updateNodeInputSchema = {
     content: z.string().optional().describe('Legacy alias for source. Mapped to source for backward compatibility.'),
     source: z.string().optional().describe('Canonical source text for embedding.'),
     link: z.string().optional().describe('New link'),
-    context_id: z.number().int().positive().nullable().optional().describe('Primary context ID. Omit to preserve existing context; use null to clear.'),
+    context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Omit this field to preserve existing context. Only use null when you intentionally want to clear context.'),
     metadata: z.record(z.any()).optional().describe('Metadata patch. This now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
   }).describe('Fields to update')
 };
@@ -321,7 +375,7 @@ mcpServer.registerTool(
   'rah_add_node',
   {
     title: 'Add RA-H node',
-    description: 'Create a new node in the local RA-H knowledge base. Set context explicitly when clear and useful; otherwise leave it empty.',
+    description: 'Create a new node in the local RA-H knowledge base. `context_id` is optional and should usually be omitted entirely unless one obvious existing context clearly fits.',
     inputSchema: addNodeInputSchema,
     outputSchema: addNodeOutputSchema
   },
@@ -359,7 +413,7 @@ mcpServer.registerTool(
   'rah_search_nodes',
   {
     title: 'Search RA-H nodes',
-    description: 'Find existing RA-H entries that mention a topic before adding new ones.',
+    description: 'Find existing RA-H entries that mention a topic before adding new ones. For full current-turn grounding of a substantive request, prefer rah_retrieve_query_context.',
     inputSchema: searchNodesInputSchema,
     outputSchema: searchNodesOutputSchema
   },
@@ -399,10 +453,36 @@ mcpServer.registerTool(
 );
 
 mcpServer.registerTool(
+  'rah_retrieve_query_context',
+  {
+    title: 'Retrieve RA-H query context',
+    description: 'Given the raw user query plus optional focused node state, retrieve the most relevant graph context for the current turn. It starts with direct graph search and broadens only if useful. Use this when graph context could help answer or complete a broader task. For explicit node lookup, use rah_search_nodes.',
+    inputSchema: retrieveQueryContextInputSchema,
+    outputSchema: retrieveQueryContextOutputSchema
+  },
+  async ({ query, focused_node_id, active_context_id, limit = 6 }) => {
+    const result = await callRaHApi('/api/retrieval/query-context', {
+      method: 'POST',
+      body: JSON.stringify({
+        query,
+        focused_node_id: focused_node_id ?? null,
+        active_context_id: active_context_id ?? null,
+        limit
+      })
+    });
+
+    return {
+      content: [{ type: 'text', text: result.data.shouldRetrieve ? `Retrieved ${result.data.nodes.length} node(s) and ${result.data.chunks.length} chunk(s) for this turn.` : result.data.reason }],
+      structuredContent: result.data
+    };
+  }
+);
+
+mcpServer.registerTool(
   'rah_query_contexts',
   {
     title: 'Query RA-H contexts',
-    description: 'List or inspect contexts, the soft organizational layer for the graph. Use this before assigning or filtering by context.',
+    description: 'List or inspect optional contexts. Use this only when a context is already obviously relevant or the user asks for it.',
     inputSchema: queryContextsInputSchema,
     outputSchema: queryContextsOutputSchema
   },
@@ -485,7 +565,7 @@ mcpServer.registerTool(
   'rah_update_node',
   {
     title: 'Update RA-H node',
-    description: 'Update an existing node. Context remains optional and explicit.',
+    description: 'Update an existing node. `context_id` is optional and should usually be omitted entirely unless you are intentionally setting or clearing a real context.',
     inputSchema: updateNodeInputSchema,
     outputSchema: updateNodeOutputSchema
   },
@@ -782,7 +862,7 @@ mcpServer.registerTool(
   'rah_get_context',
   {
     title: 'Get RA-H context',
-    description: 'Get orientation context: contexts, hub nodes, stats, and available guides. Call this first.',
+    description: 'Get orientation context: high-level graph state, optional contexts, hub nodes, stats, and available guides. Use this for orientation only, not as the default retrieval path for substantive requests.',
     inputSchema: {},
     outputSchema: {
       stats: z.object({ nodeCount: z.number(), edgeCount: z.number(), contextCount: z.number().optional() }),
@@ -814,6 +894,48 @@ mcpServer.registerTool(
     return {
       content: [{ type: 'text', text: `Knowledge graph: ${stats.contextCount} contexts, ${hubNodes.length} hub nodes for graph grounding, ${guides.length} guides available.` }],
       structuredContent: { stats, hubNodes, contexts, guides }
+    };
+  }
+);
+
+mcpServer.registerTool(
+  'rah_write_context',
+  {
+    title: 'Write RA-H context node',
+    description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this sparingly for unusually valuable context. Never call it unless the user has clearly said yes.',
+    inputSchema: writeContextInputSchema,
+    outputSchema: writeContextOutputSchema
+  },
+  async ({ title, description, source, context_id, metadata, confirmed_by_user }) => {
+    if (!confirmed_by_user) {
+      throw new Error('rah_write_context requires explicit user confirmation before writing to the graph.');
+    }
+
+    const result = await callRaHApi('/api/nodes', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: title.trim(),
+        description: description.trim(),
+        source: source?.trim() || undefined,
+        context_id: context_id ?? null,
+        metadata: {
+          captured_by: 'human',
+          captured_method: 'write_context',
+          ...(metadata || {})
+        }
+      })
+    });
+
+    const node = result.data;
+    const message = result.message || `Saved context as node #${node.id}: ${node.title}`;
+    return {
+      content: [{ type: 'text', text: message }],
+      structuredContent: {
+        success: true,
+        nodeId: node.id,
+        title: node.title,
+        message
+      }
     };
   }
 );

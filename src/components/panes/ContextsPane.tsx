@@ -47,7 +47,7 @@ export default function ContextsPane({
           {loading ? (
             <div style={emptyStateStyle}>Loading contexts...</div>
           ) : contexts.length === 0 ? (
-            <div style={emptyStateStyle}>No contexts yet.</div>
+            <div style={emptyStateStyle}>No contexts yet. That is optional.</div>
           ) : (
             contexts.map((context) => (
               <button

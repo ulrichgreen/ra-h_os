@@ -35,6 +35,7 @@ export const TOOL_GROUPS: Record<string, ToolGroup> = {
 export const TOOL_GROUP_ASSIGNMENTS: Record<string, string> = {
   // Core: Read-only graph operations (all agents)
   queryNodes: 'core',
+  retrieveQueryContext: 'core',
   getNodesById: 'core',
   queryEdge: 'core',
   queryContexts: 'core',
@@ -46,6 +47,7 @@ export const TOOL_GROUP_ASSIGNMENTS: Record<string, string> = {
 
   // Execution: Write operations and extraction (workers only)
   createNode: 'execution',
+  writeContext: 'execution',
   updateNode: 'execution',
   deleteNode: 'execution',
   createEdge: 'execution',
@@ -53,7 +55,7 @@ export const TOOL_GROUP_ASSIGNMENTS: Record<string, string> = {
   embedContent: 'execution',
   youtubeExtract: 'execution',
   websiteExtract: 'execution',
-  paperExtract: 'execution'
+  paperExtract: 'execution',
 };
 
 /**

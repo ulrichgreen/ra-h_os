@@ -7,12 +7,15 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 
 ## Core Rules
 
-1. Search before create to avoid duplicates.
-2. Every create/update must include a natural description that clearly says what the thing is, why it matters here, and its current workflow status.
-3. Use event dates when known (when it happened, not when saved).
-4. Apply context only when it is explicit and useful. One node gets at most one primary context, and leaving context blank is valid.
-5. Create edges when relationships are meaningful; edge explanations should read as a sentence.
-6. For user-authored ideas, notes, or dictated thoughts, preserve the user's wording in `source` as fully as possible with only minimal cleanup.
+1. First decide whether the user is trying to find a specific existing node or whether they want graph context to support a broader answer.
+2. If the user is trying to find a specific existing node, use `queryNodes` first.
+3. If the user is asking a substantive question or request that would benefit from prior graph context, use `retrieveQueryContext` for current-turn grounding instead of relying on orientation alone.
+4. Search before create to avoid duplicates.
+5. Every create/update must include a natural description that clearly says what the thing is, why it matters here, and its current workflow status.
+6. Use event dates when known (when it happened, not when saved).
+7. Apply context only when it is an obvious match to one of the user's existing contexts and genuinely useful. One node gets at most one primary context, and leaving context blank is valid.
+8. Create edges when relationships are meaningful; edge explanations should read as a sentence.
+9. For user-authored ideas, notes, or dictated thoughts, preserve the user's wording in `source` as fully as possible with only minimal cleanup.
 
 ## Write Quality Contract
 
@@ -21,7 +24,7 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 - `source`: full verbatim or canonical content of the node (transcript, article text, book passage, user's thoughts). This is what gets chunked and embedded for semantic search.
 - For idea capture from chat, the `source` should usually be the raw user thought, not a compressed assistant summary.
 - `link`: external source URL only.
-- `context_id`: the node's primary context. Prefer setting it when the scope is explicit. Leave it null rather than guessing.
+- `context_id`: the node's primary context. This field is optional. Omit it entirely unless it is an obvious existing match. Do not add `context_id: null` defensively.
 - `metadata`: use the canonical node metadata contract when metadata is needed:
   - `type`
   - `state` (`processed` or `not_processed`)
@@ -65,14 +68,20 @@ Max 500 characters.
 
 ## Execution Pattern
 
-1. Read context (search + relevant nodes + relevant edges).
-2. Decide: create vs update vs connect.
-3. Execute minimum required writes.
-4. If the node is a user-authored idea and the contextual framing was inferred, offer one concise feedback pass after the write.
-5. Verify result reflects user intent exactly.
+1. Decide whether this is direct node retrieval or broader contextual grounding.
+2. If the user is trying to find a specific existing node, call `queryNodes` first.
+3. If the user is asking a broader question that would benefit from prior graph context, call `retrieveQueryContext`.
+4. Decide: answer only vs create vs update vs connect.
+5. If something seems unusually durable and valuable, you may suggest a save in one short line like `Add "X" as a node?`
+6. Do not pester. If the user says no, ignores it, or moves on, do not keep asking.
+7. Only call `writeContext` or another write tool after explicit user confirmation.
+8. Execute minimum required writes.
+9. If the node is a user-authored idea and the contextual framing was inferred, offer one concise feedback pass after the write.
+10. Verify result reflects user intent exactly.
 
 ## Do Not
 
 - Create duplicate nodes when an update is correct.
 - Write vague descriptions ("discusses", "explores", "is about").
 - Create weak or directionless edges.
+- Ask to save every moderately useful point from the conversation.

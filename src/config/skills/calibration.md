@@ -3,7 +3,7 @@ name: Calibration
 description: "Run periodic check-ins to recalibrate goals, projects, preferences, and graph structure."
 when_to_use: "User asks for a check-in, reset, review, or strategic recalibration."
 when_not_to_use: "Single isolated question with no strategic update needed."
-success_criteria: "Graph reflects current reality: updated contexts, changed priorities, and explicit deltas."
+success_criteria: "Graph reflects current reality: updated nodes, changed priorities, and explicit deltas. Contexts are secondary when clearly useful."
 ---
 
 # Calibration
@@ -14,7 +14,7 @@ Re-anchor the graph to the user's current state.
 
 ## Check-in Sequence
 
-1. Review major contexts, anchor nodes, and active project nodes.
+1. Review the strongest active nodes first and use contexts only as a secondary check when they already exist and are clearly relevant.
 2. Ask what changed: goals, priorities, constraints, beliefs, preferences.
 3. Identify stale nodes and missing nodes.
 4. Propose precise updates: update existing vs create new.

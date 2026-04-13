@@ -78,6 +78,19 @@ export function summarizeToolExecution(toolName: string, args: any, result: any)
     return `Embedding search${query ? ` for "${truncateOrDefault(query, 60, query)}"` : ''}: no matches.`;
   }
 
+  if (toolName === 'retrieveQueryContext') {
+    const nodes = Array.isArray(result.data?.nodes) ? result.data.nodes : [];
+    const chunks = Array.isArray(result.data?.chunks) ? result.data.chunks : [];
+    if (nodes.length > 0) {
+      const labels = nodes
+        .slice(0, 3)
+        .map((node: any) => `[NODE:${node.id}:"${ensureString(node.title) || node.id}"]`)
+        .join(', ');
+      return `Retrieved ${nodes.length} node(s)${chunks.length > 0 ? ` and ${chunks.length} chunk(s)` : ''}: ${labels}`;
+    }
+    return ensureString(result.data?.reason) || 'No relevant graph context retrieved.';
+  }
+
   if (toolName === 'youtubeExtract') {
     const title = ensureString(result.data?.title) || ensureString(args?.title);
     const formatted = ensureString(result.data?.formatted_display);
@@ -108,6 +121,13 @@ export function summarizeToolExecution(toolName: string, args: any, result: any)
       return `Found ${edges.length} edge(s), e.g., ${edge.from_node_id} → ${edge.to_node_id}.`;
     }
     return 'No edges found.';
+  }
+
+  if (toolName === 'writeContext') {
+    const formatted = ensureString(result.data?.formatted_display);
+    if (formatted) {
+      return `Saved context as ${formatted}.`;
+    }
   }
 
   if (result.data?.formatted_display) {

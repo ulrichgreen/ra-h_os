@@ -1,9 +1,10 @@
 import { tool } from 'ai';
 import { z } from 'zod';
+import { contextService } from '@/services/database';
 import { nodeService } from '@/services/database/nodes';
 import { formatNodeForChat } from '../infrastructure/nodeFormatter';
 import type { Node } from '@/types/database';
-import { scoreNodeSearchMatch } from '@/services/database/searchRanking';
+import { countHighSignalQueryTermMatches, getHighSignalSearchTerms, scoreNodeSearchMatch } from '@/services/database/searchRanking';
 
 type QueryNodeFilters = {
   contextId?: number;
@@ -16,7 +17,7 @@ type QueryNodeFilters = {
 };
 
 export const queryNodesTool = tool({
-  description: 'Search nodes across title, description, and source. For free-text lookups, search the graph broadly and prioritize title/description matches. Use context filtering only when the user is explicitly asking about a known context.',
+  description: 'Find specific existing nodes in the graph by searching title, description, and source. Use this first when the user is trying to locate a node they already created or a specific existing podcast, article, idea, person, project, or note. For broader current-turn grounding of a substantive question, use retrieveQueryContext instead. Leave contextId unset unless you know an actual context-table ID; never pass a hub node ID or arbitrary node ID as contextId.',
   inputSchema: z.object({
     filters: z.object({
       contextId: z.number().int().positive().describe('Optional primary context filter.').optional(),
@@ -81,7 +82,8 @@ export const queryNodesTool = tool({
           limit,
           contextId: queryFilters.contextId,
           search: queryFilters.search,
-          searchMode: searchTerm ? 'hybrid' : 'standard',
+          // Keep queryNodes literal-first. retrieveQueryContext is the broader semantic path.
+          searchMode: 'standard',
           createdAfter: queryFilters.createdAfter,
           createdBefore: queryFilters.createdBefore,
           eventAfter: queryFilters.eventAfter,
@@ -93,8 +95,37 @@ export const queryNodesTool = tool({
       };
 
       const effectiveFilters = { ...filters };
+      if (effectiveFilters.contextId !== undefined) {
+        const context = await contextService.getContextById(effectiveFilters.contextId);
+        if (!context) {
+          console.warn(`queryNodes received invalid contextId ${effectiveFilters.contextId}; ignoring context filter.`);
+          delete effectiveFilters.contextId;
+        }
+      }
 
       let safeNodes = await runQuery(effectiveFilters);
+
+      const hadExtraFilters = Boolean(
+        effectiveFilters.contextId !== undefined ||
+        effectiveFilters.createdAfter ||
+        effectiveFilters.createdBefore ||
+        effectiveFilters.eventAfter ||
+        effectiveFilters.eventBefore
+      );
+
+      const hasStrongAnchorMatch = (nodes: Node[]): boolean => {
+        if (!searchTerm || nodes.length === 0) return false;
+        const highSignalTerms = getHighSignalSearchTerms(searchTerm);
+        const requiredMatches = Math.min(2, highSignalTerms.length || 1);
+        return nodes.some(node => countHighSignalQueryTermMatches(node, searchTerm) >= requiredMatches);
+      };
+
+      // Match the nav search behavior when the model overconstrains a direct lookup.
+      // This prevents notes from disappearing behind synthetic date filters or weak filtered matches.
+      if (searchTerm && hadExtraFilters && (safeNodes.length === 0 || !hasStrongAnchorMatch(safeNodes))) {
+        console.warn(`queryNodes falling back to plain literal search for "${searchTerm}" after filtered lookup failed to return a strong anchor match.`);
+        safeNodes = await nodeService.searchNodes(searchTerm, limit);
+      }
 
       if (searchTerm) {
         safeNodes = safeNodes

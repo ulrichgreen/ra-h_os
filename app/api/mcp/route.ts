@@ -13,9 +13,9 @@ const SERVER_INFO = {
 
 const instructions = [
   'RA-H is a personal knowledge graph — local-first, vendor-neutral.',
-  'Core concepts: contexts (optional soft scopes), nodes (knowledge units), and edges (connections with explanations).',
-  'Always call rah_get_context first to orient yourself — it returns contexts, hub nodes, stats, and available guides.',
-  'Use contexts only when they are explicit and helpful. Do not expect automatic context assignment.',
+  'Core concepts: contexts (optional soft scopes, max 10), nodes (knowledge units), and edges (connections with explanations).',
+  'Always call rah_get_context first to orient yourself — it returns high-level graph state, contexts, hub nodes, stats, and available guides.',
+  'Use contexts only when one obvious existing context is explicit and helpful. If unsure or if none exist, leave context empty. Do not expect automatic context assignment.',
   'Search before creating: use rah_search_nodes to check if content already exists.',
   'Every edge needs an explanation: why does this connection exist?',
 ].join(' ');
@@ -52,7 +52,7 @@ function createServer(request: NextRequest): McpServer {
     'rah_add_node',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node in the local RA-H knowledge base. Set context explicitly when clear and useful; otherwise leave it empty.',
+      description: 'Create a new node in the local RA-H knowledge base. Set context only when one obvious existing context clearly fits; otherwise leave it empty.',
       inputSchema: {
         title: z.string().min(1).max(160),
         content: z.string().max(20000).optional(),
@@ -132,7 +132,7 @@ function createServer(request: NextRequest): McpServer {
     'rah_query_contexts',
     {
       title: 'Query RA-H contexts',
-      description: 'List or inspect contexts, the soft organizational scope layer for the graph.',
+      description: 'List or inspect optional contexts. Use this only when a context is already obviously relevant or the user asks for it.',
       inputSchema: {
         contextId: z.number().int().positive().optional(),
         name: z.string().optional(),
@@ -507,7 +507,7 @@ function createServer(request: NextRequest): McpServer {
     'rah_get_context',
     {
       title: 'Get RA-H context',
-      description: 'Get orientation context: contexts, hub nodes, stats, and available guides.',
+      description: 'Get orientation context: high-level graph state, optional contexts, hub nodes, stats, and available guides.',
       inputSchema: {},
     },
     async () => {
@@ -536,7 +536,7 @@ function createServer(request: NextRequest): McpServer {
       const guides = Array.isArray(guidesPayload.data) ? guidesPayload.data.map((guide: any) => guide.name) : [];
 
       return {
-        content: [{ type: 'text', text: `Knowledge graph: ${contexts.length} contexts, ${hubNodes.length} hub nodes, ${guides.length} guides available.` }],
+        content: [{ type: 'text', text: `Knowledge graph: ${contexts.length} optional contexts, ${hubNodes.length} hub nodes, ${guides.length} guides available.` }],
         structuredContent: {
           stats: {
             nodeCount: countPayload.total ?? 0,

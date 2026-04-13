@@ -1,10 +1,12 @@
 import { getToolGroup, groupTools, getAllToolsByGroup } from './groups';
 import { queryNodesTool } from '../database/queryNodes';
+import { retrieveQueryContextTool } from '../database/retrieveQueryContext';
 import { getNodesByIdTool } from '../database/getNodesById';
 import { queryEdgeTool } from '../database/queryEdge';
 import { queryContextsTool } from '../database/queryContexts';
 import { createNodeTool } from '../database/createNode';
 import { updateNodeTool } from '../database/updateNode';
+import { writeContextTool } from '../database/writeContext';
 import { deleteNodeTool } from '../database/deleteNode';
 import { createEdgeTool } from '../database/createEdge';
 import { updateEdgeTool } from '../database/updateEdge';
@@ -21,6 +23,7 @@ import { logEvalToolCall } from '@/services/evals/evalsLogger';
 const CORE_TOOLS: Record<string, any> = {
   sqliteQuery: sqliteQueryTool,
   queryNodes: queryNodesTool,
+  retrieveQueryContext: retrieveQueryContextTool,
   getNodesById: getNodesByIdTool,
   queryEdge: queryEdgeTool,
   queryContexts: queryContextsTool,
@@ -36,6 +39,7 @@ const ORCHESTRATION_TOOLS: Record<string, any> = {
 // Write tools (includes extraction)
 const EXECUTION_TOOLS: Record<string, any> = {
   createNode: createNodeTool,
+  writeContext: writeContextTool,
   updateNode: updateNodeTool,
   deleteNode: deleteNodeTool,
   createEdge: createEdgeTool,

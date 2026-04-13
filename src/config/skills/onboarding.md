@@ -7,7 +7,7 @@ description: "Use for new-user setup, empty or near-empty graphs, or major reset
 
 ## Your Job
 
-Three things: help the user understand the basic structure of the system, help them start building useful context in it, and bootstrap the context capsule when durable cross-session facts become clear.
+Three things: help the user understand the basic structure of the system, help them start building useful graph data in it, and bootstrap the context capsule when durable cross-session facts become clear.
 
 Adapt to the user.
 
@@ -67,7 +67,7 @@ Explain the structure in simple terms:
 
 Then say:
 
-> "If you know specifically how you'd like to create your context corpus, feel free to tell me what you'd like to add and I can help you set things up. Otherwise, I can guide you through bootstrapping your context with a few suggested prompts."
+> "If you know specifically what you'd like to add, tell me and I can help you capture it. Otherwise, I can guide you through bootstrapping the graph with a few suggested prompts."
 
 Also explain one practical thing early:
 
@@ -101,7 +101,7 @@ Keep it conversational. Use these buckets and adapt based on what the user gives
 Work these in naturally when they are relevant:
 
 - **First node creation** — explain that a node is one concrete thing worth keeping: a project, source, person, belief, decision, or idea.
-- **Contexts** — explain that contexts are the primary folders or scopes for the graph.
+- **Contexts** — explain that contexts are optional helpers, not required setup. If the user has none, that is fine.
 - **MCP connection** — if the user mentions Claude Code or external agents, offer a quick setup path and point them to the MCP docs/skill flow rather than reciting a giant config block immediately.
 - **What to do after setup** — once the graph has a few solid nodes, the next useful move is usually one of:
   - connect related nodes with explicit edges
@@ -113,7 +113,7 @@ Work these in naturally when they are relevant:
 Do your best to build the graph as useful context emerges.
 
 - Add nodes when the user mentions concrete things worth keeping.
-- Assign a primary context when one is clear. Prefer leaving context empty over low-confidence guessing.
+- Assign a context only when it is an obvious match to one of the user's existing contexts. Prefer leaving context empty over low-confidence guessing.
 - Add edges when relationships are clear enough to explain well.
 - Explain what you're adding in plain language so the user understands the structure as it develops.
 
@@ -125,7 +125,7 @@ Before writing anything, call `readSkill('db-operations')` for full quality stan
 
 - Search before creating — avoid duplicates from day one
 - Every description must be concrete: what it IS and why it matters to them, not what it "explores" or "discusses"
-- Contexts should hold the primary scope when clear, otherwise leave them empty
+- Contexts are optional and should only be used for an obvious existing match; otherwise leave them empty
 - Every edge needs an explicit explanation sentence
 
 ## Propose Before Writing

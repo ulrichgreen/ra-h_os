@@ -3,6 +3,7 @@ import type { Context, ContextSummary, Node } from '@/types/database';
 import { nodeService } from './nodes';
 
 type ContextRow = Context;
+export const MAX_CONTEXTS_PER_ACCOUNT = 10;
 
 function normalizeContextName(name: string): string {
   return name.trim().replace(/\s+/g, ' ');
@@ -105,6 +106,15 @@ export class ContextService {
     const existing = await this.getContextByName(name);
     if (existing) {
       throw new Error(`Context "${name}" already exists.`);
+    }
+
+    const contextCountRow = sqlite.query<{ count: number }>(`
+      SELECT COUNT(*) AS count
+      FROM contexts
+    `).rows[0];
+    const existingCount = Number(contextCountRow?.count ?? 0);
+    if (existingCount >= MAX_CONTEXTS_PER_ACCOUNT) {
+      throw new Error(`Context limit reached. Maximum ${MAX_CONTEXTS_PER_ACCOUNT} contexts are allowed per account.`);
     }
 
     const result = sqlite.prepare(`

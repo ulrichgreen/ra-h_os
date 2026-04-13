@@ -1,6 +1,7 @@
 'use strict';
 
 const { getDb } = require('./sqlite-client');
+const MAX_CONTEXTS_PER_ACCOUNT = 10;
 
 function mapContext(row) {
   if (!row) return null;
@@ -56,6 +57,10 @@ function createContext({ name, description = null, icon = null }) {
   const trimmedName = typeof name === 'string' ? name.trim() : '';
   if (!trimmedName) {
     throw new Error('Context name is required.');
+  }
+  const existingCount = Number(db.prepare('SELECT COUNT(*) AS count FROM contexts').get()?.count ?? 0);
+  if (existingCount >= MAX_CONTEXTS_PER_ACCOUNT) {
+    throw new Error(`Context limit reached. Maximum ${MAX_CONTEXTS_PER_ACCOUNT} contexts are allowed per account.`);
   }
 
   const now = new Date().toISOString();
@@ -126,6 +131,7 @@ function resolveContextId(input = {}) {
 }
 
 module.exports = {
+  MAX_CONTEXTS_PER_ACCOUNT,
   listContexts,
   getContextById,
   getContextByName,
