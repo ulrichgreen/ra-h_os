@@ -157,6 +157,7 @@ export const paperExtractTool = tool({
       const nodeTitle = title || result.metadata?.title || `PDF: ${new URL(url).pathname.split('/').pop()?.replace('.pdf', '')}`;
       const fallbackDescriptionLead = `PDF document titled "${nodeTitle}"`;
       const finalDescription = ensureNodeDescription(aiAnalysis?.nodeDescription, fallbackDescriptionLead);
+      const capturedAt = new Date().toISOString();
 
       const createResponse = await fetch(`${getInternalApiBaseUrl()}/api/nodes`, {
         method: 'POST',
@@ -172,13 +173,18 @@ export const paperExtractTool = tool({
             captured_method: 'paper_extract',
             captured_by: 'human',
             source_metadata: {
+              capture_origin: 'extraction',
+              capture_path: 'paper_extract',
+              explicit_capture: true,
+              source_url: url,
               hostname: new URL(url).hostname,
               author: result.metadata?.author || result.metadata?.info?.Author,
               pages: result.metadata?.pages,
               file_size: result.metadata?.file_size,
               content_length: result.source.length,
               extraction_method: result.metadata?.extraction_method || 'python_pdfplumber',
-              refined_at: new Date().toISOString(),
+              captured_at: capturedAt,
+              refined_at: capturedAt,
             }
           }
         })

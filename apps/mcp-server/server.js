@@ -53,6 +53,7 @@ const instructions = [
   'Search before creating: use rah_search_nodes to check if content already exists.',
   'Only suggest saving context when it is unusually durable and valuable. Keep the ask brief, for example: Add "X" as a node?',
   'Never write via rah_write_context unless the user has explicitly confirmed yes.',
+  'Do not create edges autonomously. Surface likely edge candidates briefly, then call edge-write tools only after the user explicitly confirms.',
   'Every edge needs an explanation: why does this connection exist?',
   'All data stays local on this device; nothing leaves 127.0.0.1.',
 ].join(' ');
@@ -78,8 +79,7 @@ const addNodeInputSchema = {
   source: z.string().max(50000).optional(),
   link: z.string().url().optional(),
   description: z.string().max(500).optional().describe('Description of the node. Write it as natural prose, not labels or a checklist. It must still make clear what the artifact is, why it is in the graph (infer from conversation context; ask the user if needed), and its current workflow status. Max 500 characters. If the reason is unclear, say that naturally instead of inventing it. Never use filler phrases like "insightful for understanding" or "relevant to the user\'s work".'),
-  context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Usually omit this field entirely unless you already know a real matching context.'),
-  context_name: z.string().optional(),
+  context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants this node assigned to a known context.'),
   metadata: z.record(z.any()).optional().describe('Optional metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.'),
   chunk: z.string().max(50000).optional()
 };
@@ -92,8 +92,8 @@ const addNodeOutputSchema = {
 
 const searchNodesInputSchema = {
   query: z.string().min(1).max(400),
-  limit: z.number().min(1).max(25).optional(),
-  contextId: z.number().int().positive().optional()
+  limit: z.number().min(1).max(50).optional(),
+  context_name: z.string().optional()
 };
 
 const searchNodesOutputSchema = {
@@ -147,7 +147,7 @@ const writeContextInputSchema = {
   title: z.string().min(1).max(160),
   description: z.string().min(1).max(500),
   source: z.string().max(50000).optional(),
-  context_id: z.number().int().positive().nullable().optional(),
+  context_name: z.string().optional(),
   metadata: z.record(z.any()).optional(),
   confirmed_by_user: z.boolean()
 };
@@ -199,7 +199,8 @@ const updateNodeInputSchema = {
     content: z.string().optional().describe('Legacy alias for source. Mapped to source for backward compatibility.'),
     source: z.string().optional().describe('Canonical source text for embedding.'),
     link: z.string().optional().describe('New link'),
-    context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Omit this field to preserve existing context. Only use null when you intentionally want to clear context.'),
+    context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants to assign this node to a known context.'),
+    clear_context: z.boolean().optional().describe('Set true only when the user explicitly wants to remove the node context.'),
     metadata: z.record(z.any()).optional().describe('Metadata patch. This now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
   }).describe('Fields to update')
 };
@@ -232,7 +233,8 @@ const getNodesOutputSchema = {
 const createEdgeInputSchema = {
   sourceId: z.number().int().positive().describe('Source node ID'),
   targetId: z.number().int().positive().describe('Target node ID'),
-  explanation: z.string().min(1).describe('REQUIRED: Why does this connection exist? Be specific.')
+  explanation: z.string().min(1).describe('REQUIRED: Why does this connection exist? Be specific.'),
+  confirmed_by_user: z.boolean().describe('Must be true. Only create the edge after the user explicitly confirmed this proposed relationship.')
 };
 
 const createEdgeOutputSchema = {
@@ -263,7 +265,8 @@ const queryEdgesOutputSchema = {
 // rah_update_edge schemas
 const updateEdgeInputSchema = {
   id: z.number().int().positive().describe('Edge ID to update'),
-  explanation: z.string().min(1).optional().describe('New explanation text (will re-infer relationship type)')
+  explanation: z.string().min(1).describe('New explanation text (will re-infer relationship type)'),
+  confirmed_by_user: z.boolean().describe('Must be true. Only update the edge after the user explicitly confirmed the corrected relationship.')
 };
 
 const updateEdgeOutputSchema = {
@@ -375,17 +378,16 @@ mcpServer.registerTool(
   'rah_add_node',
   {
     title: 'Add RA-H node',
-    description: 'Create a new node in the local RA-H knowledge base. `context_id` is optional and should usually be omitted entirely unless one obvious existing context clearly fits.',
+    description: 'Create a new node in the local RA-H knowledge base after you have already decided a net-new write is correct. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. If the user explicitly wants context, use `context_name` rather than a numeric ID.',
     inputSchema: addNodeInputSchema,
     outputSchema: addNodeOutputSchema
   },
-  async ({ title, content, source, link, description, context_id, context_name, metadata, chunk }) => {
+  async ({ title, content, source, link, description, context_name, metadata, chunk }) => {
     const payload = {
       title: title.trim(),
       source: source?.trim() || content?.trim() || chunk?.trim() || undefined,
       link: link?.trim() || undefined,
       description: description?.trim() || undefined,
-      context_id,
       context_name: context_name?.trim() || undefined,
       metadata: metadata || {}
     };
@@ -413,24 +415,21 @@ mcpServer.registerTool(
   'rah_search_nodes',
   {
     title: 'Search RA-H nodes',
-    description: 'Find existing RA-H entries that mention a topic before adding new ones. For full current-turn grounding of a substantive request, prefer rah_retrieve_query_context.',
+    description: 'Find existing RA-H entries that mention a topic before adding new ones. Leave context blank by default. If the user explicitly wants a context-specific lookup, use `context_name` rather than a numeric ID. For full current-turn grounding of a substantive request, prefer rah_retrieve_query_context.',
     inputSchema: searchNodesInputSchema,
     outputSchema: searchNodesOutputSchema
   },
-  async ({ query, limit = 10, contextId }) => {
-    const params = new URLSearchParams();
-    params.set('search', query.trim());
-    params.set('limit', String(Math.min(Math.max(limit, 1), 25)));
-
-    if (contextId) {
-      params.set('contextId', String(contextId));
-    }
-
-    const result = await callRaHApi(`/api/nodes?${params.toString()}`, {
-      method: 'GET'
+  async ({ query, limit = 10, context_name }) => {
+    const result = await callRaHApi('/api/nodes/direct-search', {
+      method: 'POST',
+      body: JSON.stringify({
+        query: query.trim(),
+        limit: Math.min(Math.max(limit, 1), 50),
+        context_name: typeof context_name === 'string' ? context_name.trim() : undefined,
+      })
     });
 
-    const nodes = Array.isArray(result.data) ? result.data : [];
+    const nodes = Array.isArray(result.data?.nodes) ? result.data.nodes : [];
     const summary = nodes.length === 0
       ? 'No existing RA-H nodes mention that topic yet.'
       : `Found ${nodes.length} node(s) mentioning that topic.`;
@@ -565,7 +564,7 @@ mcpServer.registerTool(
   'rah_update_node',
   {
     title: 'Update RA-H node',
-    description: 'Update an existing node. `context_id` is optional and should usually be omitted entirely unless you are intentionally setting or clearing a real context.',
+    description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Context is preserved by default. If the user explicitly wants to change context, use `context_name`. Use `clear_context` only when the user explicitly wants to remove the node context.',
     inputSchema: updateNodeInputSchema,
     outputSchema: updateNodeOutputSchema
   },
@@ -584,6 +583,10 @@ mcpServer.registerTool(
       delete mappedUpdates.content;
     }
     delete mappedUpdates.chunk;
+
+    if (mappedUpdates.context_name && mappedUpdates.clear_context) {
+      throw new McpError(ErrorCode.InvalidParams, 'context_name cannot be combined with clear_context: true.');
+    }
 
     const result = await callRaHApi(`/api/nodes/${id}`, {
       method: 'PUT',
@@ -648,17 +651,22 @@ mcpServer.registerTool(
   'rah_create_edge',
   {
     title: 'Create RA-H edge',
-    description: 'Create a connection between two nodes.',
+    description: 'Create a connection between two nodes only after the user has explicitly confirmed the proposed relationship.',
     inputSchema: createEdgeInputSchema,
     outputSchema: createEdgeOutputSchema
   },
-  async ({ sourceId, targetId, explanation }) => {
+  async ({ sourceId, targetId, explanation, confirmed_by_user }) => {
+    if (!confirmed_by_user) {
+      throw new McpError(ErrorCode.InvalidParams, 'rah_create_edge requires explicit user confirmation before writing the relationship.');
+    }
+
     const payload = {
       from_node_id: sourceId,
       to_node_id: targetId,
       explanation: explanation.trim(),
       source: 'helper_name',
-      created_via: 'mcp'
+      created_via: 'mcp',
+      confirmed_by_user: true
     };
 
     const result = await callRaHApi('/api/edges', {
@@ -716,19 +724,20 @@ mcpServer.registerTool(
   'rah_update_edge',
   {
     title: 'Update RA-H edge',
-    description: 'Update an existing edge connection.',
+    description: 'Update an existing edge connection only after the user explicitly confirmed the corrected relationship.',
     inputSchema: updateEdgeInputSchema,
     outputSchema: updateEdgeOutputSchema
   },
-  async ({ id, explanation }) => {
-    if (typeof explanation !== 'string' || explanation.trim().length === 0) {
-      throw new McpError(ErrorCode.InvalidParams, 'explanation is required.');
+  async ({ id, explanation, confirmed_by_user }) => {
+    if (!confirmed_by_user) {
+      throw new McpError(ErrorCode.InvalidParams, 'rah_update_edge requires explicit user confirmation before writing the corrected relationship.');
     }
 
     const result = await callRaHApi(`/api/edges/${id}`, {
       method: 'PUT',
       body: JSON.stringify({
-        context: { explanation: explanation.trim(), created_via: 'mcp' }
+        context: { explanation: explanation.trim(), created_via: 'mcp' },
+        confirmed_by_user: true
       })
     });
 
@@ -902,11 +911,11 @@ mcpServer.registerTool(
   'rah_write_context',
   {
     title: 'Write RA-H context node',
-    description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this sparingly for unusually valuable context. Never call it unless the user has clearly said yes.',
+    description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this for agent-suggested capture after you already proposed the node briefly and got a clear yes. Prefer ordinary create/update flows for explicit user-directed capture.',
     inputSchema: writeContextInputSchema,
     outputSchema: writeContextOutputSchema
   },
-  async ({ title, description, source, context_id, metadata, confirmed_by_user }) => {
+  async ({ title, description, source, context_name, metadata, confirmed_by_user }) => {
     if (!confirmed_by_user) {
       throw new Error('rah_write_context requires explicit user confirmation before writing to the graph.');
     }
@@ -917,7 +926,7 @@ mcpServer.registerTool(
         title: title.trim(),
         description: description.trim(),
         source: source?.trim() || undefined,
-        context_id: context_id ?? null,
+        context_name: context_name?.trim() || undefined,
         metadata: {
           captured_by: 'human',
           captured_method: 'write_context',

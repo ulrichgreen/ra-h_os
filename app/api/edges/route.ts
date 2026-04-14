@@ -59,6 +59,26 @@ export async function POST(request: NextRequest) {
     const fromId = parseInt(body.from_node_id);
     const toId = parseInt(body.to_node_id);
     const explanation = String(body.explanation || '').trim();
+    const createdVia = (() => {
+      const raw = typeof body.created_via === 'string' ? body.created_via : '';
+      if (['ui', 'agent', 'mcp', 'workflow', 'quicklink'].includes(raw)) return raw as any;
+      return 'ui' as const;
+    })();
+
+    if (!explanation && createdVia !== 'ui' && createdVia !== 'quicklink') {
+      return NextResponse.json({
+        success: false,
+        error: 'Agent-driven edge creation requires an explicit explanation. Propose likely edges first and only create them after the user confirms.'
+      }, { status: 400 });
+    }
+
+    if ((createdVia === 'agent' || createdVia === 'mcp' || createdVia === 'workflow') && body.confirmed_by_user !== true) {
+      return NextResponse.json({
+        success: false,
+        error: 'Agent-driven edge creation requires explicit user confirmation before writing to the graph.'
+      }, { status: 400 });
+    }
+
     if (explanation) {
       const explanationError = validateEdgeExplanation(explanation);
       if (explanationError) {
@@ -68,13 +88,7 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
     }
-
     const skipInference = Boolean(body.skip_inference);
-    const createdVia = (() => {
-      const raw = typeof body.created_via === 'string' ? body.created_via : '';
-      if (['ui', 'agent', 'mcp', 'workflow', 'quicklink'].includes(raw)) return raw as any;
-      return 'ui' as const;
-    })();
 
     // Idempotency: prevent duplicate edges between same pair
     try {

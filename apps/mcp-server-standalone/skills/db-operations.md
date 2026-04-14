@@ -13,8 +13,8 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 4. Search before create to avoid duplicates.
 5. Every create/update must include a natural description that clearly says what the thing is, why it matters here, and its current workflow status.
 6. Use event dates when known (when it happened, not when saved).
-7. Apply context only when it is an obvious match to one of the user's existing contexts and genuinely useful. One node gets at most one primary context, and leaving context blank is valid.
-8. Create edges when relationships are meaningful; edge explanations should read as a sentence.
+7. Leave context blank by default. Only apply context when the user explicitly wants it or when one obvious existing context is clearly useful. One node gets at most one primary context, and leaving context blank is valid.
+8. Do not create edges autonomously. Surface likely edge candidates first, then create them only after the user explicitly confirms.
 9. For user-authored ideas, notes, or dictated thoughts, preserve the user's wording in `source` as fully as possible with only minimal cleanup.
 
 ## Write Quality Contract
@@ -24,7 +24,9 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 - `source`: full verbatim or canonical content of the node (transcript, article text, book passage, user's thoughts). This is what gets chunked and embedded for semantic search.
 - For idea capture from chat, the `source` should usually be the raw user thought, not a compressed assistant summary.
 - `link`: external source URL only.
-- `context_id`: the node's primary context. This field is optional. Omit it entirely unless it is an obvious existing match. Do not add `context_id: null` defensively.
+- Normal writes should omit context entirely unless the user explicitly wants one.
+- If context is intentionally provided, prefer `context_name`.
+- Treat numeric `context_id` as an internal implementation detail, not a normal agent-facing field.
 - `metadata`: use the canonical node metadata contract when metadata is needed:
   - `type`
   - `state` (`processed` or `not_processed`)
@@ -34,6 +36,8 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 - `source_metadata`: factual source-specific details only. Keep it compact. No AI summaries or reasoning text.
 - metadata updates are merge-safe patches, not full-blob replacements. Do not assume `updateNode.metadata` wipes existing keys.
 - Derived analysis, briefs, and research notes should be stored in a separate linked node, not appended to the source node.
+- Explicit user-directed capture may write immediately after duplicate/update checks when the node is clear.
+- Agent-suggested capture should propose the node first and wait for confirmation.
 
 ## Description Standard
 
@@ -57,6 +61,8 @@ For user-authored idea capture, do not treat the inferred description as final i
 - why it belongs here
 - where it sits in their workflow
 
+The first job of the description is object identity. It should start from what the thing is, not from interpretation.
+
 Max 500 characters.
 
 ## Metadata Semantics
@@ -71,17 +77,19 @@ Max 500 characters.
 1. Decide whether this is direct node retrieval or broader contextual grounding.
 2. If the user is trying to find a specific existing node, call `queryNodes` first.
 3. If the user is asking a broader question that would benefit from prior graph context, call `retrieveQueryContext`.
-4. Decide: answer only vs create vs update vs connect.
+4. Decide: answer only vs create vs update vs propose save vs propose edge.
 5. If something seems unusually durable and valuable, you may suggest a save in one short line like `Add "X" as a node?`
 6. Do not pester. If the user says no, ignores it, or moves on, do not keep asking.
-7. Only call `writeContext` or another write tool after explicit user confirmation.
-8. Execute minimum required writes.
-9. If the node is a user-authored idea and the contextual framing was inferred, offer one concise feedback pass after the write.
-10. Verify result reflects user intent exactly.
+7. For explicit user-directed capture, search before create when practical, prefer update over duplicate create, then write once the artifact is clear.
+8. For agent-suggested capture, propose the node first and wait for explicit confirmation before writing.
+9. When relationships are obvious, include brief proposed edges in the same reply, then wait for confirmation before calling `createEdge`.
+10. If the node is a user-authored idea and the contextual framing was inferred, offer one concise feedback pass after the write.
+11. Verify result reflects user intent exactly.
 
 ## Do Not
 
 - Create duplicate nodes when an update is correct.
 - Write vague descriptions ("discusses", "explores", "is about").
 - Create weak or directionless edges.
+- Create edges before the user explicitly confirms the proposed relationship.
 - Ask to save every moderately useful point from the conversation.

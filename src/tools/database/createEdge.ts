@@ -7,7 +7,7 @@ import { validateEdgeExplanation } from '@/services/database/quality';
 
 export const createEdgeTool = tool({
   description:
-    'Create a relationship between two nodes. Provide an explanation and the system will infer the type and direction.\n\n' +
+    'Create a relationship between two nodes only after the user has explicitly confirmed the proposed connection. Use this as the execution step after you surfaced candidate edges in plain language and got a clear yes. Provide an explanation and the system will infer the type and direction.\n\n' +
     'Examples of explanations:\n' +
     '- "Written by" (book → author)\n' +
     '- "Episode of this podcast" (episode → podcast)\n' +
@@ -19,6 +19,9 @@ export const createEdgeTool = tool({
     explanation: z.string().describe(
       'REQUIRED: Why does this connection exist? The system will infer the relationship type from your explanation.'
     ),
+    confirmed_by_user: z.boolean().describe(
+      'Must be true. Only create the edge after the user has explicitly approved this proposed relationship.'
+    ),
     source: z.enum(['user', 'ai', 'ai_similarity', 'helper_name']).default('ai').describe(
       'Source of this edge. Use "ai" for AI-created, "user" for manual, "ai_similarity" for similarity-based.'
     )
@@ -27,6 +30,14 @@ export const createEdgeTool = tool({
     console.log('🔗 CreateEdge tool called with params:', JSON.stringify(params, null, 2));
     
     try {
+      if (!params.confirmed_by_user) {
+        return {
+          success: false,
+          error: 'createEdge requires explicit user confirmation before writing the relationship.',
+          data: null,
+        };
+      }
+
       // Validate basic IDs
       if (!Number.isFinite(params.from_node_id) || params.from_node_id <= 0) {
         return {

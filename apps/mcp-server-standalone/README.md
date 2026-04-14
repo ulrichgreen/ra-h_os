@@ -5,7 +5,7 @@ Connect Claude Code and Claude Desktop to your RA-H knowledge base. Direct SQLit
 ## Install
 
 ```bash
-npx ra-h-mcp-server
+npx --yes ra-h-mcp-server@2.1.1
 ```
 
 That's it. No manual setup required.
@@ -19,13 +19,15 @@ Add to your Claude config (`~/.claude.json` or Claude Desktop settings):
   "mcpServers": {
     "ra-h": {
       "command": "npx",
-      "args": ["ra-h-mcp-server"]
+      "args": ["--yes", "ra-h-mcp-server@2.1.1"]
     }
   }
 }
 ```
 
 Restart Claude. Done.
+
+If you publish a newer MCP release and need this client to pick it up immediately, bump the pinned version here and restart Claude. Do not assume plain `npx ra-h-mcp-server` always refreshes instantly.
 
 ## Requirements
 
@@ -44,13 +46,15 @@ Once connected, Claude will:
 - **Use `queryNodes` for explicit node lookup** when the user is trying to find a specific existing thing
 - **Use `retrieveQueryContext` when graph context is helpful** for a broader task, question, or request
 - **Use `getContext` only for orientation** when high-level graph state would actually help
+- **Treat context as optional by default** — normal node creation and updates should omit context unless the user explicitly wants one; when context is intentionally provided, use `context_name`
 - **Proactively capture knowledge** — when a new insight, decision, person, or reference surfaces, it proposes a specific node (title, description, optional context) so you can approve with minimal friction
+- **Treat edges as proposal-first** — it should suggest likely relationships briefly, then create them only after you explicitly confirm
 - **Read skills for complex tasks** — skills are editable and shared across internal + external agents
 - **Search before creating** to avoid duplicates
 
 ## Recommended Agent Memory Line
 
-If you use external agents through this MCP server, add one short instruction line to your agent memory file (`AGENTS.md`, `CLAUDE.md`, etc.):
+If you use external agents through this MCP server, you may add one short instruction line to your agent memory file (`AGENTS.md`, `CLAUDE.md`, etc.) as optional reinforcement:
 
 ```md
 Retrieve relevant context from RA-H before substantive work, and only suggest writing durable context back when it is clearly valuable and the user can confirm yes.
@@ -61,6 +65,8 @@ Keep the writeback prompt brief. A good pattern is:
 ```md
 Add "X" as a node?
 ```
+
+RA-H should still work well without this line. The MCP tools, server instructions, skills, and docs are meant to carry the core behavior on their own.
 
 ## Available Tools
 
@@ -74,8 +80,8 @@ Add "X" as a node?
 | `queryContexts` | List or inspect contexts |
 | `getNodesById` | Load nodes by ID (includes chunk + metadata) |
 | `updateNode` | Update an existing node |
-| `createEdge` | Create connection between nodes |
-| `updateEdge` | Update an edge explanation |
+| `createEdge` | Create a confirmed connection between nodes |
+| `updateEdge` | Update an edge explanation after explicit confirmation |
 | `queryEdge` | Find edges for a node |
 | `listSkills` | List available skills |
 | `readSkill` | Read a skill by name |
@@ -85,6 +91,13 @@ Add "X" as a node?
 | `sqliteQuery` | Execute read-only SQL queries (SELECT/WITH/PRAGMA) |
 
 ## Node Metadata Contract
+
+## Context Rule
+
+- Creating a node never requires context.
+- Normal node lookup and update flows should omit context unless the user explicitly asks for it.
+- If context is intentionally provided, prefer `context_name`.
+- Numeric `context_id` is treated as an internal implementation detail rather than a normal agent-facing field.
 
 When `createNode` or `updateNode` includes metadata, prefer the canonical shape:
 
@@ -111,6 +124,12 @@ Rules:
 - Only suggest a save when the context is unusually durable and valuable.
 - Keep the ask terse and concrete, for example: `Add "X" as a node?`
 - Never call `writeContext` unless the user has explicitly said yes.
+
+## Edge Rule
+
+- External agents should propose likely edge candidates first.
+- `createEdge` is the execution tool after explicit user confirmation.
+- Agent-driven edge creation should always include a clear explanation sentence.
 
 ## Skills
 

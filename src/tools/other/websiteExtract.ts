@@ -162,6 +162,7 @@ export const websiteExtractTool = tool({
       const nodeTitle = title || result.metadata?.title || `Website: ${new URL(url).hostname}`;
       const fallbackDescriptionLead = `${contentType === 'tweet' ? 'Tweet' : 'Website article'} from ${result.metadata?.author || result.metadata?.site_name || new URL(url).hostname} titled "${nodeTitle}"`;
       const finalDescription = ensureNodeDescription(aiAnalysis?.nodeDescription, fallbackDescriptionLead);
+      const capturedAt = new Date().toISOString();
 
       const createResponse = await fetch(`${getInternalApiBaseUrl()}/api/nodes`, {
         method: 'POST',
@@ -178,12 +179,17 @@ export const websiteExtractTool = tool({
             captured_method: 'website_extract',
             captured_by: 'human',
             source_metadata: {
+              capture_origin: 'extraction',
+              capture_path: 'website_extract',
+              explicit_capture: true,
+              source_url: url,
               hostname: new URL(url).hostname,
               author: result.metadata?.author,
               published_date: result.metadata?.published_date || result.metadata?.date,
               content_length: result.source.length,
               extraction_method: result.metadata?.extraction_method || 'python_beautifulsoup',
-              refined_at: new Date().toISOString(),
+              captured_at: capturedAt,
+              refined_at: capturedAt,
             }
           }
         })

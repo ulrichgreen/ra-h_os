@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getInternalApiBaseUrl } from '@/services/runtime/apiBase';
 
 export const updateNodeTool = tool({
-  description: 'Update node fields. Use this to enrich or correct nodes without losing canonical source content. Context is preserved unless context_id is supplied explicitly. When fixing a user-authored idea node, source should preserve the user\'s original wording as fully as possible. Never block an update because the description is incomplete. If the new description framing is materially inferred, complete the update and then invite one concise user feedback pass.',
+  description: 'Update node fields when the existing node is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates should proceed once the target node is clear; if you are only proposing a change, ask first. Use this to enrich or correct nodes without losing canonical source content. Context is preserved unless the user explicitly wants it changed. When that happens, prefer context_name rather than a numeric ID. Use clear_context only when the user explicitly wants the context removed. When fixing a user-authored idea node, source should preserve the user\'s original wording as fully as possible. Never block an update because the description is incomplete. If the new description framing is materially inferred, complete the update and then invite one concise user feedback pass.',
   inputSchema: z.object({
     id: z.number().describe('The ID of the node to update'),
     updates: z.object({
@@ -12,9 +12,10 @@ export const updateNodeTool = tool({
       source: z.string().optional().describe('Canonical source content for embedding. Use this to set or correct the raw source text. For user-authored ideas or dictated notes, preserve the user\'s original wording with only minimal cleanup rather than compressing it into a summary.'),
       link: z.string().optional().describe('New link'),
       event_date: z.string().optional().describe('When the thing actually happened (ISO 8601). Not when it was added to the graph.'),
-      context_id: z.number().int().positive().nullable().optional().describe('Primary context ID. Omit to preserve the existing context. Use null only to clear it intentionally.'),
+      context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants to assign this node to a known context.'),
+      clear_context: z.boolean().optional().describe('Set true only when the user explicitly wants to remove the node context.'),
       metadata: z.record(z.any()).optional().describe('Metadata patch. It now merges with existing metadata instead of replacing the full blob. Use canonical keys: type, state, captured_method, captured_by, source_metadata.')
-    }).describe('Object containing the fields to update. Derived analysis should be stored in a separate linked node, not appended to the source node.')
+    }).passthrough().describe('Object containing the fields to update. Derived analysis should be stored in a separate linked node, not appended to the source node.')
   }),
   execute: async ({ id, updates }) => {
     try {

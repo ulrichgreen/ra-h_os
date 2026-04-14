@@ -315,12 +315,12 @@ export default function NodeSearchModal({
                 value={explanation}
                 onChange={(e) => setExplanation(e.target.value.slice(0, 500))}
                 onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && explanation.trim()) {
                     e.preventDefault();
                     void handleCreate(selectedNode, explanation);
                   }
                 }}
-                placeholder="Describe this connection... (optional, leave blank to auto-infer)"
+                placeholder="Describe this connection in one clear sentence"
                 rows={3}
                 style={{
                   width: '100%',
@@ -351,7 +351,7 @@ export default function NodeSearchModal({
             <button
               type="button"
               onClick={() => { void handleCreate(selectedNode, explanation); }}
-              disabled={submitting}
+              disabled={submitting || !explanation.trim()}
               style={{
                 width: '100%',
                 display: 'flex',
@@ -368,7 +368,7 @@ export default function NodeSearchModal({
                 opacity: submitting ? 0.6 : 1,
               }}
             >
-              {submitting ? 'Creating…' : explanation.trim() ? 'Create connection' : 'Create connection (auto-infer)'}
+              {submitting ? 'Creating…' : 'Create connection'}
             </button>
           </div>
         )}

@@ -100,17 +100,24 @@ export async function PUT(
       updates.metadata = mergeNodeMetadata(existingNode.metadata, body.metadata);
     }
 
-    if (Object.prototype.hasOwnProperty.call(body, 'context_name')) {
+    const hasContextName = typeof body.context_name === 'string' && body.context_name.trim().length > 0;
+    const wantsClearContext = body.clear_context === true;
+
+    delete updates.context_name;
+    delete updates.clear_context;
+
+    if (hasContextName && wantsClearContext) {
       return NextResponse.json({
         success: false,
-        error: 'context_name is only supported on node creation. Use context_id for updates.'
+        error: 'context_name cannot be combined with clear_context: true.'
       }, { status: 400 });
     }
 
-    if (Object.prototype.hasOwnProperty.call(body, 'context_id')) {
+    if (hasContextName || Object.prototype.hasOwnProperty.call(body, 'context_id') || wantsClearContext) {
       try {
         const resolvedContextId = await contextService.resolveContextId({
-          context_id: body.context_id,
+          context_id: wantsClearContext ? null : body.context_id,
+          context_name: hasContextName ? body.context_name : undefined,
         });
         updates.context_id = resolvedContextId;
       } catch (error) {

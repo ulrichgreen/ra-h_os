@@ -114,7 +114,7 @@ Do your best to build the graph as useful context emerges.
 
 - Add nodes when the user mentions concrete things worth keeping.
 - Assign a context only when it is an obvious match to one of the user's existing contexts. Prefer leaving context empty over low-confidence guessing.
-- Add edges when relationships are clear enough to explain well.
+- Surface likely edges when relationships are clear enough to explain well, but create them only after the user confirms.
 - Explain what you're adding in plain language so the user understands the structure as it develops.
 
 When the graph is empty or nearly empty, bias toward creating a small, clean starter set rather than over-modeling everything.
@@ -126,7 +126,7 @@ Before writing anything, call `readSkill('db-operations')` for full quality stan
 - Search before creating — avoid duplicates from day one
 - Every description must be concrete: what it IS and why it matters to them, not what it "explores" or "discusses"
 - Contexts are optional and should only be used for an obvious existing match; otherwise leave them empty
-- Every edge needs an explicit explanation sentence
+- Every edge needs an explicit explanation sentence, and agent-driven edge creation should only happen after confirmation
 
 ## Propose Before Writing
 

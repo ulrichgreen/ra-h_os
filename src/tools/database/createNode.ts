@@ -56,17 +56,16 @@ function inferSourceFromContext(params: { title: string; description?: string; s
 }
 
 export const createNodeTool = tool({
-  description: 'Create a node. Set context explicitly only when it is clear and useful; otherwise leave it blank. Focus on a clean title, a strong natural description, preserved source text, and the right metadata. When the node comes from the user\'s own idea, note, or dictated thought, preserve their actual wording in source with only minimal cleanup instead of flattening it into a summary. Do not block creation if the description is incomplete. If the description framing is materially inferred, create the node first and then invite one concise user correction pass.',
+  description: 'Create a node after you have already decided this should be a net-new write. If the user explicitly asked to save or import something and duplicate/update checks are complete, write immediately. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. Only set context when the user explicitly wants one and it is clear and useful; when that happens, use context_name rather than a numeric ID. Focus on a clean title, a strong natural description that says what the thing is, preserved source text, and the right metadata. When the node comes from the user\'s own idea, note, or dictated thought, preserve their actual wording in source with only minimal cleanup instead of flattening it into a summary. Do not block creation if the description is incomplete. If the description framing is materially inferred, create the node first and then invite one concise user correction pass.',
   inputSchema: z.object({
     title: z.string().describe('The title of the node'),
     description: z.string().max(500).optional().describe('Optional natural description. If you have enough context, describe what this is, why it belongs in Brad\'s graph, and its current workflow status in normal prose. Do not use labels like WHAT:, WHY:, or STATUS:.'),
     source: z.string().optional().describe('Canonical source content for embedding. For external content, store the actual transcript/article/document text. For user-authored ideas or dictated notes, store the user\'s original wording as fully as possible with only minimal cleanup such as obvious whitespace or transcription artifacts. Do not replace raw user thinking with a thin summary.'),
     link: z.string().optional().describe('A URL link to the source'),
     event_date: z.string().optional().describe('When the thing actually happened (ISO 8601). Not when it was added to the graph.'),
-    context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Use when the node clearly belongs to a known context.'),
-    context_name: z.string().optional().describe('Optional convenience context name. Resolved to a stable context_id before persistence.'),
+    context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants this node assigned to a known context.'),
     metadata: z.record(z.any()).optional().describe('Optional node metadata. Use canonical keys when known: type, state, captured_method, captured_by, and source_metadata. Source-specific facts belong inside source_metadata.')
-  }),
+  }).passthrough(),
   execute: async (params, context) => {
     console.log('🎯 CreateNode tool called with params:', JSON.stringify(params, null, 2));
     try {
@@ -76,7 +75,7 @@ export const createNodeTool = tool({
       const response = await fetch(`${getInternalApiBaseUrl()}/api/nodes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...params, source: canonicalSource })
+        body: JSON.stringify({ ...params, source: canonicalSource ?? params.source })
       });
 
       const result = await response.json();
