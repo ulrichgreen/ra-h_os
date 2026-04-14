@@ -158,6 +158,69 @@ function sanitizeTitle(title) {
   return clean.slice(0, 160);
 }
 
+const CHUNK_SIZE = 1000;
+const CHUNK_OVERLAP = 200;
+
+function splitSourceIntoChunks(sourceText) {
+  const text = String(sourceText || '').trim();
+  if (!text) return [];
+
+  const chunks = [];
+  let start = 0;
+
+  while (start < text.length) {
+    const end = Math.min(start + CHUNK_SIZE, text.length);
+    const chunkText = text.slice(start, end).trim();
+
+    if (chunkText) {
+      chunks.push({
+        text: chunkText,
+        start_char: start,
+        end_char: end
+      });
+    }
+
+    if (end >= text.length) break;
+    start = Math.max(end - CHUNK_OVERLAP, start + 1);
+  }
+
+  return chunks;
+}
+
+function replaceNodeChunks(db, nodeId, title, sourceText) {
+  db.prepare('DELETE FROM chunks WHERE node_id = ?').run(nodeId);
+
+  const chunks = splitSourceIntoChunks(sourceText);
+  if (chunks.length === 0) {
+    return 0;
+  }
+
+  const now = new Date().toISOString();
+  const insertChunk = db.prepare(`
+    INSERT INTO chunks (node_id, chunk_idx, text, embedding_type, metadata, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  chunks.forEach((chunk, index) => {
+    insertChunk.run(
+      nodeId,
+      index,
+      chunk.text,
+      'text-embedding-3-small',
+      JSON.stringify({
+        node_id: nodeId,
+        chunk_index: index,
+        start_char: chunk.start_char,
+        end_char: chunk.end_char,
+        title
+      }),
+      now
+    );
+  });
+
+  return chunks.length;
+}
+
 /**
  * Create a new node.
  */
@@ -180,11 +243,12 @@ function createNode(nodeData) {
 
   const sourceToStore = source ?? ([title, description].filter(Boolean).join('\n\n').trim() || null);
   const effectiveContextId = context_id ?? null;
+  const hasSource = !!normalizeString(sourceToStore);
 
   const nodeId = transaction(() => {
     const stmt = db.prepare(`
-      INSERT INTO nodes (title, description, source, link, event_date, metadata, context_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO nodes (title, description, source, link, event_date, metadata, chunk_status, context_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -194,12 +258,17 @@ function createNode(nodeData) {
       link ?? null,
       event_date ?? null,
       JSON.stringify(canonicalMetadata),
+      hasSource ? 'chunked' : null,
       effectiveContextId ?? null,
       now,
       now
     );
 
     const id = Number(result.lastInsertRowid);
+
+    if (hasSource) {
+      replaceNodeChunks(db, id, title, sourceToStore);
+    }
 
     return id;
   });
@@ -224,6 +293,9 @@ function updateNode(id, updates, options = {}) {
   const mergedMetadata = metadata !== undefined
     ? buildCanonicalMetadata({ existing: existing.metadata, metadata })
     : undefined;
+  const sourceWasProvided = Object.prototype.hasOwnProperty.call(updates, 'source');
+  const updatedTitle = title !== undefined ? title : existing.title;
+  const normalizedSource = sourceWasProvided ? normalizeString(source) : undefined;
 
   transaction(() => {
     const setFields = [];
@@ -249,6 +321,10 @@ function updateNode(id, updates, options = {}) {
       setFields.push('event_date = ?');
       params.push(event_date);
     }
+    if (sourceWasProvided) {
+      setFields.push('chunk_status = ?');
+      params.push(normalizedSource ? 'chunked' : null);
+    }
     if (Object.prototype.hasOwnProperty.call(updates, 'context_id')) {
       setFields.push('context_id = ?');
       params.push(updates.context_id ?? null);
@@ -266,6 +342,10 @@ function updateNode(id, updates, options = {}) {
     if (setFields.length > 1) {
       const stmt = db.prepare(`UPDATE nodes SET ${setFields.join(', ')} WHERE id = ?`);
       stmt.run(...params);
+    }
+
+    if (sourceWasProvided) {
+      replaceNodeChunks(db, id, updatedTitle, normalizedSource || '');
     }
 
   });

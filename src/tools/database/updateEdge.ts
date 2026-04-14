@@ -4,8 +4,9 @@ import { edgeService } from '@/services/database/edges';
 import { validateEdgeExplanation } from '@/services/database/quality';
 
 export const updateEdgeTool = tool({
-  description: 'Update an edge explanation and/or source. Explanations must explicitly state the relationship.',
+  description: 'Update an edge explanation and/or source only after the user explicitly confirmed the corrected relationship. Explanations must explicitly state the relationship.',
   inputSchema: z.object({
+    confirmed_by_user: z.boolean().describe('Must be true. Reject the edge update otherwise.'),
     edge_id: z.number().describe('The ID of the edge to update'),
     updates: z.object({
       explanation: z.string().optional().describe('Updated relationship explanation'),
@@ -17,6 +18,14 @@ export const updateEdgeTool = tool({
     console.log('📝 UpdateEdge tool called with params:', JSON.stringify(params, null, 2));
     
     try {
+      if (!params.confirmed_by_user) {
+        return {
+          success: false,
+          error: 'Edge updates require explicit user confirmation before writing to the graph.',
+          data: null
+        };
+      }
+
       // Validate that edge exists before updating
       const existingEdge = await edgeService.getEdgeById(params.edge_id);
       if (!existingEdge) {

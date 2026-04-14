@@ -432,32 +432,6 @@ export default function FocusPanel({
     }
   };
 
-  const createEdgeAuto = async (targetNodeId: number) => {
-    if (activeTab === null) return;
-    try {
-      const response = await fetch('/api/edges', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from_node_id: activeTab,
-          to_node_id: targetNodeId,
-          source: 'user',
-          explanation: '',
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create edge');
-      }
-
-      await fetchEdgesData(activeTab);
-    } catch (error) {
-      console.error('Error creating edge:', error);
-      window.alert('Failed to create connection. Please try again.');
-      throw error;
-    }
-  };
-
   const createEdgeWithExplanation = async (targetNodeId: number, explanation: string) => {
     if (activeTab === null) return;
     try {
@@ -1433,11 +1407,11 @@ export default function FocusPanel({
         onClose={() => setEdgeSearchOpen(false)}
         excludeNodeId={activeTab}
         onEdgeCreate={async (nodeId, explanation) => {
-          if (explanation && explanation.trim()) {
-            await createEdgeWithExplanation(nodeId, explanation.trim());
-          } else {
-            await createEdgeAuto(nodeId);
+          if (!explanation || !explanation.trim()) {
+            window.alert('Add a short explanation for the relationship before creating the edge.');
+            return;
           }
+          await createEdgeWithExplanation(nodeId, explanation.trim());
         }}
       />
 

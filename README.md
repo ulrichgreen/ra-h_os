@@ -93,13 +93,15 @@ Add to your `~/.claude.json`:
   "mcpServers": {
     "ra-h": {
       "command": "npx",
-      "args": ["ra-h-mcp-server"]
+      "args": ["--yes", "ra-h-mcp-server@2.1.1"]
     }
   }
 }
 ```
 
 Restart Claude Code fully (**Cmd+Q on Mac**, not just closing the window).
+
+If you publish a newer MCP release and want clients to use it immediately, bump the pinned version here and restart the client. Do not rely on plain `npx ra-h-mcp-server` always refreshing instantly.
 
 **Verify it worked:** Ask Claude "Do you have RA-H tools available?" — you should see tools like `createNode`, `queryNodes`, and `readSkill`.
 
@@ -115,20 +117,22 @@ Restart Claude Code fully (**Cmd+Q on Mac**, not just closing the window).
 }
 ```
 
-**What happens:** Once connected, Claude calls `getContext` first to orient itself (stats, contexts, hub nodes, available skills). It proactively captures knowledge. When a new insight, decision, person, or reference surfaces, it should propose a specific node with a strong title, description, source, and metadata. Context is optional and should only be set when the primary scope is obvious.
+**What happens:** Once connected, Claude should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph context would help, and `getContext` only for orientation. It proactively captures knowledge. When a new insight, decision, person, or reference surfaces, it should propose a specific node with a strong title, description, source, and metadata. Context is optional and should only be set when the primary scope is obvious.
 
 Available tools:
 
 | Tool | What it does |
 |------|--------------|
 | `getContext` | Get graph overview — stats, contexts, hub nodes, recent activity |
+| `retrieveQueryContext` | Pull relevant graph context for a broader current-turn task |
 | `queryContexts` | List contexts, inspect a context, or search contexts |
 | `queryNodes` | Find nodes by keyword |
 | `createNode` | Create a new node |
+| `writeContext` | Save one confirmed durable context node after explicit user approval |
 | `getNodesById` | Fetch nodes by ID |
 | `updateNode` | Edit an existing node |
-| `createEdge` | Link two nodes together |
-| `updateEdge` | Update an edge explanation |
+| `createEdge` | Link two nodes together after explicit confirmation |
+| `updateEdge` | Update an edge explanation after explicit confirmation |
 | `queryEdge` | Find connections |
 | `listSkills` | List available skills |
 | `readSkill` | Read a skill by name |

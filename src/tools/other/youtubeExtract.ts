@@ -193,6 +193,7 @@ export const youtubeExtractTool = tool({
       const transcriptSummary = await summariseTranscript(nodeTitle, result.source);
       const fallbackDescriptionLead = `YouTube video from ${result.metadata?.channel_name || 'an unknown channel'} titled "${nodeTitle}"`;
       const finalDescription = ensureNodeDescription(aiAnalysis?.nodeDescription, fallbackDescriptionLead);
+      const capturedAt = new Date().toISOString();
 
       const createResponse = await fetch(`${getInternalApiBaseUrl()}/api/nodes`, {
         method: 'POST',
@@ -208,6 +209,10 @@ export const youtubeExtractTool = tool({
             captured_method: 'youtube_extract',
             captured_by: 'human',
             source_metadata: {
+              capture_origin: 'extraction',
+              capture_path: 'youtube_extract',
+              explicit_capture: true,
+              source_url: url,
               video_id: result.metadata?.video_id,
               channel_name: result.metadata?.channel_name,
               channel_url: result.metadata?.channel_url,
@@ -218,7 +223,8 @@ export const youtubeExtractTool = tool({
               extraction_method: result.metadata?.extraction_method,
               summary_origin: transcriptSummary ? 'transcript_summary' : 'metadata_description',
               transcript_summary: transcriptSummary,
-              refined_at: new Date().toISOString(),
+              captured_at: capturedAt,
+              refined_at: capturedAt,
             }
           }
         })

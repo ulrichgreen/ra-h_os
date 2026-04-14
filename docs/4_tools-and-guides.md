@@ -15,13 +15,15 @@ RA-OS exposes these core standalone MCP tools:
 | Tool | Description |
 |------|-------------|
 | `getContext` | Graph overview: stats, contexts, hub nodes, recent activity, skills |
-| `queryNodes` | Search nodes by keyword/date/context |
+| `retrieveQueryContext` | Pull relevant graph context for a broader current-turn task |
+| `queryNodes` | Find specific existing nodes by title, description, or source |
 | `getNodesById` | Fetch full nodes by ID |
 | `createNode` | Create a node |
-| `updateNode` | Update a node |
-| `createEdge` | Create an edge between nodes |
+| `writeContext` | Save one confirmed durable context node after explicit user approval |
+| `updateNode` | Update a node while preserving context by default |
+| `createEdge` | Create a confirmed edge between nodes |
 | `queryEdge` | Query edges |
-| `updateEdge` | Update edge explanation |
+| `updateEdge` | Update an edge explanation after explicit confirmation |
 | `queryContexts` | List contexts and optional attached nodes |
 
 ### Skills + Search

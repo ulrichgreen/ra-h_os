@@ -234,6 +234,7 @@ async function handleExtractionQuickAdd(type: ExtractionQuickAddType, url: strin
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : `Failed to execute ${toolName}`;
+    const capturedAt = new Date().toISOString();
     const title = deriveFallbackLinkTitle(url);
     const description =
       `Link record for this source. RA-H could not correctly process the URL during ingestion because ${message}. Stored so the source is not lost and can be revisited later.`;
@@ -257,10 +258,15 @@ async function handleExtractionQuickAdd(type: ExtractionQuickAddType, url: strin
           captured_method: 'quick_add_link_fallback',
           captured_by: 'human',
           source_metadata: {
+            capture_origin: 'quick_add',
+            capture_path: 'quick_add_link_fallback',
+            explicit_capture: true,
+            source_url: url,
             attempted_pipeline: type,
             extraction_failed: true,
             extraction_error: message,
-            refined_at: new Date().toISOString(),
+            captured_at: capturedAt,
+            refined_at: capturedAt,
           },
         },
         context_id: contextId,
@@ -296,6 +302,7 @@ async function handleNoteQuickAdd(rawInput: string, task: string, userDescriptio
     throw new Error('Input is required to create a note');
   }
 
+  const capturedAt = new Date().toISOString();
   const title = deriveNoteTitle(content);
   const nodePayload: Record<string, unknown> = {
     title,
@@ -307,7 +314,12 @@ async function handleNoteQuickAdd(rawInput: string, task: string, userDescriptio
       captured_method: 'quick_add_note',
       captured_by: 'human',
       source_metadata: {
-        refined_at: new Date().toISOString(),
+        capture_origin: 'quick_add',
+        capture_path: 'quick_add_note',
+        explicit_capture: true,
+        input_type: 'note',
+        captured_at: capturedAt,
+        refined_at: capturedAt,
       },
     },
   };
@@ -351,6 +363,7 @@ async function handleChatTranscriptQuickAdd(rawInput: string, task: string, cont
     throw new Error('Input is required to import a chat transcript');
   }
 
+  const capturedAt = new Date().toISOString();
   const summaryResult = await summarizeTranscript(transcript);
   const baseSummary = summaryResult.summary?.trim() || 'Captured chat transcript. Review the raw transcript for full detail.';
 
@@ -395,7 +408,12 @@ async function handleChatTranscriptQuickAdd(rawInput: string, task: string, cont
       transcript_length_chars: transcript.length,
       transcript_length_words: wordCount,
       transcript_truncated_for_summary: summaryResult.truncated ?? false,
-      summary_generated_at: new Date().toISOString(),
+      capture_origin: 'quick_add',
+      capture_path: 'quick_add_chat',
+      explicit_capture: true,
+      input_type: 'chat',
+      captured_at: capturedAt,
+      summary_generated_at: capturedAt,
     },
   };
 

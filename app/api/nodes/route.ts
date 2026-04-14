@@ -3,7 +3,6 @@ import { contextService, nodeService } from '@/services/database';
 import { Node, NodeFilters } from '@/types/database';
 import { autoEmbedQueue } from '@/services/embedding/autoEmbedQueue';
 import { generateDescription } from '@/services/database/descriptionService';
-import { scheduleAutoEdgeCreation } from '@/services/agents/autoEdge';
 import { coerceDescriptionForStorage } from '@/services/database/quality';
 import { normalizeNodeLink } from '@/utils/nodeLink';
 import { buildCanonicalNodeMetadata } from '@/services/nodes/metadata';
@@ -179,11 +178,6 @@ export async function POST(request: NextRequest) {
 
     if (chunkStatus === 'not_chunked' && node.id) {
       autoEmbedQueue.enqueue(node.id, { reason: 'node_created' });
-    }
-
-    // Schedule auto-edge creation (fire-and-forget, non-blocking)
-    if (node.id) {
-      scheduleAutoEdgeCreation(node.id);
     }
 
     return NextResponse.json({

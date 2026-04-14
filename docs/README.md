@@ -49,11 +49,13 @@ Add to your `~/.claude.json`:
   "mcpServers": {
     "ra-h": {
       "command": "npx",
-      "args": ["ra-h-mcp-server"]
+      "args": ["--yes", "ra-h-mcp-server@2.1.1"]
     }
   }
 }
 ```
+
+If you publish a newer MCP release and need clients to use it immediately, bump the pinned version here and restart the client. Do not assume plain `npx ra-h-mcp-server` always refreshes instantly.
 
 Works without RA-OS running. See [MCP docs](./8_mcp.md) for alternatives.
 

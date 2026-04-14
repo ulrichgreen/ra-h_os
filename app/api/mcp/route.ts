@@ -8,16 +8,20 @@ export const maxDuration = 30;
 
 const SERVER_INFO = {
   name: 'ra-h-mcp',
-  version: '1.0.0',
+  version: '2.1.1',
 };
 
 const instructions = [
   'RA-H is a personal knowledge graph — local-first, vendor-neutral.',
   'Core concepts: contexts (optional soft scopes, max 10), nodes (knowledge units), and edges (connections with explanations).',
-  'Always call rah_get_context first to orient yourself — it returns high-level graph state, contexts, hub nodes, stats, and available guides.',
+  'If the user is trying to find a specific existing node, use rah_search_nodes first.',
+  'If the user is asking a broader question or request that would benefit from graph context, use rah_retrieve_query_context.',
+  'Use rah_get_context only for orientation when high-level graph state would actually help.',
   'Use contexts only when one obvious existing context is explicit and helpful. If unsure or if none exist, leave context empty. Do not expect automatic context assignment.',
   'Search before creating: use rah_search_nodes to check if content already exists.',
   'Every edge needs an explanation: why does this connection exist?',
+  'Never create or update an edge unless the user has explicitly confirmed the relationship.',
+  'Never write via rah_write_context unless the user has explicitly confirmed yes.',
 ].join(' ');
 
 function getBaseUrl(request: NextRequest): string {
@@ -52,20 +56,19 @@ function createServer(request: NextRequest): McpServer {
     'rah_add_node',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node in the local RA-H knowledge base. Set context only when one obvious existing context clearly fits; otherwise leave it empty.',
+      description: 'Create a new node in the local RA-H knowledge base after you have already decided a net-new write is correct. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. If the user explicitly wants context, use `context_name` rather than a numeric ID.',
       inputSchema: {
         title: z.string().min(1).max(160),
         content: z.string().max(20000).optional(),
         source: z.string().max(50000).optional(),
         link: z.string().url().optional(),
         description: z.string().max(500).optional(),
-        context_id: z.number().int().positive().nullable().optional(),
         context_name: z.string().optional(),
         metadata: z.record(z.any()).optional(),
         chunk: z.string().max(50000).optional(),
       },
     },
-    async ({ title, content, source, link, description, context_id, context_name, metadata, chunk }) => {
+    async ({ title, content, source, link, description, context_name, metadata, chunk }) => {
       const payload = await callRaHApi(request, '/api/nodes', {
         method: 'POST',
         body: JSON.stringify({
@@ -73,7 +76,6 @@ function createServer(request: NextRequest): McpServer {
           source: source?.trim() || content?.trim() || chunk?.trim() || undefined,
           link: link?.trim() || undefined,
           description: description?.trim() || undefined,
-          context_id,
           context_name: context_name?.trim() || undefined,
           metadata: metadata || {},
         }),
@@ -95,21 +97,23 @@ function createServer(request: NextRequest): McpServer {
     'rah_search_nodes',
     {
       title: 'Search RA-H nodes',
-      description: 'Find existing RA-H entries that mention a topic before adding new ones.',
+      description: 'Find existing RA-H entries that mention a topic before adding new ones. Leave context blank by default. If the user explicitly wants a context-specific lookup, use `context_name` rather than a numeric ID. For full current-turn grounding of a substantive request, prefer `rah_retrieve_query_context`.',
       inputSchema: {
         query: z.string().min(1).max(400),
         limit: z.number().min(1).max(25).optional(),
-        contextId: z.number().int().positive().optional(),
+        context_name: z.string().optional(),
       },
     },
-    async ({ query, limit = 10, contextId }) => {
-      const params = new URLSearchParams();
-      params.set('search', query.trim());
-      params.set('limit', String(Math.min(Math.max(limit, 1), 25)));
-      if (contextId) params.set('contextId', String(contextId));
-
-      const payload = await callRaHApi(request, `/api/nodes?${params.toString()}`);
-      const nodes = Array.isArray(payload.data) ? payload.data : [];
+    async ({ query, limit = 10, context_name }) => {
+      const payload = await callRaHApi(request, '/api/nodes/direct-search', {
+        method: 'POST',
+        body: JSON.stringify({
+          query: query.trim(),
+          limit: Math.min(Math.max(limit, 1), 25),
+          context_name: typeof context_name === 'string' ? context_name.trim() : undefined,
+        }),
+      });
+      const nodes = Array.isArray(payload.data?.nodes) ? payload.data.nodes : [];
 
       return {
         content: [{ type: 'text', text: nodes.length === 0 ? 'No existing RA-H nodes mention that topic yet.' : `Found ${nodes.length} node(s) mentioning that topic.` }],
@@ -124,6 +128,41 @@ function createServer(request: NextRequest): McpServer {
             updated_at: node.updated_at,
           })),
         },
+      };
+    }
+  );
+
+  server.registerTool(
+    'rah_retrieve_query_context',
+    {
+      title: 'Retrieve RA-H query context',
+      description: 'Given the raw user query plus optional focused node state, retrieve the most relevant graph context for the current turn. It starts with direct graph search and broadens only if useful. Use this when graph context could help answer or complete a broader task. For explicit node lookup, use rah_search_nodes.',
+      inputSchema: {
+        query: z.string().min(1).max(1000),
+        focused_node_id: z.number().int().positive().nullable().optional(),
+        active_context_id: z.number().int().positive().nullable().optional(),
+        limit: z.number().min(1).max(20).optional(),
+      },
+    },
+    async ({ query, focused_node_id, active_context_id, limit = 6 }) => {
+      const payload = await callRaHApi(request, '/api/retrieval/query-context', {
+        method: 'POST',
+        body: JSON.stringify({
+          query,
+          focused_node_id: focused_node_id ?? null,
+          active_context_id: active_context_id ?? null,
+          limit,
+        }),
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: payload.data.shouldRetrieve
+            ? `Retrieved ${payload.data.nodes.length} node(s) and ${payload.data.chunks.length} chunk(s) for this turn.`
+            : payload.data.reason,
+        }],
+        structuredContent: payload.data,
       };
     }
   );
@@ -214,7 +253,7 @@ function createServer(request: NextRequest): McpServer {
     'rah_update_node',
     {
       title: 'Update RA-H node',
-      description: 'Update an existing node. Context remains optional and explicit.',
+      description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Context is preserved by default. If the user explicitly wants to change context, use `context_name`. Use `clear_context` only when the user explicitly wants to remove the node context.',
       inputSchema: {
         id: z.number().int().positive(),
         updates: z.object({
@@ -223,17 +262,30 @@ function createServer(request: NextRequest): McpServer {
           content: z.string().optional(),
           source: z.string().optional(),
           link: z.string().optional(),
-          context_id: z.number().int().positive().nullable().optional(),
+          context_name: z.string().optional(),
+          clear_context: z.boolean().optional(),
           metadata: z.record(z.any()).optional(),
         }),
       },
     },
     async ({ id, updates }) => {
+      if (!updates || Object.keys(updates).length === 0) {
+        throw new Error('At least one field must be provided in updates.');
+      }
+
       const mappedUpdates = { ...updates } as Record<string, unknown>;
+      if (mappedUpdates.chunk !== undefined && mappedUpdates.source === undefined) {
+        mappedUpdates.source = mappedUpdates.chunk;
+      }
       if (mappedUpdates.content !== undefined && mappedUpdates.source === undefined) {
         mappedUpdates.source = mappedUpdates.content;
       }
       delete mappedUpdates.content;
+      delete mappedUpdates.chunk;
+
+      if (mappedUpdates.context_name && mappedUpdates.clear_context) {
+        throw new Error('context_name cannot be combined with clear_context: true.');
+      }
 
       const payload = await callRaHApi(request, `/api/nodes/${id}`, {
         method: 'PUT',
@@ -295,14 +347,19 @@ function createServer(request: NextRequest): McpServer {
     'rah_create_edge',
     {
       title: 'Create RA-H edge',
-      description: 'Create a connection between two nodes.',
+      description: 'Create a connection between two nodes only after the user has explicitly confirmed the proposed relationship.',
       inputSchema: {
         sourceId: z.number().int().positive(),
         targetId: z.number().int().positive(),
         explanation: z.string().min(1),
+        confirmed_by_user: z.boolean(),
       },
     },
-    async ({ sourceId, targetId, explanation }) => {
+    async ({ sourceId, targetId, explanation, confirmed_by_user }) => {
+      if (!confirmed_by_user) {
+        throw new Error('rah_create_edge requires explicit user confirmation before writing the relationship.');
+      }
+
       const payload = await callRaHApi(request, '/api/edges', {
         method: 'POST',
         body: JSON.stringify({
@@ -311,6 +368,7 @@ function createServer(request: NextRequest): McpServer {
           explanation: explanation.trim(),
           source: 'helper_name',
           created_via: 'mcp',
+          confirmed_by_user: true,
         }),
       });
 
@@ -364,17 +422,23 @@ function createServer(request: NextRequest): McpServer {
     'rah_update_edge',
     {
       title: 'Update RA-H edge',
-      description: 'Update an existing edge connection.',
+      description: 'Update an existing edge connection only after the user explicitly confirmed the corrected relationship.',
       inputSchema: {
         id: z.number().int().positive(),
         explanation: z.string().min(1),
+        confirmed_by_user: z.boolean(),
       },
     },
-    async ({ id, explanation }) => {
+    async ({ id, explanation, confirmed_by_user }) => {
+      if (!confirmed_by_user) {
+        throw new Error('rah_update_edge requires explicit user confirmation before writing the corrected relationship.');
+      }
+
       const payload = await callRaHApi(request, `/api/edges/${id}`, {
         method: 'PUT',
         body: JSON.stringify({
           context: { explanation: explanation.trim(), created_via: 'mcp' },
+          confirmed_by_user: true,
         }),
       });
 
@@ -551,6 +615,55 @@ function createServer(request: NextRequest): McpServer {
     }
   );
 
+  server.registerTool(
+    'rah_write_context',
+    {
+      title: 'Write RA-H context node',
+      description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this for agent-suggested capture after you already proposed the node briefly and got a clear yes. Prefer ordinary create/update flows for explicit user-directed capture.',
+      inputSchema: {
+        title: z.string().min(1).max(160),
+        description: z.string().min(1).max(500),
+        source: z.string().max(50000).optional(),
+        context_name: z.string().optional(),
+        metadata: z.record(z.any()).optional(),
+        confirmed_by_user: z.boolean(),
+      },
+    },
+    async ({ title, description, source, context_name, metadata, confirmed_by_user }) => {
+      if (!confirmed_by_user) {
+        throw new Error('rah_write_context requires explicit user confirmation before writing to the graph.');
+      }
+
+      const payload = await callRaHApi(request, '/api/nodes', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: title.trim(),
+          description: description.trim(),
+          source: source?.trim() || undefined,
+          context_name: context_name?.trim() || undefined,
+          metadata: {
+            captured_by: 'human',
+            captured_method: 'write_context',
+            ...(metadata || {}),
+          },
+        }),
+      });
+
+      const node = payload.data;
+      const message = payload.message || `Saved context as node #${node.id}: ${node.title}`;
+
+      return {
+        content: [{ type: 'text', text: message }],
+        structuredContent: {
+          success: true,
+          nodeId: node.id,
+          title: node.title,
+          message,
+        },
+      };
+    }
+  );
+
   return server;
 }
 
@@ -603,6 +716,7 @@ export async function GET(request: NextRequest) {
   const tools = [
     'rah_add_node',
     'rah_search_nodes',
+    'rah_retrieve_query_context',
     'rah_query_contexts',
     'rah_update_node',
     'rah_get_nodes',
@@ -614,6 +728,7 @@ export async function GET(request: NextRequest) {
     'rah_extract_youtube',
     'rah_extract_pdf',
     'rah_get_context',
+    'rah_write_context',
   ];
 
   return NextResponse.json(

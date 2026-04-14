@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { edgeService } from '@/services/database';
+import { validateEdgeExplanation } from '@/services/database/quality';
 
 export const runtime = 'nodejs';
 
@@ -66,7 +67,60 @@ export async function PUT(
       }, { status: 400 });
     }
 
-    const edge = await edgeService.updateEdge(edgeId, body);
+    const explanation =
+      typeof body.explanation === 'string'
+        ? body.explanation.trim()
+        : typeof body.context?.explanation === 'string'
+          ? body.context.explanation.trim()
+          : '';
+
+    const createdVia = (() => {
+      const raw =
+        typeof body.created_via === 'string'
+          ? body.created_via
+          : typeof body.context?.created_via === 'string'
+            ? body.context.created_via
+            : '';
+      if (['ui', 'agent', 'mcp', 'workflow', 'quicklink'].includes(raw)) return raw as any;
+      return 'ui' as const;
+    })();
+
+    if ((createdVia === 'agent' || createdVia === 'mcp' || createdVia === 'workflow') && body.confirmed_by_user !== true) {
+      return NextResponse.json({
+        success: false,
+        error: 'Agent-driven edge updates require explicit user confirmation before writing to the graph.'
+      }, { status: 400 });
+    }
+
+    if (!explanation && createdVia !== 'ui' && createdVia !== 'quicklink') {
+      return NextResponse.json({
+        success: false,
+        error: 'Agent-driven edge updates require an explicit explanation.'
+      }, { status: 400 });
+    }
+
+    if (explanation) {
+      const explanationError = validateEdgeExplanation(explanation);
+      if (explanationError) {
+        return NextResponse.json({
+          success: false,
+          error: explanationError
+        }, { status: 400 });
+      }
+    }
+
+    const updatePayload = { ...body };
+    delete updatePayload.confirmed_by_user;
+
+    if (typeof updatePayload.created_via === 'string') {
+      updatePayload.context = {
+        ...(updatePayload.context && typeof updatePayload.context === 'object' ? updatePayload.context : {}),
+        created_via: updatePayload.created_via,
+      };
+      delete updatePayload.created_via;
+    }
+
+    const edge = await edgeService.updateEdge(edgeId, updatePayload);
 
     return NextResponse.json({
       success: true,

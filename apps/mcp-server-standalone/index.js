@@ -35,6 +35,7 @@ const edgeService = require('./services/edgeService');
 const contextService = require('./services/contextService');
 const skillService = require('./services/skillService');
 const retrievalService = require('./services/retrievalService');
+const { directNodeLookup } = require('./services/directNodeLookupService');
 
 // Server info
 const serverInfo = {
@@ -68,15 +69,17 @@ function buildInstructions() {
 6. For complex tasks, call readSkill("db-operations").
 
 ## Context field rule
-`context_id` is optional on writes.
-Do not include `context_id` unless you already know a real existing context ID that clearly fits.
-Omitting `context_id` is the normal default and does not block create or update operations.
+Context is optional on writes.
+Do not include any context field unless the user explicitly wants one.
+If context is intentionally provided, prefer \`context_name\`. Treat numeric \`context_id\` as an internal implementation detail.
+Omitting context is the normal default and does not block create or update operations.
 
 ## Knowledge capture
 Only suggest saving context when it seems unusually durable and valuable.
 Keep the ask brief: Add "X" as a node?
 Do not pester. Do not keep re-asking if the user says no, ignores it, or moves on.
 Never write via writeContext unless the user has explicitly confirmed yes.
+Do not create edges autonomously. Surface likely edge candidates briefly, then call edge-write tools only after the user explicitly confirms.
 Always search or retrieve before creating to avoid duplicates.
 
 ## Available skills
@@ -93,16 +96,15 @@ const addNodeInputSchema = {
   source: z.string().max(50000).optional().describe('Canonical source content for embedding'),
   link: z.string().url().optional().describe('Source URL'),
   description: z.string().optional().describe('Strongly recommended. Write the description as natural prose, not labels or a checklist. It should make clear what the artifact is and any surrounding context available. RA-H will accept whatever description is provided and will not block the write.'),
-  context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Usually omit this field entirely unless you already know a real matching context.'),
-  context_name: z.string().optional().describe('Optional convenience context name.'),
+  context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants this node assigned to a known context.'),
   metadata: z.record(z.any()).optional().describe('Optional metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.'),
   chunk: z.string().max(50000).optional().describe('Legacy alias for source text')
 };
 
 const searchNodesInputSchema = {
   query: z.string().min(1).max(400).describe('Search query'),
-  limit: z.number().min(1).max(25).optional().describe('Max results (default 10)'),
-  contextId: z.number().int().positive().optional().describe('Optional primary context filter.'),
+  limit: z.number().min(1).max(50).optional().describe('Max results (default 10)'),
+  context_name: z.string().optional().describe('Optional primary context name filter. Use only when the user explicitly wants a context-specific lookup.'),
   created_after: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes created on or after this date.'),
   created_before: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes created before this date.'),
   event_after: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes with event_date on or after this date.'),
@@ -120,7 +122,7 @@ const writeContextInputSchema = {
   title: z.string().min(1).max(160).describe('Clear proposed node title'),
   description: z.string().min(1).max(500).describe('Natural description of what this context is and why it matters'),
   source: z.string().max(50000).optional().describe('Optional source or verbatim user wording to preserve'),
-  context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Usually omit this field entirely unless you already know a real matching context.'),
+  context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants this saved under a known context.'),
   metadata: z.record(z.any()).optional().describe('Optional metadata patch'),
   confirmed_by_user: z.boolean().describe('Must be true before the write is allowed')
 };
@@ -137,7 +139,8 @@ const updateNodeInputSchema = {
     content: z.string().optional().describe('Legacy alias for source'),
     source: z.string().optional().describe('Canonical source content for embedding'),
     link: z.string().optional().describe('New link'),
-    context_id: z.number().int().positive().nullable().optional().describe('Optional primary context ID. Omit this field to preserve existing context. Only use null when you intentionally want to clear context.'),
+    context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants to assign this node to a known context.'),
+    clear_context: z.boolean().optional().describe('Set true only when the user explicitly wants to remove the node context.'),
     metadata: z.record(z.any()).optional().describe('Metadata patch. It now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
   }).describe('Fields to update')
 };
@@ -145,12 +148,14 @@ const updateNodeInputSchema = {
 const createEdgeInputSchema = {
   sourceId: z.number().int().positive().describe("The 'subject' node (reads: source [explanation] target)"),
   targetId: z.number().int().positive().describe('Target node ID'),
-  explanation: z.string().min(1).describe("Human-readable explanation. Should read as a sentence: 'Alice invented this technique'")
+  explanation: z.string().min(1).describe("Human-readable explanation. Should read as a sentence: 'Alice invented this technique'"),
+  confirmed_by_user: z.boolean().describe('Must be true. Only create the edge after the user explicitly confirmed this proposed relationship.')
 };
 
 const updateEdgeInputSchema = {
   id: z.number().int().positive().describe('Edge ID'),
-  explanation: z.string().min(1).describe('Updated explanation for this connection')
+  explanation: z.string().min(1).describe('Updated explanation for this connection'),
+  confirmed_by_user: z.boolean().describe('Must be true. Only update the edge after the user explicitly confirmed the corrected relationship.')
 };
 
 const queryEdgesInputSchema = {
@@ -358,16 +363,16 @@ async function main() {
     'createNode',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. `context_id` is optional and should usually be omitted entirely unless one obvious existing context clearly fits. Title: max 160 chars, clear and descriptive. Description is strongly recommended and should explicitly describe what the thing is and any surrounding context available, but the write will never be blocked over description quality. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility.',
+      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. If the user explicitly wants context, use `context_name` rather than a numeric ID. Title: max 160 chars, clear and descriptive. Description is strongly recommended and should explicitly describe what the thing is and any surrounding context available, but the write will never be blocked over description quality. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility.',
       inputSchema: addNodeInputSchema
     },
-    async ({ title, content, source, link, description, context_id, context_name, metadata, chunk }) => {
+    async ({ title, content, source, link, description, context_name, metadata, chunk }) => {
       const sourceText = source?.trim() || content?.trim() || chunk?.trim();
       const normalizedDescription = typeof description === 'string' ? description.trim() : description;
 
       let resolvedContextId;
       try {
-        resolvedContextId = contextService.resolveContextId({ context_id, context_name });
+        resolvedContextId = contextService.resolveContextId({ context_name });
       } catch (error) {
         throw new Error(error.message);
       }
@@ -398,37 +403,36 @@ async function main() {
     'queryNodes',
     {
       title: 'Search RA-H nodes',
-      description: 'Search nodes by keyword across title, description, and source fields using the same indexed search path as the app search UI. Use this for direct node lookup or duplicate checks. For full current-turn grounding of a substantive query, prefer retrieveQueryContext. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
+      description: 'Search nodes by keyword across title, description, and source fields using the same safe direct-lookup behavior as the app. Use this for direct node lookup or duplicate checks. Leave context blank by default. If the user explicitly wants a context-specific lookup, use context_name rather than a numeric ID. For full current-turn grounding of a substantive query, prefer retrieveQueryContext. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
       inputSchema: searchNodesInputSchema
     },
-    async ({ query: searchQuery, limit = 10, contextId, created_after, created_before, event_after, event_before }) => {
-      const safeLimit = Math.min(Math.max(limit, 1), 25);
-      const trimmedQuery = searchQuery.trim();
-      const nodes = nodeService.getNodes({
-        search: trimmedQuery,
+    async ({ query: searchQuery, limit = 10, context_name, created_after, created_before, event_after, event_before }) => {
+      const safeLimit = Math.min(Math.max(limit, 1), 50);
+      const result = directNodeLookup({
+        search: searchQuery.trim(),
         limit: safeLimit,
-        contextId,
+        context_name,
         createdAfter: created_after,
         createdBefore: created_before,
         eventAfter: event_after,
         eventBefore: event_before,
       });
 
-      const summary = nodes.length === 0
+      const summary = result.count === 0
         ? 'No nodes found matching that query.'
-        : `Found ${nodes.length} node(s).`;
+        : `Found ${result.count} node(s).`;
 
       return {
         content: [{ type: 'text', text: summary }],
         structuredContent: {
-          count: nodes.length,
-          nodes: nodes.map((node) => ({
+          count: result.count,
+          filters_applied: result.filtersApplied,
+          nodes: result.nodes.map((node) => ({
             id: node.id,
             title: node.title,
             source: node.source ?? null,
             description: node.description ?? null,
             link: node.link ?? null,
-            context_id: node.context_id ?? null,
             created_at: node.created_at,
             updated_at: node.updated_at,
             event_date: node.event_date ?? null,
@@ -442,19 +446,26 @@ async function main() {
     'writeContext',
     {
       title: 'Write RA-H context node',
-      description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this sparingly for unusually valuable context. Never call it unless the user has clearly said yes.',
+      description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this for agent-suggested capture after you already proposed the node briefly and got a clear yes. Prefer ordinary create/update flows for explicit user-directed capture.',
       inputSchema: writeContextInputSchema
     },
-    async ({ title, description, source, context_id, metadata, confirmed_by_user }) => {
+    async ({ title, description, source, context_name, metadata, confirmed_by_user }) => {
       if (!confirmed_by_user) {
         throw new Error('writeContext requires explicit user confirmation before writing to the graph.');
+      }
+
+      let resolvedContextId;
+      try {
+        resolvedContextId = contextService.resolveContextId({ context_name });
+      } catch (error) {
+        throw new Error(error.message);
       }
 
       const node = nodeService.createNode({
         title: title.trim(),
         description: description.trim(),
         source: source?.trim(),
-        context_id: context_id ?? null,
+        context_id: resolvedContextId,
         metadata: {
           captured_by: 'human',
           captured_method: 'write_context',
@@ -527,7 +538,7 @@ async function main() {
     'updateNode',
     {
       title: 'Update RA-H node',
-      description: 'Update an existing node. `context_id` is optional and should usually be omitted entirely unless you are intentionally setting or clearing a real context. Description updates should explicitly state what this thing is and any surrounding context available, but the write will never be blocked over description quality. Source content lives in "source". Legacy "content" is mapped to source for compatibility. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
+      description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Context is preserved by default. If the user explicitly wants to change context, use `context_name`. Use `clear_context` only when the user explicitly wants the context removed. Description updates should explicitly state what this thing is and any surrounding context available, but the write will never be blocked over description quality. Source content lives in "source". Legacy "content" is mapped to source for compatibility. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
       inputSchema: updateNodeInputSchema
     },
     async ({ id, updates }) => {
@@ -552,9 +563,18 @@ async function main() {
           : mappedUpdates.description;
       }
 
-      if (Object.prototype.hasOwnProperty.call(mappedUpdates, 'context_id')) {
-        mappedUpdates.context_id = contextService.resolveContextId({ context_id: mappedUpdates.context_id });
+      if (mappedUpdates.context_name && mappedUpdates.clear_context) {
+        throw new Error('context_name cannot be combined with clear_context: true.');
       }
+
+      if (mappedUpdates.context_name || mappedUpdates.clear_context || Object.prototype.hasOwnProperty.call(mappedUpdates, 'context_id')) {
+        mappedUpdates.context_id = contextService.resolveContextId({
+          context_id: mappedUpdates.clear_context ? null : mappedUpdates.context_id,
+          context_name: mappedUpdates.context_name,
+        });
+      }
+      delete mappedUpdates.context_name;
+      delete mappedUpdates.clear_context;
 
       const node = nodeService.updateNode(id, mappedUpdates);
       const message = `Updated node #${id}`;
@@ -576,10 +596,14 @@ async function main() {
     'createEdge',
     {
       title: 'Create RA-H edge',
-      description: 'Connect two nodes with an edge. Edges are the most valuable part of the graph — they represent understanding, not proximity. Direction matters: reads as sourceId → [explanation] → targetId. The explanation should read as a sentence (e.g. "invented this technique", "contradicts the claim in"). Call queryEdge first to check if a connection already exists between the two nodes.',
+      description: 'Connect two nodes with an edge only after the user has explicitly confirmed the proposed relationship. Edges are the most valuable part of the graph — they represent understanding, not proximity. Direction matters: reads as sourceId → [explanation] → targetId. The explanation should read as a sentence (e.g. "invented this technique", "contradicts the claim in"). Call queryEdge first to check if a connection already exists between the two nodes.',
       inputSchema: createEdgeInputSchema
     },
-    async ({ sourceId, targetId, explanation }) => {
+    async ({ sourceId, targetId, explanation, confirmed_by_user }) => {
+      if (!confirmed_by_user) {
+        throw new Error('createEdge requires explicit user confirmation before writing the relationship.');
+      }
+
       const edge = edgeService.createEdge({
         from_node_id: sourceId,
         to_node_id: targetId,
@@ -602,10 +626,14 @@ async function main() {
     'updateEdge',
     {
       title: 'Update RA-H edge',
-      description: 'Update an edge explanation. Use when a connection needs a better or corrected explanation.',
+      description: 'Update an edge explanation only after the user explicitly confirmed the corrected relationship.',
       inputSchema: updateEdgeInputSchema
     },
-    async ({ id, explanation }) => {
+    async ({ id, explanation, confirmed_by_user }) => {
+      if (!confirmed_by_user) {
+        throw new Error('updateEdge requires explicit user confirmation before writing the corrected relationship.');
+      }
+
       const edge = edgeService.updateEdge(id, { explanation: explanation.trim() });
 
       return {
