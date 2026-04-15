@@ -337,7 +337,7 @@ async function main() {
     'createNode',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. If the user explicitly wants context, use `context_name` rather than a numeric ID. Title: max 160 chars, clear and descriptive. Description is strongly recommended and should explicitly describe what the thing is and any surrounding context available, but the write will never be blocked over description quality. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content for embedding. Legacy "content" and "chunk" are mapped to source for compatibility.',
+      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. If the user explicitly wants context, use `context_name` rather than a numeric ID. Title: max 160 chars, clear and descriptive. Description is strongly recommended and should explicitly describe what the thing is and any surrounding context available, but the write will never be blocked over description quality. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content stored on the node. The RA-H app owns chunking and embedding from source. Legacy "content" and "chunk" are mapped to source for compatibility.',
       inputSchema: addNodeInputSchema
     },
     async ({ title, content, source, link, description, context_name, metadata, chunk }) => {
@@ -512,7 +512,7 @@ async function main() {
     'updateNode',
     {
       title: 'Update RA-H node',
-      description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Context is preserved by default. If the user explicitly wants to change context, use `context_name`. Use `clear_context` only when the user explicitly wants the context removed. Description updates should explicitly state what this thing is and any surrounding context available, but the write will never be blocked over description quality. Source content lives in "source". Legacy "content" is mapped to source for compatibility. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
+      description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Context is preserved by default. If the user explicitly wants to change context, use `context_name`. Use `clear_context` only when the user explicitly wants the context removed. Description updates should explicitly state what this thing is and any surrounding context available, but the write will never be blocked over description quality. Source content lives in "source". The RA-H app owns chunking and embedding from source. Legacy "content" is mapped to source for compatibility. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
       inputSchema: updateNodeInputSchema
     },
     async ({ id, updates }) => {
@@ -819,7 +819,7 @@ async function main() {
     'searchContentEmbeddings',
     {
       title: 'Search RA-H source content',
-      description: 'Search through source content (transcripts, books, articles) stored as chunks. Use when you need to find specific text within a node\'s full source material. For node-level search (titles, descriptions), use queryNodes instead.',
+      description: 'Search through source content (transcripts, books, articles) stored as chunks. Use when you need to find specific text within a node\'s full source material. This only works after the RA-H app has chunked the node source. For node-level search (titles, descriptions), use queryNodes instead.',
       inputSchema: searchContentInputSchema
     },
     async ({ query: searchQuery, node_id, limit = 5 }) => {

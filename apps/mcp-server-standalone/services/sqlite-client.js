@@ -27,6 +27,51 @@ function getDatabasePath() {
 
 let db = null;
 
+function getExistingColumnNames(db, tableName) {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all().map(c => c.name);
+}
+
+function validateExistingRahSchema(db) {
+  const requiredTables = ['contexts', 'nodes', 'edges', 'chunks'];
+  const missingTables = requiredTables.filter(
+    tableName => !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(tableName)
+  );
+
+  if (missingTables.length > 0) {
+    throw new Error(
+      `[RA-H MCP] Database is missing required tables: ${missingTables.join(', ')}. ` +
+      'MCP startup will not create or migrate tables. Open the app and repair the database first.'
+    );
+  }
+
+  const requiredNodeColumns = [
+    'title', 'description', 'source', 'link', 'event_date', 'metadata',
+    'embedding', 'embedding_updated_at', 'embedding_text', 'chunk_status', 'context_id',
+    'created_at', 'updated_at'
+  ];
+  const requiredContextColumns = ['name', 'description', 'icon', 'created_at', 'updated_at'];
+  const requiredEdgeColumns = ['from_node_id', 'to_node_id', 'source', 'created_at', 'context', 'explanation'];
+  const requiredChunkColumns = ['node_id', 'chunk_idx', 'text', 'embedding_type', 'metadata', 'created_at'];
+
+  const schemaChecks = [
+    ['nodes', requiredNodeColumns],
+    ['contexts', requiredContextColumns],
+    ['edges', requiredEdgeColumns],
+    ['chunks', requiredChunkColumns],
+  ];
+
+  for (const [tableName, requiredColumns] of schemaChecks) {
+    const existingColumns = getExistingColumnNames(db, tableName);
+    const missingColumns = requiredColumns.filter(columnName => !existingColumns.includes(columnName));
+    if (missingColumns.length > 0) {
+      throw new Error(
+        `[RA-H MCP] Database table ${tableName} is missing required columns: ${missingColumns.join(', ')}. ` +
+        'MCP startup will not migrate schema. Open the app and repair the database first.'
+      );
+    }
+  }
+}
+
 /**
  * Initialize the database connection.
  * Call this once at startup.
@@ -38,15 +83,13 @@ function initDatabase() {
 
   const dbPath = getDatabasePath();
 
-  // Auto-create database if it doesn't exist
   if (!fs.existsSync(dbPath)) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    db = new Database(dbPath);
-    console.error('[RA-H] Creating new database at:', dbPath);
-    console.error('[RA-H] Database created successfully');
-  } else {
-    db = new Database(dbPath);
+    throw new Error(
+      `[RA-H MCP] Database not found at ${dbPath}. MCP startup will not create a new database. Open RA-H first to create or repair the app database.`
+    );
   }
+
+  db = new Database(dbPath);
 
   // Configure SQLite for performance
   db.pragma('journal_mode = WAL');
@@ -54,152 +97,7 @@ function initDatabase() {
   db.pragma('cache_size = 5000');
   db.pragma('busy_timeout = 5000');
 
-  ensureCoreSchema(db);
-
-  // Migrations for existing databases
-  const edgeCols = db.prepare('PRAGMA table_info(edges)').all().map(c => c.name);
-  const nodeCols = db.prepare('PRAGMA table_info(nodes)').all().map(c => c.name);
-  const contextCols = db.prepare('PRAGMA table_info(contexts)').all().map(c => c.name);
-
-  let hasSourceColumn = nodeCols.includes('source');
-  if (!hasSourceColumn) {
-    db.exec('ALTER TABLE nodes ADD COLUMN source TEXT;');
-    hasSourceColumn = true;
-    console.error('[RA-H] Migrated nodes: added source column');
-  }
-  if (nodeCols.includes('content')) {
-    db.exec(`
-      UPDATE nodes
-      SET source = content
-      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
-        AND content IS NOT NULL
-        AND LENGTH(TRIM(content)) > 0;
-    `);
-  }
-  if (nodeCols.includes('notes')) {
-    db.exec(`
-      UPDATE nodes
-      SET source = notes
-      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
-        AND notes IS NOT NULL
-        AND LENGTH(TRIM(notes)) > 0;
-    `);
-  }
-  if (nodeCols.includes('chunk')) {
-    db.exec(`
-      UPDATE nodes
-      SET source = chunk
-      WHERE (source IS NULL OR LENGTH(TRIM(source)) = 0)
-        AND chunk IS NOT NULL
-        AND LENGTH(TRIM(chunk)) > 0;
-    `);
-  }
-  if (hasSourceColumn) {
-    db.exec(`
-      UPDATE nodes
-      SET source = title || CASE
-        WHEN description IS NOT NULL AND LENGTH(TRIM(description)) > 0
-          THEN char(10) || char(10) || description
-        ELSE ''
-      END
-      WHERE source IS NULL OR LENGTH(TRIM(source)) = 0;
-    `);
-  }
-  if (!edgeCols.includes('explanation')) {
-    db.exec('ALTER TABLE edges ADD COLUMN explanation TEXT;');
-    try {
-      db.exec(`
-        UPDATE edges SET explanation = json_extract(context, '$.explanation')
-        WHERE explanation IS NULL AND json_extract(context, '$.explanation') IS NOT NULL;
-      `);
-    } catch {}
-    console.error('[RA-H] Migrated edges: added explanation column');
-  }
-
-  if (!nodeCols.includes('context_id')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN context_id INTEGER REFERENCES contexts(id) ON DELETE SET NULL;');
-    console.error('[RA-H] Migrated nodes: added context_id column');
-  }
-
-  if (!contextCols.includes('description')) {
-    db.exec("ALTER TABLE contexts ADD COLUMN description TEXT NOT NULL DEFAULT '';");
-  }
-  if (!contextCols.includes('icon')) {
-    db.exec('ALTER TABLE contexts ADD COLUMN icon TEXT;');
-  }
-  if (!contextCols.includes('created_at')) {
-    db.exec("ALTER TABLE contexts ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-  }
-  if (!contextCols.includes('updated_at')) {
-    db.exec("ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-  }
-
-  db.exec(`
-    UPDATE contexts
-    SET description = COALESCE(NULLIF(TRIM(description), ''), name)
-    WHERE description IS NULL OR LENGTH(TRIM(description)) = 0;
-  `);
-
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized
-      ON contexts(LOWER(TRIM(name)));
-    CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);
-  `);
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS dimension_migration_snapshots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      migrated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      dimension_count INTEGER NOT NULL,
-      assignment_count INTEGER NOT NULL,
-      payload TEXT
-    );
-  `);
-
-  const hasLegacyDimensions = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dimensions'").get();
-  const hasLegacyNodeDimensions = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='node_dimensions'").get();
-  if (hasLegacyDimensions || hasLegacyNodeDimensions) {
-    const snapshotCount = Number((db.prepare('SELECT COUNT(*) as count FROM dimension_migration_snapshots').get() || {}).count || 0);
-
-    if (snapshotCount === 0) {
-      const dimensionCount = hasLegacyDimensions
-        ? Number((db.prepare('SELECT COUNT(*) as count FROM dimensions').get() || {}).count || 0)
-        : 0;
-      const assignmentCount = hasLegacyNodeDimensions
-        ? Number((db.prepare('SELECT COUNT(*) as count FROM node_dimensions').get() || {}).count || 0)
-        : 0;
-      const payload = hasLegacyNodeDimensions
-        ? ((db.prepare(`
-            SELECT COALESCE(
-              json_group_array(
-                json_object(
-                  'node_id', nd.node_id,
-                  'dimension', nd.dimension,
-                  'description', d.description,
-                  'icon', d.icon,
-                  'is_priority', d.is_priority
-                )
-              ),
-              '[]'
-            ) AS payload
-            FROM node_dimensions nd
-            LEFT JOIN dimensions d ON d.name = nd.dimension
-          `).get() || {}).payload || '[]')
-        : '[]';
-
-      db.prepare(`
-        INSERT INTO dimension_migration_snapshots (dimension_count, assignment_count, payload)
-        VALUES (?, ?, ?)
-      `).run(dimensionCount, assignmentCount, payload);
-    }
-
-    db.exec(`
-      DROP INDEX IF EXISTS idx_dim_by_dimension;
-      DROP INDEX IF EXISTS idx_dim_by_node;
-      DROP TABLE IF EXISTS node_dimensions;
-      DROP TABLE IF EXISTS dimensions;
-    `);
-  }
+  validateExistingRahSchema(db);
 
   return db;
 }

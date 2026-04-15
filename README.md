@@ -9,7 +9,7 @@
  ╚═╝  ╚═╝╚═╝  ╚═╝      ╚═╝  ╚═╝
 ```
 
-**TL;DR:** Clone this repository and you'll have a local SQLite database on your computer. The database schema is structured so external AI agents can continuously read and write to it, building your knowledge graph externally.
+**TL;DR:** Clone this repository and you'll have a local SQLite database on your computer. External AI agents can read and write nodes in it. The app owns chunking and embedding from node source.
 
 [![Watch the demo](https://img.youtube.com/vi/IA02YB8mInM/hqdefault.jpg)](https://youtu.be/IA02YB8mInM?si=WoWpNE9QZEKEukvZ)
 
@@ -93,7 +93,7 @@ Add to your `~/.claude.json`:
   "mcpServers": {
     "ra-h": {
       "command": "npx",
-      "args": ["--yes", "ra-h-mcp-server@2.1.1"]
+      "args": ["--yes", "ra-h-mcp-server@2.1.2"]
     }
   }
 }
@@ -117,7 +117,7 @@ If you publish a newer MCP release and want clients to use it immediately, bump 
 }
 ```
 
-**What happens:** Once connected, Claude should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph context would help, and `getContext` only for orientation. It proactively captures knowledge. When a new insight, decision, person, or reference surfaces, it should propose a specific node with a strong title, description, source, and metadata. Context is optional and should only be set when the primary scope is obvious.
+**What happens:** Once connected, Claude should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph context would help, and `getContext` only for orientation. It proactively captures knowledge. When a new insight, decision, person, or reference surfaces, it should propose a specific node with a strong title, description, source, and metadata. Context is optional and should only be set when the primary scope is obvious. The MCP server stores source on the node. The app later turns that source into chunks and embeddings.
 
 Available tools:
 

@@ -1238,12 +1238,20 @@ class SQLiteClient {
         createSql: string,
         triggerSql: string,
         rebuildSql: string,
+        isStale: (sql: string) => boolean,
       ) => {
         const existing = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(tableName) as { sql?: string } | undefined;
+        const existingSql = (existing?.sql || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const missing = !existingSql;
+        const stale = !missing && isStale(existingSql);
 
-        if (!existing?.sql) {
+        if (missing) {
           this.db.exec(createSql);
           this.db.exec(rebuildSql);
+        } else if (stale) {
+          console.warn(
+            `[SQLiteFTS] ${tableName} schema is stale. Skipping destructive startup rebuild; use the offline repair/rebuild path instead.`
+          );
         }
 
         this.db.exec(triggerSql);
@@ -1272,6 +1280,12 @@ class SQLiteClient {
           END;
         `,
         "INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild');",
+        (sql) =>
+          !/\bfts5\(\s*title\s*,\s*source\s*,\s*description\b/.test(sql) ||
+          !sql.includes("content='nodes'") ||
+          !sql.includes("content_rowid='id'") ||
+          /\bnotes\b/.test(sql) ||
+          /\btitle\s*,\s*content\b/.test(sql),
       );
 
       ensureFts(
@@ -1297,6 +1311,10 @@ class SQLiteClient {
           END;
         `,
         "INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');",
+        (sql) =>
+          !/\bfts5\(\s*text\b/.test(sql) ||
+          !sql.includes("content='chunks'") ||
+          !sql.includes("content_rowid='id'"),
       );
     } catch (error) {
       console.warn('Failed to ensure FTS tables:', error);

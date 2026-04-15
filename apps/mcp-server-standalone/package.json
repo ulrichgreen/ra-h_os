@@ -1,13 +1,16 @@
 {
   "name": "ra-h-mcp-server",
-  "version": "2.1.1",
-  "description": "Connect Claude Code/Desktop to your RA-H knowledge base. Direct SQLite access - no web app required.",
+  "version": "2.1.2",
+  "description": "Connect Claude Code/Desktop to your RA-H knowledge base. Direct SQLite access to an existing RA-H database.",
   "main": "index.js",
   "bin": {
-    "ra-h-mcp-server": "./index.js"
+    "ra-h-mcp-server": "index.js"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "validate:syntax": "node --check index.js && node --check services/*.js",
+    "validate:publish": "npm run validate:syntax && npm pack --dry-run >/dev/null",
+    "prepublishOnly": "npm run validate:publish"
   },
   "keywords": [
     "mcp",
@@ -26,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bradwmorris/ra-h"
+    "url": "git+https://github.com/bradwmorris/ra-h.git"
   },
   "homepage": "https://ra-h.app",
   "bugs": {

@@ -49,7 +49,7 @@ Add to your `~/.claude.json`:
   "mcpServers": {
     "ra-h": {
       "command": "npx",
-      "args": ["--yes", "ra-h-mcp-server@2.1.1"]
+      "args": ["--yes", "ra-h-mcp-server@2.1.2"]
     }
   }
 }
@@ -57,7 +57,7 @@ Add to your `~/.claude.json`:
 
 If you publish a newer MCP release and need clients to use it immediately, bump the pinned version here and restart the client. Do not assume plain `npx ra-h-mcp-server` always refreshes instantly.
 
-Works without RA-OS running. See [MCP docs](./8_mcp.md) for alternatives.
+Run RA-H once first so the database exists. The standalone MCP server can write nodes without the app running, but the app owns chunking and embedding from node source. See [MCP docs](./8_mcp.md) for alternatives.
 
 ## Questions?
 

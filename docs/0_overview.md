@@ -63,13 +63,13 @@ RA-OS is designed to be the knowledge backend for your AI workflows:
   "mcpServers": {
     "ra-h": {
       "command": "npx",
-      "args": ["--yes", "ra-h-mcp-server@2.1.1"]
+      "args": ["--yes", "ra-h-mcp-server@2.1.2"]
     }
   }
 }
 ```
 
-Add this to `~/.claude.json` and restart Claude. Works without RA-OS running. If you publish a newer MCP release and need clients to pick it up immediately, bump the pinned version here and restart the client.
+Add this to `~/.claude.json` and restart Claude. Run RA-H once first so the database exists. The standalone MCP server can write nodes without the app running, but the app owns chunking and embedding from node source. If you publish a newer MCP release and need clients to pick it up immediately, bump the pinned version here and restart the client.
 
 Core tools include: `queryNodes`, `retrieveQueryContext`, `createNode`, `writeContext`, `updateNode`, `getNodesById`, `createEdge`, `updateEdge`, `queryEdge`, `queryContexts`, `listSkills`, `readSkill`
 

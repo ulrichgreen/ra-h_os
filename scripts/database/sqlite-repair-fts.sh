@@ -19,10 +19,49 @@ fi
 
 DB_DIR="$(dirname "$DB_PATH")"
 DB_NAME="$(basename "$DB_PATH")"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+VEC_EXTENSION_PATH="${SQLITE_VEC_EXTENSION_PATH:-$ROOT_DIR/vendor/sqlite-extensions/vec0.dylib}"
 TS=$(date +"%Y%m%d_%H%M%S")
 RAW_BACKUP_DIR="$DB_DIR/working/fts_repair_${TS}"
 REBUILT_DB="$DB_DIR/${DB_NAME}.rebuilt.${TS}"
 QUOTED_DB_PATH=${DB_PATH//\'/\'\'}
+HAS_SOURCE_VEC_NODES=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vec_nodes';")
+HAS_SOURCE_VEC_CHUNKS=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks';")
+
+VEC_SQL_HEADER=""
+VEC_SQL_BODY=""
+if [ -f "$VEC_EXTENSION_PATH" ]; then
+  if [ "$HAS_SOURCE_VEC_NODES" -gt 0 ] || [ "$HAS_SOURCE_VEC_CHUNKS" -gt 0 ]; then
+    VEC_SQL_HEADER=".load $VEC_EXTENSION_PATH"
+    VEC_SQL_BODY="
+CREATE VIRTUAL TABLE vec_nodes USING vec0(
+  node_id INTEGER PRIMARY KEY,
+  embedding FLOAT[1536]
+);
+
+CREATE VIRTUAL TABLE vec_chunks USING vec0(
+  chunk_id INTEGER PRIMARY KEY,
+  embedding FLOAT[1536]
+);
+"
+
+    if [ "$HAS_SOURCE_VEC_NODES" -gt 0 ]; then
+      VEC_SQL_BODY="$VEC_SQL_BODY
+INSERT INTO vec_nodes(node_id, embedding)
+SELECT node_id, embedding FROM source.vec_nodes;
+"
+    fi
+
+    if [ "$HAS_SOURCE_VEC_CHUNKS" -gt 0 ]; then
+      VEC_SQL_BODY="$VEC_SQL_BODY
+INSERT INTO vec_chunks(chunk_id, embedding)
+SELECT chunk_id, embedding FROM source.vec_chunks;
+"
+    fi
+  fi
+elif [ "$HAS_SOURCE_VEC_NODES" -gt 0 ] || [ "$HAS_SOURCE_VEC_CHUNKS" -gt 0 ]; then
+  echo "Warning: sqlite-vec extension not found at $VEC_EXTENSION_PATH; vec tables will not be restored." >&2
+fi
 
 mkdir -p "$RAW_BACKUP_DIR"
 
@@ -46,6 +85,7 @@ sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM chunks_fts;" | sed 's/^/  chunks_fts: /
 rm -f "$REBUILT_DB" "${REBUILT_DB}-wal" "${REBUILT_DB}-shm"
 
 sqlite3 "$REBUILT_DB" <<SQL
+$VEC_SQL_HEADER
 PRAGMA journal_mode = DELETE;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = OFF;
@@ -253,6 +293,8 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
   content_rowid='id'
 );
 
+$VEC_SQL_BODY
+
 INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild');
 INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');
 
@@ -369,6 +411,12 @@ sqlite3 "$REBUILT_DB" "PRAGMA quick_check;" | sed 's/^/  quick_check: /'
 sqlite3 "$REBUILT_DB" "PRAGMA integrity_check;" | sed 's/^/  integrity_check: /'
 sqlite3 "$REBUILT_DB" "SELECT COUNT(*) FROM nodes_fts;" | sed 's/^/  nodes_fts: /'
 sqlite3 "$REBUILT_DB" "SELECT COUNT(*) FROM chunks_fts;" | sed 's/^/  chunks_fts: /'
+if [ "$HAS_SOURCE_VEC_NODES" -gt 0 ] && [ -f "$VEC_EXTENSION_PATH" ]; then
+  sqlite3 "$REBUILT_DB" ".load $VEC_EXTENSION_PATH" "SELECT COUNT(*) FROM vec_nodes;" | sed 's/^/  vec_nodes: /'
+fi
+if [ "$HAS_SOURCE_VEC_CHUNKS" -gt 0 ] && [ -f "$VEC_EXTENSION_PATH" ]; then
+  sqlite3 "$REBUILT_DB" ".load $VEC_EXTENSION_PATH" "SELECT COUNT(*) FROM vec_chunks;" | sed 's/^/  vec_chunks: /'
+fi
 
 mv "$DB_PATH" "${DB_PATH}.corrupt.${TS}"
 if [ -f "${DB_PATH}-wal" ]; then

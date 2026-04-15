@@ -9,6 +9,7 @@ interface AutoEmbedTask {
 }
 
 const DEFAULT_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes between automatic runs per node
+const RECOVERY_INTERVAL_MS = 60 * 1000;
 
 export class AutoEmbedQueue {
   private readonly queue: number[] = [];
@@ -88,10 +89,17 @@ export class AutoEmbedQueue {
   }
 
   private async executeTask(task: AutoEmbedTask) {
-    const sqlite = getSQLiteClient();
-    const integrity = sqlite.getIntegrityReport();
-    if (!sqlite.canUseFtsTable('chunks')) {
+    const integrity = getSQLiteClient().getIntegrityReport();
+    if (!integrity.ftsTables.chunks) {
       console.warn('[AutoEmbedQueue] Skipping chunk write because chunks FTS is degraded:', integrity.summary);
+      try {
+        const node = await nodeService.getNodeById(task.nodeId);
+        if (node && node.chunk_status !== 'chunked' && node.chunk_status !== 'error') {
+          await nodeService.updateNode(task.nodeId, { chunk_status: 'error' });
+        }
+      } catch (error) {
+        console.warn('[AutoEmbedQueue] Failed to mark node as error while chunks FTS is degraded', task.nodeId, error);
+      }
       return;
     }
 
@@ -121,12 +129,30 @@ export class AutoEmbedQueue {
 declare global {
   // eslint-disable-next-line no-var
   var autoEmbedQueue: AutoEmbedQueue | undefined;
+  // eslint-disable-next-line no-var
+  var autoEmbedRecoveryStarted: boolean | undefined;
+  // eslint-disable-next-line no-var
+  var autoEmbedRecoveryTimer: ReturnType<typeof setInterval> | undefined;
 }
 
 export const autoEmbedQueue = globalThis.autoEmbedQueue ?? new AutoEmbedQueue();
 if (!globalThis.autoEmbedQueue) {
   globalThis.autoEmbedQueue = autoEmbedQueue;
-  autoEmbedQueue.recoverStuckNodes().catch(error => {
-    console.error('[AutoEmbedQueue] Startup recovery failed', error);
-  });
+}
+
+export function startAutoEmbedRecovery(): void {
+  if (globalThis.autoEmbedRecoveryStarted) {
+    return;
+  }
+  globalThis.autoEmbedRecoveryStarted = true;
+
+  const runRecovery = () => {
+    autoEmbedQueue.recoverStuckNodes().catch(error => {
+      console.error('[AutoEmbedQueue] Startup recovery failed', error);
+    });
+  };
+
+  runRecovery();
+  globalThis.autoEmbedRecoveryTimer = setInterval(runRecovery, RECOVERY_INTERVAL_MS);
+  globalThis.autoEmbedRecoveryTimer.unref?.();
 }

@@ -1,14 +1,14 @@
 # RA-H MCP Server
 
-Connect Claude Code and Claude Desktop to your RA-H knowledge base. Direct SQLite access - works without the RA-H app running.
+Connect Claude Code and Claude Desktop to your RA-H knowledge base. Direct SQLite access to an existing RA-H database.
 
 ## Install
 
 ```bash
-npx --yes ra-h-mcp-server@2.1.1
+npx --yes ra-h-mcp-server@2.1.2
 ```
 
-That's it. No manual setup required.
+Run RA-H once first so the database exists, then use the MCP server from any client.
 
 ## Configure Claude Code / Claude Desktop
 
@@ -19,7 +19,7 @@ Add to your Claude config (`~/.claude.json` or Claude Desktop settings):
   "mcpServers": {
     "ra-h": {
       "command": "npx",
-      "args": ["--yes", "ra-h-mcp-server@2.1.1"]
+      "args": ["--yes", "ra-h-mcp-server@2.1.2"]
     }
   }
 }
@@ -32,7 +32,8 @@ If you publish a newer MCP release and need this client to pick it up immediatel
 ## Requirements
 
 - Node.js 18+
-- Database is created automatically at `~/Library/Application Support/RA-H/db/rah.sqlite` on first connection
+- An existing RA-H database at `~/Library/Application Support/RA-H/db/rah.sqlite`
+- Run the RA-H app at least once before using the standalone MCP server
 
 ## Environment Variables
 
@@ -51,6 +52,13 @@ Once connected, Claude will:
 - **Treat edges as proposal-first** — it should suggest likely relationships briefly, then create them only after you explicitly confirm
 - **Read skills for complex tasks** — skills are editable and shared across internal + external agents
 - **Search before creating** to avoid duplicates
+
+## Source Processing
+
+- The standalone MCP server stores source text on the node.
+- It does **not** split source into chunks or generate embeddings itself.
+- The RA-H app owns chunking and embedding when the app is running.
+- If the app is closed, writes still land in `nodes.source`, and the app processes them later.
 
 ## Recommended Agent Memory Line
 

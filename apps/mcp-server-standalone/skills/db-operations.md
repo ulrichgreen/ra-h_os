@@ -21,7 +21,7 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 
 - `title`: clear and specific.
 - `description`: concrete object-level description, not vague summaries.
-- `source`: full verbatim or canonical content of the node (transcript, article text, book passage, user's thoughts). This is what gets chunked and embedded for semantic search.
+- `source`: full verbatim or canonical content of the node (transcript, article text, book passage, user's thoughts). The standalone MCP server stores this on the node. The RA-H app later chunks and embeds it for semantic search.
 - For idea capture from chat, the `source` should usually be the raw user thought, not a compressed assistant summary.
 - `link`: external source URL only.
 - Normal writes should omit context entirely unless the user explicitly wants one.

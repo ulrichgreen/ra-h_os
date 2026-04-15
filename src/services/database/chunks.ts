@@ -260,33 +260,40 @@ export class ChunkService {
     const startTime = Date.now();
     const vectorString = `[${queryEmbedding.join(',')}]`;
 
-    // When searching specific nodes, first get their chunk_ids to scope the vector search
-    if (nodeIds && nodeIds.length > 0) {
-      // Get chunk IDs for the target nodes
-      const chunkIdsQuery = `SELECT id FROM chunks WHERE node_id IN (${nodeIds.map(() => '?').join(',')})`;
-      const chunkIdsResult = sqlite.query<{id: number}>(chunkIdsQuery, nodeIds);
-      const chunkIds = chunkIdsResult.rows.map(r => r.id);
+    const vectorLimit = Math.max(matchCount * 10, 50);
 
-      if (chunkIds.length === 0) {
+    // vec0 requires the knn constraint to live directly on the vec table query.
+    // A previous change pushed node-scoping into that WHERE clause in a way vec0 rejects,
+    // which made every node-scoped vector search throw and silently fall back to text.
+    if (nodeIds && nodeIds.length > 0) {
+      const chunkCountQuery = `SELECT COUNT(*) AS count FROM chunks WHERE node_id IN (${nodeIds.map(() => '?').join(',')})`;
+      const chunkCountResult = sqlite.query<{ count: number }>(chunkCountQuery, nodeIds);
+      const chunkCount = Number(chunkCountResult.rows[0]?.count ?? 0);
+
+      if (chunkCount === 0) {
         console.log(`🔍 Node-scoped search: no chunks found for nodes ${nodeIds.join(', ')}`);
         return [];
       }
 
-      console.log(`🔍 Node-scoped search: ${chunkIds.length} chunks in nodes ${nodeIds.join(', ')}`);
+      console.log(`🔍 Node-scoped search: ${chunkCount} chunks in nodes ${nodeIds.join(', ')}`);
 
-      // Search ONLY within those chunks using rowid filter
-      const query = `
+      let query = `
         SELECT c.*, (1.0 / (1.0 + v.distance)) AS similarity
-        FROM vec_chunks v
+        FROM (
+          SELECT chunk_id, distance
+          FROM vec_chunks
+          WHERE embedding MATCH ?
+          ORDER BY distance
+          LIMIT ?
+        ) v
         JOIN chunks c ON c.id = v.chunk_id
-        WHERE v.embedding MATCH ?
-          AND v.chunk_id IN (${chunkIds.map(() => '?').join(',')})
+        WHERE c.node_id IN (${nodeIds.map(() => '?').join(',')})
           AND (1.0 / (1.0 + v.distance)) >= ?
-        ORDER BY v.distance
+        ORDER BY similarity DESC
         LIMIT ?
       `;
 
-      const params = [vectorString, ...chunkIds, similarityThreshold, matchCount];
+      const params = [vectorString, vectorLimit, ...nodeIds, similarityThreshold, matchCount];
       const result = sqlite.query<Chunk & { similarity: number }>(query, params);
       const searchTime = Date.now() - startTime;
 
@@ -299,8 +306,6 @@ export class ChunkService {
     }
 
     // Global search (no node filter)
-    const vectorLimit = Math.max(matchCount * 10, 50);
-
     const query = `
       WITH vector_results AS (
         SELECT chunk_id, distance
