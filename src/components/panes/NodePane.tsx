@@ -170,6 +170,7 @@ export default function NodePane({
           activeTab={activeTab}
           onTabSelect={onTabSelect}
           onNodeClick={onNodeClick}
+          onOpenInMap={onPaneAction ? () => onPaneAction({ type: 'switch-pane-type', paneType: 'map' }) : undefined}
           onTabClose={onTabClose}
           refreshTrigger={refreshTrigger}
           onTextSelect={onTextSelect}

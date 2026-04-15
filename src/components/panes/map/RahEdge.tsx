@@ -3,7 +3,7 @@
 import { memo, useState } from 'react';
 import {
   BaseEdge,
-  getStraightPath,
+  getBezierPath,
   type EdgeProps,
 } from '@xyflow/react';
 
@@ -25,11 +25,12 @@ function RahEdgeComponent({
   const [hovered, setHovered] = useState(false);
   const explanation = (data as RahEdgeData | undefined)?.explanation;
 
-  const [edgePath, labelX, labelY] = getStraightPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     targetX,
     targetY,
+    curvature: 0.18,
   });
 
   return (
@@ -45,7 +46,7 @@ function RahEdgeComponent({
         strokeWidth={12}
         style={{ cursor: 'default' }}
       />
-      <BaseEdge id={id} path={edgePath} style={style} />
+      <BaseEdge id={id} path={edgePath} style={{ strokeLinecap: 'round', ...style }} />
       {hovered && explanation && (
         <foreignObject
           x={labelX - 80}
@@ -56,8 +57,8 @@ function RahEdgeComponent({
         >
           <div
             style={{
-              background: 'var(--rah-bg-active)',
-              border: '1px solid var(--rah-border-stronger)',
+              background: 'var(--rah-bg-modal)',
+              border: '1px solid var(--rah-border-strong)',
               borderRadius: 4,
               padding: '2px 8px',
               fontSize: 10,
@@ -67,6 +68,7 @@ function RahEdgeComponent({
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               maxWidth: 160,
+              boxShadow: 'var(--rah-shadow-floating)',
             }}
           >
             {explanation}

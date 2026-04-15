@@ -8,40 +8,36 @@ import { getNodeIcon } from '@/utils/nodeIcons';
 type RahNodeType = Node<RahNodeData, 'rahNode'>;
 
 function RahNodeComponent({ data, selected }: NodeProps<RahNodeType>) {
-  const { label, clusterLabel, edgeCount, isExpanded, dbNode, clusterColor } = data;
-  const isTop = !isExpanded && edgeCount > 3;
+  const { label, dbNode, role, prominence } = data;
+  const isSelected = selected || role === 'selected';
+  const sizeScale = role === 'selected'
+    ? 1.08
+    : role === 'first-hop'
+      ? 1.02 + prominence * 0.06
+      : 0.92 + prominence * 0.12;
+  const strongNode = prominence > 0.72 && role === 'overview';
 
   return (
     <div
       className={[
         'rah-map-node',
-        isExpanded && 'rah-map-node--expanded',
-        isTop && 'rah-map-node--top',
-        selected && 'rah-map-node--selected',
+        role === 'selected' && 'rah-map-node--selected',
+        role === 'first-hop' && 'rah-map-node--first-hop',
+        role === 'second-hop' && 'rah-map-node--second-hop',
+        role === 'overview' && 'rah-map-node--overview',
+        isSelected && 'rah-map-node--active',
+        strongNode && 'rah-map-node--strong',
       ].filter(Boolean).join(' ')}
-      style={clusterColor ? { borderLeftColor: clusterColor, borderLeftWidth: 3 } : undefined}
+      style={{ transform: `scale(${sizeScale})` }}
     >
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="rah-map-handle"
-      />
+      <Handle type="target" position={Position.Top} className="rah-map-handle rah-map-handle--hidden" isConnectable={false} />
       <div className="rah-map-node__title">
         <span className="rah-map-node__icon">
           {getNodeIcon(dbNode, 14)}
         </span>
         {label.length > 26 ? label.slice(0, 24) + '\u2026' : label}
       </div>
-      {(isTop || isExpanded) && clusterLabel && (
-        <div className="rah-map-node__dims">
-          {clusterLabel.length > 24 ? `${clusterLabel.slice(0, 23)}\u2026` : clusterLabel}
-        </div>
-      )}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="rah-map-handle"
-      />
+      <Handle type="source" position={Position.Bottom} className="rah-map-handle rah-map-handle--hidden" isConnectable={false} />
     </div>
   );
 }

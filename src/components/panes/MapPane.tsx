@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, useCallback, type CSSProperties } from 'react';
 import {
   ReactFlow,
   Background,
   useNodesState,
   useEdgesState,
-  type Connection,
   type NodeMouseHandler,
   type Node as RFNode,
   type Edge as RFEdge,
@@ -21,23 +20,24 @@ import PaneHeader from './PaneHeader';
 import type { MapPaneProps } from './types';
 import { RahNode } from './map/RahNode';
 import { RahEdge } from './map/RahEdge';
-import EdgeExplanationModal from './map/EdgeExplanationModal';
-import { toRFNodes, toRFEdges, NODE_LIMIT, type MapViewMode, type RahNodeData } from './map/utils';
+import {
+  buildAdjacency,
+  buildDegreeMap,
+  buildFocusedGraph,
+  toRFNodes,
+  toRFEdges,
+  NODE_LIMIT,
+  type MapViewMode,
+  type RahNodeData,
+} from './map/utils';
 import { useTheme } from '@/hooks/useTheme';
 import './map/map-styles.css';
 
 const nodeTypes = { rahNode: RahNode };
 const edgeTypes = { rahEdge: RahEdge };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
-  let timer: ReturnType<typeof setTimeout>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((...args: any[]) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), ms);
-  }) as T;
-}
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_RESULT_LIMIT = 8;
 
 function MapPaneInner({
   slot,
@@ -45,7 +45,8 @@ function MapPaneInner({
   onSwapPanes,
   tabBar,
   onNodeClick,
-  activeTabId,
+  focusedNodeId,
+  onClearFocus,
 }: MapPaneProps) {
   const reactFlowInstance = useReactFlow();
   const [theme] = useTheme();
@@ -57,66 +58,82 @@ function MapPaneInner({
   const [error, setError] = useState<string | null>(null);
 
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
-  const [viewMode, setViewMode] = useState<MapViewMode>('context');
+  const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ id: number; title: string }>>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<RFNode<RahNodeData>>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
-  const [pendingConnection, setPendingConnection] = useState<Connection | null>(null);
-
-  const rfPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const hasInitialFitRef = useRef(false);
 
   const allDbNodes = useMemo(() => {
     const baseIds = new Set(baseNodes.map((node) => node.id));
     return [...baseNodes, ...expandedNodes.filter((node) => !baseIds.has(node.id))];
   }, [baseNodes, expandedNodes]);
 
-  const selectedDbNode = useMemo(
-    () => allDbNodes.find((node) => node.id === selectedNodeId) ?? null,
-    [allDbNodes, selectedNodeId],
+  const nodesById = useMemo(() => {
+    const map = new Map<number, DbNode>();
+    allDbNodes.forEach((node) => map.set(node.id, node));
+    return map;
+  }, [allDbNodes]);
+
+  const adjacency = useMemo(() => buildAdjacency(dbEdges), [dbEdges]);
+  const degreeMap = useMemo(() => buildDegreeMap(dbEdges), [dbEdges]);
+
+  const focusedGraph = useMemo(
+    () => (selectedNodeId ? buildFocusedGraph(selectedNodeId, adjacency, degreeMap) : null),
+    [selectedNodeId, adjacency, degreeMap],
   );
 
-  const connectedNodeIds = useMemo(() => {
-    if (!selectedNodeId) return new Set<number>();
-    const connected = new Set<number>();
-    dbEdges.forEach((edge) => {
-      if (edge.from_node_id === selectedNodeId) connected.add(edge.to_node_id);
-      if (edge.to_node_id === selectedNodeId) connected.add(edge.from_node_id);
-    });
-    return connected;
-  }, [selectedNodeId, dbEdges]);
+  const viewMode: MapViewMode = focusedGraph ? 'focused' : 'overview';
 
-  const clusterLabels = useMemo(() => {
-    if (viewMode !== 'context') return [];
-
-    const grouped = new Map<string, { x: number; y: number; count: number }>();
-    for (const node of rfNodes) {
-      const clusterLabel = (node.data as RahNodeData).clusterLabel;
-      const current = grouped.get(clusterLabel) || { x: 0, y: 0, count: 0 };
-      current.x += node.position.x;
-      current.y += node.position.y;
-      current.count += 1;
-      grouped.set(clusterLabel, current);
+  const visibleNodes = useMemo(() => {
+    if (!focusedGraph) {
+      return [...baseNodes]
+        .sort((a, b) => (degreeMap.get(b.id) ?? b.edge_count ?? 0) - (degreeMap.get(a.id) ?? a.edge_count ?? 0))
+        .slice(0, NODE_LIMIT);
     }
 
-    return [...grouped.entries()].map(([clusterLabel, totals]) => ({
-      clusterLabel,
-      x: totals.x / totals.count,
-      y: totals.y / totals.count - 84,
-    }));
-  }, [rfNodes, viewMode]);
+    return [...focusedGraph.nodeIds]
+      .map((nodeId) => nodesById.get(nodeId))
+      .filter((node): node is DbNode => Boolean(node))
+      .sort((a, b) => {
+        const roleWeight = a.id === focusedGraph.selectedNodeId
+          ? 0
+          : focusedGraph.firstHopIds.includes(a.id)
+            ? 1
+            : 2;
+        const otherRoleWeight = b.id === focusedGraph.selectedNodeId
+          ? 0
+          : focusedGraph.firstHopIds.includes(b.id)
+            ? 1
+            : 2;
+
+        if (roleWeight !== otherRoleWeight) return roleWeight - otherRoleWeight;
+
+        const degreeDiff = (degreeMap.get(b.id) ?? 0) - (degreeMap.get(a.id) ?? 0);
+        return degreeDiff !== 0 ? degreeDiff : a.id - b.id;
+      });
+  }, [baseNodes, degreeMap, focusedGraph, nodesById]);
+
+  const hoveredDbNode = hoveredNodeId ? nodesById.get(hoveredNodeId) ?? null : null;
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       setError(null);
+
       try {
         const [nodesRes, edgesRes] = await Promise.all([
           fetch(`/api/nodes?limit=${NODE_LIMIT}&sortBy=edges`),
           fetch('/api/edges'),
         ]);
 
-        if (!nodesRes.ok || !edgesRes.ok) throw new Error('Failed to load map data');
+        if (!nodesRes.ok || !edgesRes.ok) {
+          throw new Error('Failed to load map data');
+        }
 
         const nodesPayload = await nodesRes.json();
         const edgesPayload = await edgesRes.json();
@@ -124,8 +141,6 @@ function MapPaneInner({
         setBaseNodes(nodesPayload.data || []);
         setDbEdges(edgesPayload.data || []);
         setExpandedNodes([]);
-        setSelectedNodeId(null);
-        rfPositionsRef.current.clear();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
@@ -137,176 +152,146 @@ function MapPaneInner({
   }, []);
 
   useEffect(() => {
-    if (allDbNodes.length === 0) {
-      setRfNodes([]);
-      setRfEdges([]);
+    const centerX = 640;
+    const centerY = 420;
+    const nodeIdSet = new Set(visibleNodes.map((node) => String(node.id)));
+
+    setRfNodes(
+      toRFNodes({
+        nodes: visibleNodes,
+        viewMode,
+        degreeMap,
+        adjacency,
+        focusedGraph,
+        centerX,
+        centerY,
+      }),
+    );
+    setRfEdges(
+      toRFEdges({
+        dbEdges,
+        nodeIds: nodeIdSet,
+        focusedGraph,
+      }),
+    );
+  }, [adjacency, dbEdges, degreeMap, focusedGraph, setRfEdges, setRfNodes, viewMode, visibleNodes]);
+
+  useEffect(() => {
+    if (!focusedGraph) {
       return;
     }
 
-    rfNodes.forEach((node) => {
-      rfPositionsRef.current.set(node.id, node.position);
-    });
+    const missingIds = [...focusedGraph.nodeIds].filter((nodeId) => !nodesById.has(nodeId));
+    if (missingIds.length === 0) return;
 
-    const centerX = 600;
-    const centerY = 400;
-
-    const newRfNodes = toRFNodes(
-      baseNodes,
-      expandedNodes,
-      centerX,
-      centerY,
-      selectedNodeId,
-      connectedNodeIds,
-      rfPositionsRef.current,
-      viewMode,
-      dbEdges,
-    );
-
-    const nodeIdSet = new Set(newRfNodes.map((node) => node.id));
-    const newRfEdges = toRFEdges(dbEdges, nodeIdSet, selectedNodeId);
-
-    setRfNodes(newRfNodes);
-    setRfEdges(newRfEdges);
-  }, [allDbNodes, baseNodes, expandedNodes, dbEdges, selectedNodeId, connectedNodeIds, viewMode, rfNodes, setRfEdges, setRfNodes]);
-
-  useEffect(() => {
-    if (hasInitialFitRef.current || rfNodes.length === 0 || loading) return;
-    hasInitialFitRef.current = true;
-
-    const hubNodeIds = [...baseNodes]
-      .sort((a, b) => (b.edge_count ?? 0) - (a.edge_count ?? 0))
-      .slice(0, 25)
-      .map((node) => String(node.id));
-
-    setTimeout(() => {
-      if (hubNodeIds.length > 0) {
-        reactFlowInstance.fitView({
-          nodes: hubNodeIds.map((id) => ({ id })),
-          padding: 0.3,
-          duration: 300,
-        });
-      }
-    }, 100);
-  }, [rfNodes, loading, baseNodes, reactFlowInstance]);
-
-  useEffect(() => {
-    hasInitialFitRef.current = false;
-  }, [viewMode]);
-
-  const fitAllNodes = useCallback(() => {
-    reactFlowInstance.fitView({ padding: 0.2, duration: 300 });
-  }, [reactFlowInstance]);
-
-  const fitHubNodes = useCallback(() => {
-    const hubNodeIds = [...baseNodes]
-      .sort((a, b) => (b.edge_count ?? 0) - (a.edge_count ?? 0))
-      .slice(0, 25)
-      .map((node) => String(node.id));
-    if (hubNodeIds.length > 0) {
-      reactFlowInstance.fitView({
-        nodes: hubNodeIds.map((id) => ({ id })),
-        padding: 0.3,
-        duration: 300,
-      });
-    }
-  }, [baseNodes, reactFlowInstance]);
-
-  const fetchConnectedNodes = useCallback(async (nodeId: number) => {
-    try {
-      const edgesRes = await fetch(`/api/nodes/${nodeId}/edges`);
-      let nodeEdges: DbEdge[] = [];
-
-      if (edgesRes.ok) {
-        const edgesData = await edgesRes.json();
-        nodeEdges = edgesData.data || [];
-
-        if (nodeEdges.length > 0) {
-          setDbEdges((prev) => {
-            const existing = new Set(prev.map((edge) => edge.id));
-            const fresh = nodeEdges.filter((edge) => !existing.has(edge.id));
-            return fresh.length > 0 ? [...prev, ...fresh] : prev;
-          });
-        }
-      }
-
-      const connectedIds = new Set<number>();
-      dbEdges.forEach((edge) => {
-        if (edge.from_node_id === nodeId) connectedIds.add(edge.to_node_id);
-        if (edge.to_node_id === nodeId) connectedIds.add(edge.from_node_id);
-      });
-      nodeEdges.forEach((edge) => {
-        if (edge.from_node_id === nodeId) connectedIds.add(edge.to_node_id);
-        if (edge.to_node_id === nodeId) connectedIds.add(edge.from_node_id);
-      });
-
-      const existingIds = new Set(allDbNodes.map((node) => node.id));
-      const missingIds = Array.from(connectedIds).filter((id) => !existingIds.has(id));
-      if (missingIds.length === 0) return;
-
+    void (async () => {
       const fetched = (
         await Promise.all(
-          missingIds.slice(0, 50).map(async (id) => {
+          missingIds.map(async (nodeId) => {
             try {
-              const res = await fetch(`/api/nodes/${id}`);
-              if (res.ok) {
-                const data = await res.json();
-                return data.node as DbNode;
-              }
+              const response = await fetch(`/api/nodes/${nodeId}`);
+              if (!response.ok) return null;
+              const payload = await response.json();
+              return payload.node as DbNode;
             } catch {
               return null;
             }
-            return null;
           }),
         )
       ).filter((node): node is DbNode => node !== null);
 
-      if (fetched.length > 0) {
-        setExpandedNodes((prev) => {
-          const ids = new Set(prev.map((node) => node.id));
-          const fresh = fetched.filter((node) => !ids.has(node.id));
-          return fresh.length > 0 ? [...prev, ...fresh] : prev;
-        });
-      }
-    } catch (err) {
-      console.error('Failed to fetch connected nodes:', err);
-    }
-  }, [dbEdges, allDbNodes]);
+      if (fetched.length === 0) return;
+
+      setExpandedNodes((prev) => {
+        const existingIds = new Set(prev.map((node) => node.id));
+        const fresh = fetched.filter((node) => !existingIds.has(node.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    })();
+  }, [focusedGraph, nodesById]);
 
   useEffect(() => {
-    if (selectedNodeId) {
-      void fetchConnectedNodes(selectedNodeId);
+    if (focusedNodeId == null) {
+      setSelectedNodeId(null);
+      return;
     }
-  }, [selectedNodeId, fetchConnectedNodes]);
 
-  useEffect(() => {
-    if (!activeTabId) return;
-    const existing = allDbNodes.find((node) => node.id === activeTabId);
+    if (selectedNodeId === focusedNodeId) return;
+
+    const existing = nodesById.get(focusedNodeId);
     if (existing) {
-      setSelectedNodeId(activeTabId);
-      const rfNode = rfNodes.find((node) => node.id === String(activeTabId));
-      if (rfNode) {
-        reactFlowInstance.setCenter(rfNode.position.x, rfNode.position.y, { duration: 400, zoom: 1.5 });
-      }
+      setSelectedNodeId(focusedNodeId);
       return;
     }
 
     void (async () => {
       try {
-        const res = await fetch(`/api/nodes/${activeTabId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        const node = data.node as DbNode;
+        const response = await fetch(`/api/nodes/${focusedNodeId}`);
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        const node = payload.node as DbNode | undefined;
         if (!node) return;
+
         setExpandedNodes((prev) => (prev.some((existingNode) => existingNode.id === node.id) ? prev : [...prev, node]));
         setSelectedNodeId(node.id);
-        setTimeout(() => {
-          reactFlowInstance.setCenter(600, 400, { duration: 400, zoom: 1.5 });
-        }, 100);
       } catch (err) {
-        console.error('Failed to fetch focused node:', err);
+        console.error('Failed to fetch focused node for map:', err);
       }
     })();
-  }, [activeTabId, allDbNodes, rfNodes, reactFlowInstance]);
+  }, [focusedNodeId, nodesById]);
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < SEARCH_MIN_CHARS) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        setSearchLoading(true);
+        try {
+          const response = await fetch(`/api/nodes/search?q=${encodeURIComponent(trimmed)}&limit=${SEARCH_RESULT_LIMIT}`);
+          if (!response.ok) {
+            setSearchResults([]);
+            return;
+          }
+
+          const payload = await response.json();
+          setSearchResults(payload.data || []);
+        } catch {
+          setSearchResults([]);
+        } finally {
+          setSearchLoading(false);
+        }
+      })();
+    }, 180);
+
+    return () => window.clearTimeout(timeout);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (loading || rfNodes.length === 0) return;
+
+    const timeout = window.setTimeout(() => {
+      if (focusedGraph && selectedNodeId) {
+        const selectedNode = rfNodes.find((node) => node.id === String(selectedNodeId));
+        if (selectedNode) {
+          reactFlowInstance.setCenter(selectedNode.position.x, selectedNode.position.y, {
+            duration: 280,
+            zoom: 1.02,
+          });
+        }
+        return;
+      }
+
+      reactFlowInstance.fitView({ padding: 0.22, duration: 280 });
+    }, 80);
+
+    return () => window.clearTimeout(timeout);
+  }, [focusedGraph, loading, reactFlowInstance, rfNodes, selectedNodeId]);
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
@@ -321,36 +306,38 @@ function MapPaneInner({
           switch (payload.type) {
             case 'NODE_UPDATED': {
               const node = payload.data?.node as DbNode | undefined;
-              if (node?.id) {
-                const updater = (prev: DbNode[]) =>
-                  prev.map((existingNode) => (existingNode.id === node.id ? { ...existingNode, ...node } : existingNode));
-                setBaseNodes(updater);
-                setExpandedNodes(updater);
-              }
+              if (!node?.id) break;
+
+              const updateNodes = (prev: DbNode[]) =>
+                prev.map((existingNode) => (existingNode.id === node.id ? { ...existingNode, ...node } : existingNode));
+
+              setBaseNodes(updateNodes);
+              setExpandedNodes(updateNodes);
               break;
             }
             case 'NODE_DELETED': {
-              const deletedId = payload.data?.nodeId;
-              if (deletedId) {
-                setBaseNodes((prev) => prev.filter((node) => node.id !== deletedId));
-                setExpandedNodes((prev) => prev.filter((node) => node.id !== deletedId));
-                setDbEdges((prev) => prev.filter((edge) => edge.from_node_id !== deletedId && edge.to_node_id !== deletedId));
-                setSelectedNodeId((prev) => (prev === deletedId ? null : prev));
+              const deletedId = payload.data?.nodeId as number | undefined;
+              if (!deletedId) break;
+
+              setBaseNodes((prev) => prev.filter((node) => node.id !== deletedId));
+              setExpandedNodes((prev) => prev.filter((node) => node.id !== deletedId));
+              setDbEdges((prev) => prev.filter((edge) => edge.from_node_id !== deletedId && edge.to_node_id !== deletedId));
+              setSelectedNodeId((prev) => (prev === deletedId ? null : prev));
+              if (deletedId === focusedNodeId) {
+                onClearFocus?.();
               }
               break;
             }
             case 'EDGE_CREATED': {
               const edge = payload.data?.edge as DbEdge | undefined;
-              if (edge?.id) {
-                setDbEdges((prev) => (prev.some((existingEdge) => existingEdge.id === edge.id) ? prev : [...prev, edge]));
-              }
+              if (!edge?.id) break;
+              setDbEdges((prev) => (prev.some((existingEdge) => existingEdge.id === edge.id) ? prev : [...prev, edge]));
               break;
             }
             case 'EDGE_DELETED': {
-              const edgeId = payload.data?.edgeId;
-              if (edgeId) {
-                setDbEdges((prev) => prev.filter((edge) => edge.id !== edgeId));
-              }
+              const edgeId = payload.data?.edgeId as number | undefined;
+              if (!edgeId) break;
+              setDbEdges((prev) => prev.filter((edge) => edge.id !== edgeId));
               break;
             }
             default:
@@ -371,180 +358,114 @@ function MapPaneInner({
     return () => {
       eventSource?.close();
     };
-  }, []);
+  }, [focusedNodeId, onClearFocus]);
 
-  const savePositionRef = useRef(
-    debounce(async (nodeId: number, x: number, y: number, mode: MapViewMode) => {
+  const resetToOverview = useCallback(() => {
+    setSelectedNodeId(null);
+    setHoveredNodeId(null);
+    onClearFocus?.();
+  }, [onClearFocus]);
+
+  const handleSearchSelect = useCallback(async (nodeId: number) => {
+    const existing = nodesById.get(nodeId);
+    if (!existing) {
       try {
-        const res = await fetch(`/api/nodes/${nodeId}`);
-        if (!res.ok) return;
-        const { node: existing } = await res.json();
-        const existingMetadata = existing?.metadata ?? {};
-        const mergedMeta = typeof existingMetadata === 'string'
-          ? (() => {
-              try {
-                return JSON.parse(existingMetadata);
-              } catch {
-                return {};
-              }
-            })()
-          : existingMetadata;
-
-        await fetch(`/api/nodes/${nodeId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            metadata: {
-              ...mergedMeta,
-              map_positions: {
-                ...(mergedMeta.map_positions || {}),
-                [mode]: { x, y },
-              },
-              [`map_position_${mode}`]: { x, y },
-            },
-          }),
-        });
+        const response = await fetch(`/api/nodes/${nodeId}`);
+        if (response.ok) {
+          const payload = await response.json();
+          const node = payload.node as DbNode | undefined;
+          if (node) {
+            setExpandedNodes((prev) => (prev.some((existingNode) => existingNode.id === node.id) ? prev : [...prev, node]));
+          }
+        }
       } catch (err) {
-        console.error('Failed to save node position:', err);
+        console.error('Failed to fetch search-selected node:', err);
       }
-    }, 400),
-  );
-
-  const onNodeDragStop: NodeMouseHandler<RFNode<RahNodeData>> = useCallback((_event, node) => {
-    const nodeId = parseInt(node.id, 10);
-    if (!Number.isNaN(nodeId)) {
-      rfPositionsRef.current.set(node.id, node.position);
-      savePositionRef.current(nodeId, node.position.x, node.position.y, viewMode);
     }
-  }, [viewMode]);
 
-  useEffect(() => {
-    rfPositionsRef.current.clear();
-  }, [viewMode]);
+    setSelectedNodeId(nodeId);
+    setSearchOpen(false);
+    setSearchQuery('');
+    onNodeClick?.(nodeId);
+  }, [nodesById, onNodeClick]);
 
-  useEffect(() => {
-    if (loading || rfNodes.length === 0) return;
-
-    const timeout = setTimeout(() => {
-      reactFlowInstance.fitView({ padding: 0.22, duration: 300 });
-    }, 80);
-
-    return () => clearTimeout(timeout);
-  }, [viewMode, loading, rfNodes, reactFlowInstance]);
-
-  const onNodeClickHandler: NodeMouseHandler<RFNode<RahNodeData>> = useCallback((_event, node) => {
+  const handleNodeClickHandler: NodeMouseHandler<RFNode<RahNodeData>> = useCallback((_event, node) => {
     const nodeId = parseInt(node.id, 10);
     if (!Number.isNaN(nodeId)) {
-      setSelectedNodeId((prev) => (prev === nodeId ? null : nodeId));
-    }
-  }, []);
-
-  const onNodeDoubleClick: NodeMouseHandler<RFNode<RahNodeData>> = useCallback((_event, node) => {
-    const nodeId = parseInt(node.id, 10);
-    if (!Number.isNaN(nodeId)) {
+      setSelectedNodeId(nodeId);
       onNodeClick?.(nodeId);
     }
   }, [onNodeClick]);
 
-  const onConnect = useCallback((connection: Connection) => {
-    if (connection.source === connection.target) return;
-    setPendingConnection(connection);
-  }, []);
-
-  const handleEdgeCreate = useCallback(async (explanation: string) => {
-    if (!pendingConnection?.source || !pendingConnection?.target) return;
-
-    const fromId = parseInt(pendingConnection.source, 10);
-    const toId = parseInt(pendingConnection.target, 10);
-
-    try {
-      const res = await fetch('/api/edges', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from_node_id: fromId,
-          to_node_id: toId,
-          source: 'user',
-          explanation,
-          created_via: 'ui',
-        }),
-      });
-
-      if (res.ok) {
-        const payload = await res.json();
-        const edge = payload.data;
-        if (edge?.id) {
-          setDbEdges((prev) => (prev.some((existingEdge) => existingEdge.id === edge.id) ? prev : [...prev, edge]));
-        }
-      }
-    } catch (err) {
-      console.error('Failed to create edge:', err);
+  const handleNodeMouseEnter: NodeMouseHandler<RFNode<RahNodeData>> = useCallback((_event, node) => {
+    const nodeId = parseInt(node.id, 10);
+    if (!Number.isNaN(nodeId)) {
+      setHoveredNodeId(nodeId);
     }
-
-    setPendingConnection(null);
-  }, [pendingConnection]);
-
-  const handleEdgeCancel = useCallback(() => {
-    setPendingConnection(null);
   }, []);
 
-  const pendingSourceTitle = pendingConnection?.source
-    ? allDbNodes.find((node) => node.id === parseInt(pendingConnection.source, 10))?.title || 'Unknown'
-    : '';
-  const pendingTargetTitle = pendingConnection?.target
-    ? allDbNodes.find((node) => node.id === parseInt(pendingConnection.target, 10))?.title || 'Unknown'
-    : '';
+  const handleNodeMouseLeave: NodeMouseHandler<RFNode<RahNodeData>> = useCallback(() => {
+    setHoveredNodeId(null);
+  }, []);
+
+  const fitVisibleNodes = useCallback(() => {
+    reactFlowInstance.fitView({ padding: 0.2, duration: 260 });
+  }, [reactFlowInstance]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'transparent', overflow: 'hidden' }}>
       <PaneHeader slot={slot} onCollapse={onCollapse} onSwapPanes={onSwapPanes} tabBar={tabBar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button
-            onClick={() => setViewMode('context')}
-            style={{
-              padding: '6px 10px',
-              background: viewMode === 'context' ? 'var(--rah-accent-green-soft)' : 'transparent',
-              border: '1px solid',
-              borderColor: viewMode === 'context' ? 'var(--rah-accent-green-soft-strong)' : 'var(--rah-border-strong)',
-              borderRadius: '6px',
-              color: viewMode === 'context' ? 'var(--rah-accent-green)' : 'var(--rah-text-muted)',
-              fontSize: '12px',
-              cursor: 'pointer',
-            }}
-          >
-            Context View
-          </button>
-          <button
-            onClick={() => setViewMode('hub')}
-            style={{
-              padding: '6px 10px',
-              background: viewMode === 'hub' ? 'var(--rah-accent-green-soft)' : 'transparent',
-              border: '1px solid',
-              borderColor: viewMode === 'hub' ? 'var(--rah-accent-green-soft-strong)' : 'var(--rah-border-strong)',
-              borderRadius: '6px',
-              color: viewMode === 'hub' ? 'var(--rah-accent-green)' : 'var(--rah-text-muted)',
-              fontSize: '12px',
-              cursor: 'pointer',
-            }}
-          >
-            Hub View
-          </button>
+        <div style={headerTools}>
+          <span style={viewMode === 'focused' ? focusedBadge : overviewBadge}>
+            {viewMode === 'focused' ? 'Focused' : 'Overview'}
+          </span>
+
+          <div style={searchShell}>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setSearchOpen(true);
+              }}
+              onFocus={() => setSearchOpen(true)}
+              placeholder="Search nodes..."
+              style={searchInput}
+            />
+
+            {searchOpen && (searchQuery.trim().length >= SEARCH_MIN_CHARS || searchResults.length > 0) && (
+              <div style={searchResultsPanel}>
+                {searchLoading ? (
+                  <div style={searchHint}>Searching…</div>
+                ) : searchResults.length === 0 ? (
+                  <div style={searchHint}>No matching nodes</div>
+                ) : (
+                  searchResults.map((result) => (
+                    <button
+                      key={result.id}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => void handleSearchSelect(result.id)}
+                      style={searchResultButton}
+                    >
+                      <span style={searchResultTitle}>{result.title || 'Untitled'}</span>
+                      <span style={searchResultMeta}>#{result.id}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </PaneHeader>
 
       <div style={{ position: 'relative', flex: 1, background: 'var(--rah-bg-base)' }}>
         {loading ? (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rah-text-muted)' }}>
-            Loading map...
-          </div>
+          <div style={emptyState}>Loading map…</div>
         ) : error ? (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>
-            {error}
-          </div>
+          <div style={{ ...emptyState, color: '#ef4444' }}>{error}</div>
         ) : rfNodes.length === 0 ? (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rah-text-muted)' }}>
-            No nodes to display
-          </div>
+          <div style={emptyState}>No nodes to display</div>
         ) : (
           <div className="rah-map-wrapper" style={{ width: '100%', height: '100%' }}>
             <ReactFlow
@@ -552,14 +473,17 @@ function MapPaneInner({
               edges={rfEdges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
-              onNodeClick={onNodeClickHandler}
-              onNodeDoubleClick={onNodeDoubleClick}
-              onNodeDragStop={onNodeDragStop}
-              onConnect={onConnect}
+              onNodeClick={handleNodeClickHandler}
+              onNodeMouseEnter={handleNodeMouseEnter}
+              onNodeMouseLeave={handleNodeMouseLeave}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
-              minZoom={0.1}
-              maxZoom={3}
+              minZoom={0.12}
+              maxZoom={2.5}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable
+              selectNodesOnDrag={false}
               defaultEdgeOptions={{ type: 'rahEdge' }}
               proOptions={{ hideAttribution: true }}
               colorMode={theme}
@@ -570,138 +494,47 @@ function MapPaneInner({
                 maskColor={theme === 'light' ? 'rgba(255, 255, 255, 0.72)' : 'rgba(0, 0, 0, 0.7)'}
                 nodeColor={(node) => {
                   const data = node.data as RahNodeData | undefined;
-                  return data?.clusterColor || '#2a2a2a';
+                  switch (data?.role) {
+                    case 'selected':
+                      return '#16a34a';
+                    case 'first-hop':
+                      return '#22c55e';
+                    case 'second-hop':
+                      return '#94a3b8';
+                    default:
+                      return '#64748b';
+                  }
                 }}
                 pannable
                 zoomable
               />
             </ReactFlow>
 
-            {viewMode === 'context' && clusterLabels.map((label) => (
-              <div
-                key={label.clusterLabel}
-                style={{
-                  position: 'absolute',
-                  transform: `translate(${label.x}px, ${label.y}px)`,
-                  pointerEvents: 'none',
-                  color: 'var(--rah-text-muted)',
-                  fontSize: '11px',
-                  letterSpacing: '0.05em',
-                  textTransform: 'uppercase',
-                  textShadow: theme === 'light' ? '0 1px 3px rgba(255,255,255,0.95)' : '0 1px 6px rgba(0,0,0,0.45)',
-                }}
-              >
-                {label.clusterLabel}
-              </div>
-            ))}
-
-            <div
-              style={{
-                position: 'absolute',
-                top: 8,
-                right: 8,
-                display: 'flex',
-                gap: 4,
-                zIndex: 10,
-              }}
-            >
-              <button
-                onClick={fitAllNodes}
-                style={{
-                  padding: '4px 8px',
-                  fontSize: 10,
-                  background: 'var(--rah-bg-panel)',
-                  border: '1px solid var(--rah-border-strong)',
-                  borderRadius: 4,
-                  color: 'var(--rah-text-muted)',
-                  cursor: 'pointer',
-                }}
-                title="Fit all nodes"
-              >
+            <div style={floatingActions}>
+              <button type="button" onClick={fitVisibleNodes} style={floatingButton} title="Fit visible nodes">
                 Fit
               </button>
-              {viewMode === 'hub' && (
-                <button
-                  onClick={fitHubNodes}
-                  style={{
-                    padding: '4px 8px',
-                    fontSize: 10,
-                    background: 'var(--rah-bg-panel)',
-                    border: '1px solid var(--rah-border-strong)',
-                    borderRadius: 4,
-                    color: 'var(--rah-text-muted)',
-                    cursor: 'pointer',
-                  }}
-                  title="Fit to hub nodes"
-                >
-                  Hubs
+              {selectedNodeId ? (
+                <button type="button" onClick={resetToOverview} style={floatingButton} title="Return to overview">
+                  Overview
                 </button>
-              )}
+              ) : null}
             </div>
 
-            {selectedDbNode && (
-              <div style={infoPanel}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--rah-text-base)' }}>
-                    {selectedDbNode.title || 'Untitled'}
-                  </div>
-                  <button
-                    onClick={() => setSelectedNodeId(null)}
-                    style={{ background: 'none', border: 'none', color: 'var(--rah-text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
-                  >
-                    &times;
-                  </button>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--rah-text-muted)', marginBottom: 8 }}>
-                  {connectedNodeIds.size} connected nodes
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--rah-accent-green)', marginBottom: 8 }}>
-                  Click a connected node to traverse &middot; Double-click to open
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-                  <span
-                    style={{
-                      padding: '2px 8px',
-                      borderRadius: 999,
-                      fontSize: 11,
-                      background: selectedDbNode.context?.name ? 'var(--rah-accent-green-soft)' : 'var(--rah-bg-active)',
-                      color: selectedDbNode.context?.name ? 'var(--rah-accent-green)' : 'var(--rah-text-muted)',
-                    }}
-                  >
-                    {selectedDbNode.context?.name || 'Unscoped'}
-                  </span>
-                </div>
-                <button
-                  onClick={() => onNodeClick?.(selectedDbNode.id)}
-                  style={{
-                    marginTop: 4,
-                    padding: '8px 12px',
-                    background: 'var(--rah-accent-green)',
-                    color: 'var(--rah-text-inverse)',
-                    border: 'none',
-                    borderRadius: '6px',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    width: '100%',
-                  }}
-                >
-                  Open Node
-                </button>
+            {hoveredDbNode && hoveredNodeId !== selectedNodeId ? (
+              <div style={hoverPreviewCard}>
+                <div style={hoverPreviewTitle}>{hoveredDbNode.title || 'Untitled'}</div>
+                {hoveredDbNode.description ? (
+                  <div style={hoverPreviewBody}>{hoveredDbNode.description}</div>
+                ) : (
+                  <div style={hoverPreviewMeta}>No description</div>
+                )}
               </div>
-            )}
+            ) : null}
+
           </div>
         )}
       </div>
-
-      {pendingConnection && (
-        <EdgeExplanationModal
-          sourceTitle={pendingSourceTitle}
-          targetTitle={pendingTargetTitle}
-          onSubmit={handleEdgeCreate}
-          onCancel={handleEdgeCancel}
-        />
-      )}
     </div>
   );
 }
@@ -714,15 +547,151 @@ export default function MapPane(props: MapPaneProps) {
   );
 }
 
-const infoPanel: CSSProperties = {
+const emptyState: CSSProperties = {
+  height: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: 'var(--rah-text-muted)',
+};
+
+const headerTools: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+};
+
+const overviewBadge: CSSProperties = {
+  padding: '5px 9px',
+  borderRadius: 999,
+  border: '1px solid var(--rah-border-strong)',
+  background: 'var(--rah-bg-panel)',
+  color: 'var(--rah-text-muted)',
+  fontSize: 11,
+  fontWeight: 600,
+};
+
+const focusedBadge: CSSProperties = {
+  ...overviewBadge,
+  borderColor: 'var(--rah-accent-green-soft-strong)',
+  background: 'var(--rah-accent-green-soft)',
+  color: 'var(--rah-accent-green)',
+};
+
+const searchShell: CSSProperties = {
+  position: 'relative',
+  width: 220,
+};
+
+const searchInput: CSSProperties = {
+  width: '100%',
+  padding: '7px 10px',
+  borderRadius: 8,
+  border: '1px solid var(--rah-border-strong)',
+  background: 'var(--rah-bg-panel)',
+  color: 'var(--rah-text-base)',
+  fontSize: 12,
+  outline: 'none',
+};
+
+const searchResultsPanel: CSSProperties = {
   position: 'absolute',
-  bottom: 16,
-  left: 16,
-  width: 260,
+  top: 'calc(100% + 6px)',
+  left: 0,
+  right: 0,
   background: 'var(--rah-bg-modal)',
   border: '1px solid var(--rah-border)',
-  borderRadius: 8,
-  padding: 14,
-  zIndex: 10,
+  borderRadius: 10,
   boxShadow: 'var(--rah-shadow-floating)',
+  overflow: 'hidden',
+  zIndex: 30,
+};
+
+const searchHint: CSSProperties = {
+  padding: '10px 12px',
+  fontSize: 12,
+  color: 'var(--rah-text-muted)',
+};
+
+const searchResultButton: CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  padding: '10px 12px',
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  color: 'var(--rah-text-base)',
+  textAlign: 'left',
+};
+
+const searchResultTitle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  fontSize: 12,
+};
+
+const searchResultMeta: CSSProperties = {
+  fontSize: 11,
+  color: 'var(--rah-text-muted)',
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
+};
+
+const floatingActions: CSSProperties = {
+  position: 'absolute',
+  top: 10,
+  right: 10,
+  display: 'flex',
+  gap: 6,
+  zIndex: 10,
+};
+
+const floatingButton: CSSProperties = {
+  padding: '5px 9px',
+  fontSize: 11,
+  background: 'var(--rah-bg-panel)',
+  border: '1px solid var(--rah-border-strong)',
+  borderRadius: 6,
+  color: 'var(--rah-text-muted)',
+  cursor: 'pointer',
+};
+
+const hoverPreviewCard: CSSProperties = {
+  position: 'absolute',
+  top: 14,
+  left: 14,
+  width: 260,
+  padding: 12,
+  borderRadius: 10,
+  background: 'var(--rah-bg-modal)',
+  border: '1px solid var(--rah-border)',
+  boxShadow: 'var(--rah-shadow-floating)',
+  zIndex: 12,
+};
+
+const hoverPreviewTitle: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: 'var(--rah-text-base)',
+  marginBottom: 6,
+};
+
+const hoverPreviewBody: CSSProperties = {
+  fontSize: 12,
+  color: 'var(--rah-text-muted)',
+  lineHeight: 1.45,
+  display: '-webkit-box',
+  WebkitLineClamp: 3,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+};
+
+const hoverPreviewMeta: CSSProperties = {
+  fontSize: 12,
+  color: 'var(--rah-text-muted)',
 };

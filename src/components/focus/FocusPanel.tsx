@@ -19,6 +19,7 @@ interface FocusPanelProps {
   activeTab: number | null;
   onTabSelect: (nodeId: number) => void;
   onNodeClick?: (nodeId: number) => void;
+  onOpenInMap?: () => void;
   onTabClose: (nodeId: number) => void;
   refreshTrigger?: number;
   onTextSelect?: (nodeId: number, nodeTitle: string, text: string) => void;
@@ -32,6 +33,7 @@ export default function FocusPanel({
   activeTab,
   onTabSelect,
   onNodeClick,
+  onOpenInMap,
   onTabClose,
   refreshTrigger,
   onTextSelect,
@@ -1107,6 +1109,16 @@ export default function FocusPanel({
                       <Check size={11} strokeWidth={3} />
                     </span>
                   ) : null}
+                  {onOpenInMap ? (
+                    <button
+                      type="button"
+                      className="node-map-button"
+                      onClick={onOpenInMap}
+                      title="Open this node in the map"
+                    >
+                      Map
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="delete-node-button node-delete-button"
@@ -1517,6 +1529,25 @@ export default function FocusPanel({
           background: color-mix(in srgb, var(--rah-accent-green) 14%, transparent);
           border: 1px solid color-mix(in srgb, var(--rah-accent-green) 32%, transparent);
           flex-shrink: 0;
+        }
+
+        .node-map-button {
+          border: 1px solid var(--rah-border-strong);
+          background: var(--rah-bg-panel);
+          color: var(--rah-text-muted);
+          border-radius: 999px;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          padding: 3px 8px;
+          cursor: pointer;
+          flex-shrink: 0;
+        }
+
+        .node-map-button:hover {
+          border-color: var(--rah-accent-green-soft-strong);
+          color: var(--rah-accent-green);
+          background: var(--rah-accent-green-soft);
         }
 
         .node-delete-button {

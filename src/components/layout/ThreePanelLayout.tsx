@@ -239,6 +239,8 @@ export default function ThreePanelLayout() {
     () => SLOT_ORDER.slice(0, Math.max(1, Math.min(3, visiblePaneCount))),
     [visiblePaneCount]
   );
+  const [focusedNodeId, setFocusedNodeId] = useState<number | null>(null);
+  const [isMapFocusSuppressed, setIsMapFocusSuppressed] = useState(false);
 
   const isPanelExpanded = useCallback((slot: SlotId) => {
     return visibleSlots.includes(slot);
@@ -307,23 +309,47 @@ export default function ThreePanelLayout() {
     }
   }, [activePane, visibleSlots]);
 
-  const activeNodeId = useMemo(() => {
-    const activeSlotState = slotStates[activePane];
-    const activeTab = activeSlotState ? getActiveTab(activeSlotState) : undefined;
-    if (activeTab?.type === 'node' && activeTab.nodeId != null) {
-      return activeTab.nodeId;
-    }
+  const deriveFallbackFocusedNode = useCallback((): number | null => {
+    const orderedSlots: SlotId[] = [activePane, ...(['A', 'B', 'C'] as SlotId[]).filter((slot) => slot !== activePane)];
 
-    for (const slot of ['A', 'B', 'C'] as SlotId[]) {
+    for (const slot of orderedSlots) {
       const state = slotStates[slot];
-      const tab = state ? getActiveTab(state) : undefined;
-      if (tab?.type === 'node' && tab.nodeId != null) {
-        return tab.nodeId;
+      const activeTab = state ? getActiveTab(state) : undefined;
+      if (activeTab?.type === 'node' && activeTab.nodeId != null) {
+        return activeTab.nodeId;
       }
     }
 
-    return allOpenNodeIds[0] ?? null;
-  }, [activePane, allOpenNodeIds, slotStates]);
+    for (const slot of orderedSlots) {
+      const fallbackTab = slotStates[slot]?.tabs.find((tab) => tab.type === 'node' && tab.nodeId != null);
+      if (fallbackTab?.nodeId != null) {
+        return fallbackTab.nodeId;
+      }
+    }
+
+    return null;
+  }, [activePane, slotStates]);
+
+  useEffect(() => {
+    if (focusedNodeId == null) {
+      return;
+    }
+
+    if (!allOpenNodeIds.includes(focusedNodeId)) {
+      setFocusedNodeId(deriveFallbackFocusedNode());
+    }
+  }, [allOpenNodeIds, deriveFallbackFocusedNode, focusedNodeId]);
+
+  useEffect(() => {
+    if (focusedNodeId != null || isMapFocusSuppressed) {
+      return;
+    }
+
+    const initialFocusedNode = deriveFallbackFocusedNode();
+    if (initialFocusedNode != null) {
+      setFocusedNodeId(initialFocusedNode);
+    }
+  }, [deriveFallbackFocusedNode, focusedNodeId, isMapFocusSuppressed]);
 
   const handleRefreshAll = useCallback(() => {
     setNodesPanelRefresh((prev) => prev + 1);
@@ -458,6 +484,8 @@ export default function ThreePanelLayout() {
 
     setPanelExpanded(slot, true);
     setActivePane(slot);
+    setIsMapFocusSuppressed(false);
+    setFocusedNodeId(nodeId);
   }, [getSlotSetter, setPanelExpanded]);
 
   const closeTabInSlot = useCallback((slot: SlotId, tabId: string) => {
@@ -487,6 +515,8 @@ export default function ThreePanelLayout() {
       const state = getSlotState(slot);
       if (state?.tabs.some((tab) => tab.id === existingTabId)) {
         getSlotSetter(slot)({ tabs: state.tabs, activeTabId: existingTabId });
+        setIsMapFocusSuppressed(false);
+        setFocusedNodeId(nodeId);
         setActivePane(slot);
         return;
       }
@@ -505,6 +535,8 @@ export default function ThreePanelLayout() {
 
     if (preferredNodeTarget) {
       addNodeTabToSlot(preferredNodeTarget, nodeId);
+      setIsMapFocusSuppressed(false);
+      setFocusedNodeId(nodeId);
       setActivePane(preferredNodeTarget);
       return;
     }
@@ -519,6 +551,8 @@ export default function ThreePanelLayout() {
       ?? 'A';
 
     addNodeTabToSlot(target, nodeId);
+    setIsMapFocusSuppressed(false);
+    setFocusedNodeId(nodeId);
   }, [activePane, addNodeTabToSlot, getSlotSetter, getSlotState, visibleSlots]);
 
   const openPaneSingleton = useCallback((paneType: Exclude<PaneType, 'node'>, preferredSlot?: SlotId) => {
@@ -552,8 +586,18 @@ export default function ThreePanelLayout() {
     const state = getSlotState(slot);
     if (!state) return;
     getSlotSetter(slot)({ tabs: state.tabs, activeTabId: tabId });
+    const tab = state.tabs.find((current) => current.id === tabId);
+    if (tab?.type === 'node' && tab.nodeId != null) {
+      setIsMapFocusSuppressed(false);
+      setFocusedNodeId(tab.nodeId);
+    }
     setActivePane(slot);
   }, [getSlotSetter, getSlotState]);
+
+  const clearMapFocus = useCallback(() => {
+    setIsMapFocusSuppressed(true);
+    setFocusedNodeId(null);
+  }, []);
 
   const handleNodeDeleted = useCallback((nodeId: number) => {
     const tabId = createTabId('node', nodeId);
@@ -785,7 +829,8 @@ export default function ThreePanelLayout() {
           <MapPane
             {...commonProps}
             onNodeClick={(nodeId) => openNodeFromSlot(nodeId, slot)}
-            activeTabId={activeNodeId}
+            focusedNodeId={focusedNodeId}
+            onClearFocus={clearMapFocus}
           />
         );
       case 'views':

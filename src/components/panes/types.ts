@@ -90,7 +90,8 @@ export interface ChatPanelProps {
 // MapPane specific props
 export interface MapPaneProps extends BasePaneProps {
   onNodeClick?: (nodeId: number) => void;
-  activeTabId?: number | null;
+  focusedNodeId?: number | null;
+  onClearFocus?: () => void;
 }
 
 // ViewsPane specific props
