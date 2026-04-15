@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { GripVertical, X } from 'lucide-react';
 import { PaneHeaderProps } from './types';
 
 export default function PaneHeader({
@@ -50,9 +50,6 @@ export default function PaneHeader({
 
   return (
     <div
-      draggable={!!slot && !!onSwapPanes}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -61,14 +58,38 @@ export default function PaneHeader({
         alignItems: 'center',
         gap: '10px',
         background: isDragOver ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
-        cursor: slot && onSwapPanes ? 'grab' : 'default',
         opacity: isDragging ? 0.5 : 1,
         borderRadius: isDragOver ? '6px' : '0',
-        transition: 'background 0.15s ease',
+        transition: 'background 0.15s ease, opacity 0.15s ease',
         padding: '8px 12px',
         minHeight: '48px',
       }}
     >
+      {slot && onSwapPanes ? (
+        <div
+          draggable
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          title="Drag to swap panes"
+          style={{
+            width: '28px',
+            height: '28px',
+            borderRadius: '8px',
+            border: '1px solid var(--rah-border-strong)',
+            background: isDragging ? 'var(--rah-bg-hover)' : 'var(--rah-bg-elevated)',
+            color: isDragging ? 'var(--rah-text-soft)' : 'var(--rah-text-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'grab',
+            flexShrink: 0,
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <GripVertical size={14} />
+        </div>
+      ) : null}
+
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
         {tabBar ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
@@ -96,6 +117,7 @@ export default function PaneHeader({
         ) : null}
       </div>
 
+      {/* Close button (when onCollapse is provided) */}
       {onCollapse && (
         <button
           onClick={onCollapse}

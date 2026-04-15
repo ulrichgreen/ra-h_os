@@ -27,6 +27,8 @@ interface LeftToolbarProps {
   onSearchClick: () => void;
   onAddStuffClick: () => void;
   onRefreshClick: () => void;
+  visiblePaneCount: 1 | 2 | 3;
+  onVisiblePaneCountChange: (count: 1 | 2 | 3) => void;
   onSettingsClick: () => void;
   onPaneTypeClick: (paneType: PaneType) => void;
   isExpanded: boolean;
@@ -111,6 +113,8 @@ export default function LeftToolbar({
   onSearchClick,
   onAddStuffClick,
   onRefreshClick,
+  visiblePaneCount,
+  onVisiblePaneCountChange,
   onSettingsClick,
   onPaneTypeClick,
   isExpanded,
@@ -124,6 +128,122 @@ export default function LeftToolbar({
   onContextQuickSelect,
 }: LeftToolbarProps) {
   const [contextsExpanded, setContextsExpanded] = useState(false);
+  const [paneSelectorOpen, setPaneSelectorOpen] = useState(false);
+
+  const renderPaneGlyph = (count: 1 | 2 | 3, active: boolean) => (
+    <span style={{ display: 'flex', width: '100%', gap: '3px', height: '12px', maxWidth: '24px' }}>
+      {Array.from({ length: count }).map((_, index) => (
+        <span
+          key={`${count}-${index}`}
+          style={{
+            flex: 1,
+            borderRadius: '3px',
+            background: active ? 'var(--rah-text-active)' : 'var(--rah-text-muted)',
+            opacity: active ? 1 : 0.7,
+          }}
+        />
+      ))}
+    </span>
+  );
+
+  const renderPaneCountButton = (count: 1 | 2 | 3) => {
+    const active = visiblePaneCount === count;
+
+    return (
+      <button
+        key={count}
+        type="button"
+        onClick={() => {
+          onVisiblePaneCountChange(count);
+          setPaneSelectorOpen(false);
+        }}
+        title={`${count} pane${count === 1 ? '' : 's'}`}
+        style={{
+          width: isExpanded ? '100%' : '36px',
+          height: '30px',
+          borderRadius: '8px',
+          border: `1px solid ${active ? 'var(--rah-border-stronger)' : 'var(--rah-border)'}`,
+          background: active ? 'var(--rah-bg-hover)' : 'transparent',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: isExpanded ? 'space-between' : 'center',
+          cursor: 'pointer',
+          padding: isExpanded ? '0 8px' : '0 6px',
+          transition: 'all 0.15s ease',
+          alignSelf: isExpanded ? 'stretch' : 'center',
+        }}
+      >
+        {renderPaneGlyph(count, active)}
+        {isExpanded ? (
+          <span style={{ fontSize: '11px', color: active ? 'var(--rah-text-active)' : 'var(--rah-text-muted)' }}>
+            {count} pane{count === 1 ? '' : 's'}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
+
+  const renderPaneSelector = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <button
+        type="button"
+        onClick={() => setPaneSelectorOpen((prev) => !prev)}
+        title={isExpanded ? undefined : 'Pane layout'}
+        style={{
+          width: '100%',
+          height: '36px',
+          borderRadius: '10px',
+          border: '1px solid var(--rah-border-stronger)',
+          background: paneSelectorOpen ? 'var(--rah-bg-hover)' : 'var(--rah-bg-elevated)',
+          color: 'var(--rah-text-active)',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: isExpanded ? 'space-between' : 'center',
+          padding: isExpanded ? '0 10px' : '0',
+          transition: 'all 0.15s ease',
+          boxShadow: paneSelectorOpen ? '0 0 0 1px color-mix(in srgb, var(--rah-text-active) 8%, transparent)' : 'none',
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+          <span
+            style={{
+              width: '18px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--rah-text-active)',
+              opacity: 0.98,
+              flexShrink: 0,
+            }}
+          >
+            {renderPaneGlyph(visiblePaneCount, true)}
+          </span>
+          {isExpanded ? (
+            <span style={{ fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              Layout
+            </span>
+          ) : null}
+        </span>
+        {isExpanded ? (
+          paneSelectorOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />
+        ) : null}
+      </button>
+
+      {paneSelectorOpen ? (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px',
+            alignItems: 'center',
+          }}
+        >
+          {([1, 2, 3] as const).map((count) => renderPaneCountButton(count))}
+        </div>
+      ) : null}
+    </div>
+  );
 
   const renderActionButtons = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -157,7 +277,11 @@ export default function LeftToolbar({
             onClick={onToggleExpanded}
           />
 
+          {renderPaneSelector()}
+
+          <div style={{ marginTop: '8px' }}>
           {renderActionButtons()}
+          </div>
         </div>
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 0 }}>

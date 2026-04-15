@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Chip from '../common/Chip';
 import { getNodeIcon } from '@/utils/nodeIcons';
@@ -25,6 +25,10 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const existingFiltersKey = useMemo(
+    () => JSON.stringify(existingFilters),
+    [existingFilters]
+  );
 
   // Store the element that triggered the modal for return focus
   useEffect(() => {
@@ -94,18 +98,24 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
 
   // Generate suggestions based on search query
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSuggestions((prev) => (prev.length === 0 ? prev : []));
-      setSelectedIndex(0);
+    if (!isOpen) {
       return;
     }
+
+    if (!searchQuery.trim()) {
+      setSuggestions((current) => (current.length === 0 ? current : []));
+      setSelectedIndex((current) => (current === 0 ? current : 0));
+      return;
+    }
+
+    let cancelled = false;
 
     const fetchSuggestions = async () => {
       try {
         const response = await fetch(`/api/nodes/search?q=${encodeURIComponent(searchQuery)}&limit=20`);
         const result = await response.json();
         
-        if (result.success) {
+        if (!cancelled && result.success) {
           const nodeSuggestions: NodeSuggestion[] = result.data.map((node: any) => ({
             id: node.id,
             title: node.title,
@@ -116,14 +126,19 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           setSelectedIndex(0);
         }
       } catch (error) {
-        console.error('Error fetching suggestions:', error);
-        setSuggestions([]);
+        if (!cancelled) {
+          console.error('Error fetching suggestions:', error);
+          setSuggestions([]);
+        }
       }
     };
 
     const timeoutId = setTimeout(fetchSuggestions, 200);
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [isOpen, searchQuery, existingFiltersKey]);
 
   // Handle keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -204,9 +219,11 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
                 onMouseEnter={() => setSelectedIndex(index)}
                 className={`search-result-item ${index === selectedIndex ? 'selected' : ''}`}
               >
-                <span className="result-id">{suggestion.id}</span>
                 <span className="result-icon">{getNodeIcon(suggestion as any, 14)}</span>
-                <span className="result-title">{suggestion.title}</span>
+                <span className="result-main">
+                  <span className="result-title">{suggestion.title}</span>
+                  <span className="result-id">{suggestion.id}</span>
+                </span>
                 {index === selectedIndex && (
                   <span className="result-hint">↵</span>
                 )}
@@ -334,19 +351,11 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
         .search-result-item.selected {
           background: var(--rah-bg-active);
         }
-        
+
         .result-id {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 10px;
-          font-weight: 600;
+          font-size: 11px;
           font-family: 'SF Mono', 'Fira Code', monospace;
-          color: var(--rah-text-inverse);
-          background: var(--rah-accent-green);
-          padding: 4px 8px;
-          border-radius: 6px;
-          min-width: 28px;
+          color: var(--rah-text-muted);
           flex-shrink: 0;
         }
         
@@ -356,8 +365,15 @@ export default function SearchModal({ isOpen, onClose, onNodeSelect, existingFil
           flex-shrink: 0;
         }
 
-        .result-title {
+        .result-main {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          min-width: 0;
           flex: 1;
+        }
+
+        .result-title {
           color: var(--rah-text-base);
           font-size: 15px;
           overflow: hidden;

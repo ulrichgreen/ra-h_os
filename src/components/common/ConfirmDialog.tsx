@@ -30,8 +30,8 @@ export default function ConfirmDialog({
         left: 0,
         right: 0,
         bottom: 0,
-        background: 'rgba(0, 0, 0, 0.85)',
-        backdropFilter: 'blur(4px)',
+        background: 'var(--rah-backdrop)',
+        backdropFilter: 'blur(6px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -42,19 +42,19 @@ export default function ConfirmDialog({
       <div
         className="modal-content"
         style={{
-          width: '380px',
+          width: '420px',
           maxWidth: '100%',
-          background: '#121212',
-          border: '1px solid #2a2a2a',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)'
+          background: 'var(--rah-bg-modal)',
+          border: '1px solid var(--rah-border-strong)',
+          borderRadius: '12px',
+          padding: '20px',
+          boxShadow: 'var(--rah-shadow-modal)'
         }}
       >
         <div style={{ 
           fontSize: '15px', 
           fontWeight: 600, 
-          color: '#e5e5e5', 
+          color: 'var(--rah-text-base)', 
           marginBottom: '12px',
           letterSpacing: '0.01em',
           fontFamily: "'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -63,7 +63,7 @@ export default function ConfirmDialog({
         </div>
         <div style={{ 
           fontSize: '13px', 
-          color: '#a8a8a8', 
+          color: 'var(--rah-text-soft)', 
           marginBottom: '24px', 
           lineHeight: 1.6,
           wordWrap: 'break-word',
@@ -77,25 +77,23 @@ export default function ConfirmDialog({
             style={{
               padding: '10px 16px',
               borderRadius: '8px',
-              border: '1px solid #1f1f1f',
+              border: '1px solid var(--rah-border)',
               background: 'transparent',
-              color: '#94a3b8',
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              fontSize: '11px',
-              fontWeight: 500,
+              color: 'var(--rah-text-soft)',
+              fontSize: '12px',
+              fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.2s'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#0f0f0f';
-              e.currentTarget.style.borderColor = '#2a2a2a';
-              e.currentTarget.style.color = '#cbd5f5';
+              e.currentTarget.style.background = 'var(--rah-bg-base)';
+              e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
+              e.currentTarget.style.color = 'var(--rah-text-secondary)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderColor = '#1f1f1f';
-              e.currentTarget.style.color = '#94a3b8';
+              e.currentTarget.style.borderColor = 'var(--rah-border)';
+              e.currentTarget.style.color = 'var(--rah-text-soft)';
             }}
           >
             {cancelLabel}
@@ -108,10 +106,8 @@ export default function ConfirmDialog({
               border: '1px solid #dc2626',
               background: '#7f1d1d',
               color: '#fca5a5',
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              fontSize: '11px',
-              fontWeight: 500,
+              fontSize: '12px',
+              fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.2s'
             }}

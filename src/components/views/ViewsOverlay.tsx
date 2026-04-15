@@ -502,31 +502,6 @@ export default function ViewsOverlay({
                 <GripVertical size={14} />
               </div>
             )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                void toggleNodeProcessed(node);
-              }}
-              title="Toggle processed"
-              aria-label="Toggle processed"
-              style={{
-                width: '20px',
-                height: '20px',
-                borderRadius: '999px',
-                border: `1px solid ${isProcessed ? 'rgba(74, 222, 128, 0.55)' : 'var(--rah-border-strong)'}`,
-                background: isProcessed ? 'rgba(74, 222, 128, 0.16)' : 'var(--rah-bg-panel)',
-                color: isProcessed ? '#86efac' : 'transparent',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <Check size={11} strokeWidth={2.8} />
-            </button>
             <div style={{
               display: 'flex',
               flexDirection: 'column',
@@ -535,6 +510,32 @@ export default function ViewsOverlay({
               flex: 1,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                <div style={{
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '6px',
+                  background: 'var(--rah-bg-panel)',
+                  border: '1px solid var(--rah-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  {nodeIcon}
+                </div>
+                <span style={{
+                  fontSize: '10px',
+                  color: 'var(--rah-text-muted)',
+                  background: 'var(--rah-bg-panel)',
+                  border: '1px solid var(--rah-border)',
+                  padding: '2px 6px',
+                  borderRadius: '999px',
+                  fontFamily: 'monospace',
+                  flexShrink: 0,
+                  lineHeight: 1.2,
+                }}>
+                  #{node.id}
+                </span>
                 <span style={{
                   fontSize: '13px',
                   fontWeight: 600,
@@ -547,25 +548,6 @@ export default function ViewsOverlay({
                 }}>
                   {node.title || 'Untitled'}
                 </span>
-                {node.context?.name ? (
-                  <span
-                    style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      letterSpacing: '0.04em',
-                      textTransform: 'uppercase',
-                      color: 'var(--rah-accent-green)',
-                      background: 'color-mix(in srgb, var(--rah-accent-green) 12%, var(--rah-bg-panel))',
-                      border: '1px solid color-mix(in srgb, var(--rah-accent-green) 32%, var(--rah-border))',
-                      padding: '3px 7px',
-                      borderRadius: '999px',
-                      lineHeight: 1.2,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {node.context.name}
-                  </span>
-                ) : null}
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
@@ -589,50 +571,32 @@ export default function ViewsOverlay({
                   overflow: 'hidden',
                   flexShrink: 0,
                 }}>
-                  <div style={{
-                    width: '20px',
-                    height: '20px',
-                    borderRadius: '6px',
-                    background: 'var(--rah-bg-panel)',
-                    border: '1px solid var(--rah-border)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}>
-                    {nodeIcon}
-                  </div>
-                  <span style={{
-                    fontSize: '10px',
-                    color: 'var(--rah-text-muted)',
-                    background: 'var(--rah-bg-panel)',
-                    padding: '2px 6px',
-                    borderRadius: '999px',
-                    fontFamily: 'monospace',
-                    flexShrink: 0,
-                    lineHeight: 1.2,
-                  }}>
-                    #{node.id}
-                  </span>
-                  {node.edge_count != null && node.edge_count > 0 ? (
-                    <span style={{
-                      minWidth: '18px',
-                      height: '18px',
-                      padding: '0 5px',
-                      borderRadius: '999px',
-                      background: 'var(--rah-accent-green-soft)',
-                      border: '1px solid var(--rah-accent-green-soft-strong)',
-                      color: 'var(--rah-accent-green)',
-                      display: 'flex',
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void toggleNodeProcessed(node);
+                    }}
+                    title="Toggle processed"
+                    aria-label="Toggle processed"
+                    style={{
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '6px',
+                      border: `1px solid ${isProcessed ? 'rgba(74, 222, 128, 0.7)' : 'var(--rah-border-strong)'}`,
+                      background: isProcessed ? 'rgba(74, 222, 128, 0.16)' : 'var(--rah-bg-panel)',
+                      color: isProcessed ? '#86efac' : 'var(--rah-text-muted)',
+                      display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       flexShrink: 0,
-                      fontSize: '11px',
-                      fontWeight: 600,
-                    }}>
-                      {node.edge_count}
-                    </span>
-                  ) : null}
+                      cursor: 'pointer',
+                      boxShadow: isProcessed ? 'inset 0 0 0 1px rgba(74, 222, 128, 0.12)' : 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Check size={11} strokeWidth={2.8} />
+                  </button>
                 </div>
               </div>
             </div>

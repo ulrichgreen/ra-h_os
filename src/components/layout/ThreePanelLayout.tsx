@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { PanelLeftOpen, GripVertical, X } from 'lucide-react';
 import SettingsModal, { SettingsTab } from '../settings/SettingsModal';
 import SearchModal from '../nodes/SearchModal';
 import type { ContextSummary, Node } from '@/types/database';
@@ -29,6 +28,7 @@ export interface PendingNode {
 const SLOT_A_KEY = 'ui.slotA.v7';
 const SLOT_B_KEY = 'ui.slotB.v7';
 const SLOT_C_KEY = 'ui.slotC.v7';
+const VISIBLE_PANE_COUNT_KEY = 'ui.visiblePaneCount.v1';
 const PANEL_A_EXPANDED_KEY = 'ui.panelA.expanded.v1';
 const PANEL_B_EXPANDED_KEY = 'ui.panelB.expanded.v1';
 const PANEL_C_EXPANDED_KEY = 'ui.panelC.expanded.v1';
@@ -46,6 +46,7 @@ const DEFAULT_SLOT_A: SlotState = {
 };
 
 const EMPTY_SEARCH_FILTERS: Array<{ type: 'context' | 'title' | 'tag'; value: string }> = [];
+const SLOT_ORDER: SlotId[] = ['A', 'B', 'C'];
 
 function createSingletonState(type: Exclude<PaneType, 'node'>): SlotState {
   return {
@@ -144,6 +145,7 @@ export default function ThreePanelLayout() {
   const [slotA, setSlotA] = usePersistentState<SlotState | null>(SLOT_A_KEY, DEFAULT_SLOT_A);
   const [slotB, setSlotB] = usePersistentState<SlotState | null>(SLOT_B_KEY, null);
   const [slotC, setSlotC] = usePersistentState<SlotState | null>(SLOT_C_KEY, null);
+  const [visiblePaneCount, setVisiblePaneCount] = usePersistentState<number>(VISIBLE_PANE_COUNT_KEY, 2);
 
   const [panelAExpanded, setPanelAExpanded] = usePersistentState<boolean>(PANEL_A_EXPANDED_KEY, true);
   const [panelBExpanded, setPanelBExpanded] = usePersistentState<boolean>(PANEL_B_EXPANDED_KEY, false);
@@ -233,30 +235,23 @@ export default function ThreePanelLayout() {
     }
   }, [setSlotA, setSlotB, setSlotC]);
 
+  const visibleSlots = useMemo(
+    () => SLOT_ORDER.slice(0, Math.max(1, Math.min(3, visiblePaneCount))),
+    [visiblePaneCount]
+  );
+
   const isPanelExpanded = useCallback((slot: SlotId) => {
-    switch (slot) {
-      case 'A':
-        return panelAExpanded;
-      case 'B':
-        return panelBExpanded;
-      case 'C':
-        return panelCExpanded;
-    }
-  }, [panelAExpanded, panelBExpanded, panelCExpanded]);
+    return visibleSlots.includes(slot);
+  }, [visibleSlots]);
 
   const setPanelExpanded = useCallback((slot: SlotId, expanded: boolean) => {
-    switch (slot) {
-      case 'A':
-        setPanelAExpanded(expanded);
-        break;
-      case 'B':
-        setPanelBExpanded(expanded);
-        break;
-      case 'C':
-        setPanelCExpanded(expanded);
-        break;
+    if (!expanded) {
+      return;
     }
-  }, [setPanelAExpanded, setPanelBExpanded, setPanelCExpanded]);
+
+    const requiredCount = SLOT_ORDER.indexOf(slot) + 1;
+    setVisiblePaneCount((current) => Math.max(current, requiredCount));
+  }, [setVisiblePaneCount]);
 
   const getPanelWeight = useCallback((slot: SlotId) => {
     switch (slot) {
@@ -299,6 +294,18 @@ export default function ThreePanelLayout() {
   useEffect(() => {
     openNodeIdsRef.current = allOpenNodeIds;
   }, [allOpenNodeIds]);
+
+  useEffect(() => {
+    setPanelAExpanded(true);
+    setPanelBExpanded(visiblePaneCount >= 2);
+    setPanelCExpanded(visiblePaneCount >= 3);
+  }, [setPanelAExpanded, setPanelBExpanded, setPanelCExpanded, visiblePaneCount]);
+
+  useEffect(() => {
+    if (!visibleSlots.includes(activePane)) {
+      setActivePane(visibleSlots[0] ?? 'A');
+    }
+  }, [activePane, visibleSlots]);
 
   const activeNodeId = useMemo(() => {
     const activeSlotState = slotStates[activePane];
@@ -427,14 +434,7 @@ export default function ThreePanelLayout() {
     const tabId = createTabId(paneType);
     const setter = getSlotSetter(slot);
 
-    setter((prev) => {
-      const current = sanitizeSlotState(prev);
-      const existingTabs = current?.tabs ?? [];
-      const tabs = existingTabs.some((tab) => tab.id === tabId)
-        ? existingTabs
-        : [...existingTabs.filter((tab) => tab.type !== paneType), { id: tabId, type: paneType }];
-      return { tabs, activeTabId: tabId };
-    });
+    setter({ tabs: [{ id: tabId, type: paneType }], activeTabId: tabId });
 
     setPanelExpanded(slot, true);
     setActivePane(slot);
@@ -446,12 +446,12 @@ export default function ThreePanelLayout() {
 
     setter((prev) => {
       const current = sanitizeSlotState(prev);
-      const tabs = current?.tabs ?? [];
-      if (tabs.some((tab) => tab.id === nodeTabId)) {
-        return { tabs, activeTabId: nodeTabId };
+      const nodeTabs = (current?.tabs ?? []).filter((tab) => tab.type === 'node');
+      if (nodeTabs.some((tab) => tab.id === nodeTabId)) {
+        return { tabs: nodeTabs, activeTabId: nodeTabId };
       }
       return {
-        tabs: [...tabs, { id: nodeTabId, type: 'node', nodeId }],
+        tabs: [...nodeTabs, { id: nodeTabId, type: 'node', nodeId }],
         activeTabId: nodeTabId,
       };
     });
@@ -481,32 +481,48 @@ export default function ThreePanelLayout() {
   }, [getSlotSetter]);
 
   const openNodeFromSlot = useCallback((nodeId: number, fromSlot?: SlotId) => {
-    for (const slot of ['A', 'B', 'C'] as SlotId[]) {
+    const existingTabId = createTabId('node', nodeId);
+
+    for (const slot of visibleSlots) {
       const state = getSlotState(slot);
-      if (state?.tabs.some((tab) => tab.type === 'node' && tab.nodeId === nodeId)) {
-        getSlotSetter(slot)({ tabs: state.tabs, activeTabId: createTabId('node', nodeId) });
+      if (state?.tabs.some((tab) => tab.id === existingTabId)) {
+        getSlotSetter(slot)({ tabs: state.tabs, activeTabId: existingTabId });
         setActivePane(slot);
         return;
       }
     }
 
-    const preferredOrder: SlotId[] = fromSlot === 'A'
-      ? ['B', 'C', 'A']
-      : fromSlot === 'B'
-        ? ['C', 'A', 'B']
-        : fromSlot === 'C'
-          ? ['B', 'A', 'C']
-          : ['B', 'C', 'A'];
+    const visibleNodeSlots = visibleSlots.filter((slot) => {
+      const state = getSlotState(slot);
+      return state?.tabs.some((tab) => tab.type === 'node');
+    });
 
-    const target = preferredOrder.find((slot) => !getSlotState(slot))
-      ?? preferredOrder.find((slot) => !isPanelExpanded(slot))
-      ?? preferredOrder[0];
+    const preferredNodeTarget = fromSlot && visibleNodeSlots.includes(fromSlot)
+      ? fromSlot
+      : visibleNodeSlots.includes(activePane)
+        ? activePane
+        : visibleNodeSlots[0];
+
+    if (preferredNodeTarget) {
+      addNodeTabToSlot(preferredNodeTarget, nodeId);
+      setActivePane(preferredNodeTarget);
+      return;
+    }
+
+    const emptyTarget = visibleSlots.find((slot) => {
+      const state = getSlotState(slot);
+      return !state || state.tabs.length === 0;
+    });
+    const target = emptyTarget
+      ?? (visibleSlots.includes(activePane) ? activePane : null)
+      ?? visibleSlots[visibleSlots.length - 1]
+      ?? 'A';
 
     addNodeTabToSlot(target, nodeId);
-  }, [addNodeTabToSlot, getSlotSetter, getSlotState, isPanelExpanded]);
+  }, [activePane, addNodeTabToSlot, getSlotSetter, getSlotState, visibleSlots]);
 
   const openPaneSingleton = useCallback((paneType: Exclude<PaneType, 'node'>, preferredSlot?: SlotId) => {
-    for (const slot of ['A', 'B', 'C'] as SlotId[]) {
+    for (const slot of visibleSlots) {
       const state = getSlotState(slot);
       if (state?.tabs.some((tab) => tab.type === paneType)) {
         getSlotSetter(slot)({ tabs: state.tabs, activeTabId: createTabId(paneType) });
@@ -516,17 +532,21 @@ export default function ThreePanelLayout() {
       }
     }
 
-    const orderedSlots: SlotId[] = preferredSlot
-      ? [preferredSlot, ...(['A', 'B', 'C'] as SlotId[]).filter((slot) => slot !== preferredSlot)]
-      : ['A', 'B', 'C'];
-
-    const target = orderedSlots.find((slot) => !getSlotState(slot))
-      ?? orderedSlots.find((slot) => !isPanelExpanded(slot))
-      ?? activePane;
+    const orderedSlots = preferredSlot && visibleSlots.includes(preferredSlot)
+      ? [preferredSlot, ...visibleSlots.filter((slot) => slot !== preferredSlot)]
+      : visibleSlots;
+    const emptyTarget = orderedSlots.find((slot) => {
+      const state = getSlotState(slot);
+      return !state || state.tabs.length === 0;
+    });
+    const target = emptyTarget
+      ?? (orderedSlots.includes(activePane) ? activePane : null)
+      ?? orderedSlots[orderedSlots.length - 1]
+      ?? 'A';
 
     upsertSingletonTab(target, paneType);
     return target;
-  }, [activePane, getSlotSetter, getSlotState, isPanelExpanded, setPanelExpanded, upsertSingletonTab]);
+  }, [activePane, getSlotSetter, getSlotState, setPanelExpanded, upsertSingletonTab, visibleSlots]);
 
   const handleTabSelect = useCallback((slot: SlotId, tabId: string) => {
     const state = getSlotState(slot);
@@ -632,12 +652,11 @@ export default function ThreePanelLayout() {
 
   const closeActiveSlot = useCallback((slot: SlotId) => {
     getSlotSetter(slot)(null);
-    setPanelExpanded(slot, false);
     if (activePane === slot) {
-      const fallback = (['A', 'B', 'C'] as SlotId[]).find((candidate) => candidate !== slot && isPanelExpanded(candidate)) ?? 'A';
+      const fallback = visibleSlots.find((candidate) => candidate !== slot) ?? 'A';
       setActivePane(fallback);
     }
-  }, [activePane, getSlotSetter, isPanelExpanded, setPanelExpanded]);
+  }, [activePane, getSlotSetter, visibleSlots]);
 
   const handleSwapPanes = useCallback((source: SlotId, target: SlotId) => {
     if (source === target) return;
@@ -781,11 +800,9 @@ export default function ThreePanelLayout() {
             externalContextFilterId={browseContextFilters[slot]}
             onContextFilterSelect={(contextId) => {
               setBrowseContextFilters((prev) => ({ ...prev, [slot]: contextId }));
-              setActiveContextId(contextId);
             }}
             onClearExternalContextFilter={() => {
               setBrowseContextFilters((prev) => ({ ...prev, [slot]: null }));
-              setActiveContextId(null);
             }}
           />
         );
@@ -819,89 +836,25 @@ export default function ThreePanelLayout() {
 
   const getSlotContainerStyle = (slot: SlotId) => {
     const state = slotStates[slot];
-    const expanded = isPanelExpanded(slot);
     const weight = getPanelWeight(slot);
 
     return {
-      flex: expanded ? `${weight} ${weight} 0` : '0 0 44px',
-      minWidth: expanded ? 0 : '44px',
+      flex: `${weight} ${weight} 0`,
+      minWidth: 0,
       overflow: 'hidden',
       display: 'flex',
       flexDirection: 'column' as const,
-      background: expanded ? 'var(--rah-bg-surface)' : 'var(--rah-bg-subtle)',
+      background: 'var(--rah-bg-surface)',
       borderRadius: '10px',
-      border: expanded && state ? '1px solid transparent' : '1px dashed var(--rah-border)',
+      border: state ? '1px solid transparent' : '1px dashed var(--rah-border)',
       outline: dragOverSlot === slot ? '2px dashed var(--rah-accent-green)' : 'none',
       outlineOffset: '-4px',
       transition: 'outline 0.15s ease, background 0.15s ease',
     };
   };
 
-  const renderCollapsedPanel = (slot: SlotId) => (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 0' }}>
-      <button
-        type="button"
-        onClick={() => {
-          setPanelExpanded(slot, true);
-          setActivePane(slot);
-        }}
-        title="Expand panel"
-        style={{
-          width: '28px',
-          height: '28px',
-          borderRadius: '8px',
-          border: '1px solid var(--rah-border-strong)',
-          background: 'var(--rah-bg-elevated)',
-          color: 'var(--rah-text-secondary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-        }}
-      >
-        <PanelLeftOpen size={14} />
-      </button>
-    </div>
-  );
-
   const renderExpandedEmptyPanel = (slot: SlotId) => (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div
-        draggable
-        onDragStart={(event) => {
-          event.dataTransfer.setData('application/x-rah-pane', slot);
-          event.dataTransfer.effectAllowed = 'move';
-        }}
-        style={{
-          minHeight: '48px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '8px 12px',
-          cursor: 'grab',
-        }}
-      >
-        <GripVertical size={14} color="var(--rah-text-muted)" />
-        <button
-          type="button"
-          onClick={() => closeActiveSlot(slot)}
-          title="Collapse panel"
-          style={{
-            width: '28px',
-            height: '28px',
-            borderRadius: '8px',
-            border: '1px solid var(--rah-border-strong)',
-            background: 'var(--rah-bg-elevated)',
-            color: 'var(--rah-text-secondary)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-          }}
-        >
-          <X size={14} />
-        </button>
-      </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rah-text-muted)', fontSize: '13px' }}>
         Select a pane from the nav
       </div>
@@ -923,6 +876,8 @@ export default function ThreePanelLayout() {
         onSearchClick={() => setShowSearchModal(true)}
         onAddStuffClick={() => setShowAddStuff(true)}
         onRefreshClick={handleRefreshAll}
+        visiblePaneCount={visiblePaneCount as 1 | 2 | 3}
+        onVisiblePaneCountChange={setVisiblePaneCount as (count: 1 | 2 | 3) => void}
         onSettingsClick={() => {
           setSettingsInitialTab(undefined);
           setShowSettings(true);
@@ -947,9 +902,8 @@ export default function ThreePanelLayout() {
       />
 
       <div ref={containerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: '8px', gap: '4px' }}>
-        {(['A', 'B', 'C'] as SlotId[]).flatMap((slot, index, allSlots) => {
+        {visibleSlots.flatMap((slot, index) => {
           const state = slotStates[slot];
-          const expanded = isPanelExpanded(slot);
           const items: React.ReactNode[] = [];
 
           items.push(
@@ -964,12 +918,12 @@ export default function ThreePanelLayout() {
               onDrop={(event) => handleSlotDrop(event, slot)}
               style={getSlotContainerStyle(slot)}
             >
-              {!expanded ? renderCollapsedPanel(slot) : state ? renderSlot(slot, state) : renderExpandedEmptyPanel(slot)}
+              {state ? renderSlot(slot, state) : renderExpandedEmptyPanel(slot)}
             </div>
           );
 
-          const nextSlot = allSlots[index + 1];
-          if (nextSlot && expanded && isPanelExpanded(nextSlot)) {
+          const nextSlot = visibleSlots[index + 1];
+          if (nextSlot) {
             items.push(
               <SplitHandle
                 key={`split-${slot}-${nextSlot}`}

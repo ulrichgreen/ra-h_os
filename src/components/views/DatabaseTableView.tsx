@@ -2,20 +2,23 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronLeft, ChevronRight, X, ArrowUpDown, Search, ExternalLink } from 'lucide-react';
+import { ChevronDown, X, ArrowUpDown, Search, Check } from 'lucide-react';
 import type { Node } from '@/types/database';
 import { formatRelativeDate } from '@/utils/formatDate';
+import { getNodeProcessedState } from '@/services/nodes/metadata';
 
 type SortOrder = 'updated' | 'edges' | 'created' | 'event_date';
 
 const SORT_LABELS: Record<SortOrder, string> = {
   updated: 'Recently Updated',
-  edges: 'Most Edges',
+  edges: 'Most Connections',
   created: 'Creation Date',
   event_date: 'Event Date',
 };
 
-const PAGE_SIZE = 50;
+const FETCH_LIMIT = 2000;
+const ROW_HEIGHT = 52;
+const OVERSCAN = 10;
 
 interface DatabaseTableViewProps {
   onNodeClick: (nodeId: number) => void;
@@ -23,62 +26,63 @@ interface DatabaseTableViewProps {
   toolbarHost?: HTMLDivElement | null;
 }
 
-function formatDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return '\u2014';
-  try {
-    return dateStr.slice(0, 10);
-  } catch {
-    return '\u2014';
+function getSourceSignal(node: Node): string {
+  if (node.link) {
+    return node.link.replace(/^https?:\/\/(www\.)?/, '');
   }
+
+  if (node.source) {
+    return node.source.replace(/\s+/g, ' ').trim().slice(0, 120);
+  }
+
+  return '—';
 }
 
 export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolbarHost }: DatabaseTableViewProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
   const [sortOrder, setSortOrder] = useState<SortOrder>('updated');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearch, setActiveSearch] = useState('');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(480);
 
   const sortDropdownRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  // Fetch nodes
   const fetchNodes = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String((page - 1) * PAGE_SIZE),
+        limit: String(FETCH_LIMIT),
+        offset: '0',
         sortBy: sortOrder,
       });
-      if (activeSearch) params.set('search', activeSearch);
+      if (activeSearch) {
+        params.set('search', activeSearch);
+      }
 
       const res = await fetch(`/api/nodes?${params}`);
       const data = await res.json();
       if (data.success) {
         setNodes(data.data || []);
-        setTotal(data.total ?? data.count ?? 0);
+      } else {
+        setNodes([]);
       }
-    } catch (e) {
-      console.error('Error fetching nodes:', e);
+    } catch (error) {
+      console.error('Error fetching nodes:', error);
+      setNodes([]);
     } finally {
       setLoading(false);
     }
-  }, [page, sortOrder, activeSearch]);
+  }, [activeSearch, sortOrder]);
 
   useEffect(() => {
     fetchNodes();
   }, [fetchNodes, refreshToken]);
 
-  // Reset to page 1 when filters/sort/search change
-  useEffect(() => {
-    setPage(1);
-  }, [sortOrder, activeSearch]);
-
-  // Close dropdowns on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (showSortDropdown && sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as HTMLElement)) {
@@ -89,382 +93,282 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showSortDropdown]);
 
+  useEffect(() => {
+    const node = listRef.current;
+    if (!node) return;
+
+    const updateHeight = () => {
+      setViewportHeight(node.clientHeight);
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setActiveSearch(searchQuery);
   };
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const startItem = (page - 1) * PAGE_SIZE + 1;
-  const endItem = Math.min(page * PAGE_SIZE, total);
+  const totalRows = nodes.length;
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+  const endIndex = Math.min(totalRows, startIndex + visibleCount);
+  const visibleRows = nodes.slice(startIndex, endIndex);
+  const topSpacer = startIndex * ROW_HEIGHT;
+  const bottomSpacer = Math.max(0, (totalRows - endIndex) * ROW_HEIGHT);
 
   const toolbar = (
-    <div style={{
-      width: '100%',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      minWidth: 0,
-    }}>
+    <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
       <form onSubmit={handleSearchSubmit} style={{ display: 'flex', alignItems: 'center', gap: '0' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            background: 'var(--rah-bg-base)',
-            border: '1px solid var(--rah-border)',
-            borderRadius: '6px',
-            padding: '0 8px',
-            gap: '6px',
-          }}>
-            <Search size={12} style={{ color: 'var(--rah-text-muted)', flexShrink: 0 }} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search nodes..."
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--rah-text-active)',
-                fontSize: '12px',
-                padding: '5px 0',
-                outline: 'none',
-                width: '140px',
-              }}
-            />
-            {activeSearch && (
-              <button
-                type="button"
-                onClick={() => { setSearchQuery(''); setActiveSearch(''); }}
-                style={{ background: 'transparent', border: 'none', color: 'var(--rah-text-muted)', cursor: 'pointer', padding: 0, display: 'flex' }}
-              >
-                <X size={11} />
-              </button>
-            )}
-          </div>
-        </form>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Sort dropdown */}
-        <div style={{ position: 'relative' }} ref={sortDropdownRef}>
-          <button
-            onClick={() => setShowSortDropdown(!showSortDropdown)}
+        <div style={{ display: 'flex', alignItems: 'center', background: 'var(--rah-bg-base)', border: '1px solid var(--rah-border)', borderRadius: '8px', padding: '0 8px', gap: '6px' }}>
+          <Search size={12} style={{ color: 'var(--rah-text-muted)', flexShrink: 0 }} />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search nodes..."
             style={{
-              display: 'flex', alignItems: 'center', gap: '4px',
-              padding: '4px 7px', background: 'transparent',
-              border: '1px solid var(--rah-border)', borderRadius: '5px',
-              color: 'var(--rah-text-soft)', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--rah-text-active)',
+              fontSize: '12px',
+              padding: '7px 0',
+              outline: 'none',
+              width: '160px',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <ArrowUpDown size={11} />
-            {SORT_LABELS[sortOrder]}
-            <ChevronDown size={10} />
-          </button>
-
-          {showSortDropdown && (
-            <div style={{
-              position: 'absolute', top: '100%', right: 0, marginTop: '4px',
-              background: 'var(--rah-bg-panel)', border: '1px solid var(--rah-border)', borderRadius: '10px',
-              padding: '4px', minWidth: '160px', zIndex: 1000,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-            }}>
-              {(Object.keys(SORT_LABELS) as SortOrder[]).map(key => (
-                <button
-                  key={key}
-                  onClick={() => { setSortOrder(key); setShowSortDropdown(false); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '8px',
-                    width: '100%', padding: '7px 10px',
-                    background: sortOrder === key ? 'rgba(255,255,255,0.04)' : 'transparent',
-                    border: 'none', borderRadius: '5px',
-                    color: sortOrder === key ? 'var(--rah-text-active)' : 'var(--rah-text-soft)',
-                    fontSize: '12px', cursor: 'pointer', textAlign: 'left',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = sortOrder === key ? 'rgba(255,255,255,0.04)' : 'transparent'; }}
-                >
-                  {sortOrder === key && <span style={{ color: 'var(--rah-accent-green)', fontSize: '12px' }}>✓</span>}
-                  {SORT_LABELS[key]}
-                </button>
-              ))}
-            </div>
+          />
+          {activeSearch && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setActiveSearch('');
+              }}
+              style={{ background: 'transparent', border: 'none', color: 'var(--rah-text-muted)', cursor: 'pointer', padding: 0, display: 'flex' }}
+            >
+              <X size={11} />
+            </button>
           )}
         </div>
+      </form>
 
-        {/* Pagination */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '6px',
-          fontSize: '11px', color: 'var(--rah-text-muted)', whiteSpace: 'nowrap',
-        }}>
-          <span>{total > 0 ? `${startItem}-${endItem} of ${total}` : '0 nodes'}</span>
-          <button
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page <= 1}
+      <div style={{ flex: 1 }} />
+
+      <div style={{ position: 'relative' }} ref={sortDropdownRef}>
+        <button
+          onClick={() => setShowSortDropdown((prev) => !prev)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '6px 8px',
+            background: 'transparent',
+            border: '1px solid var(--rah-border)',
+            borderRadius: '8px',
+            color: 'var(--rah-text-soft)',
+            fontSize: '11px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <ArrowUpDown size={11} />
+          {SORT_LABELS[sortOrder]}
+          <ChevronDown size={10} />
+        </button>
+
+        {showSortDropdown && (
+          <div
             style={{
-              background: 'transparent', border: '1px solid var(--rah-border)', borderRadius: '4px',
-              color: page <= 1 ? 'var(--rah-text-muted)' : 'var(--rah-text-soft)', cursor: page <= 1 ? 'default' : 'pointer',
-              padding: '2px 4px', display: 'flex',
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: '6px',
+              background: 'var(--rah-bg-panel)',
+              border: '1px solid var(--rah-border)',
+              borderRadius: '12px',
+              padding: '4px',
+              minWidth: '180px',
+              zIndex: 1000,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
             }}
           >
-            <ChevronLeft size={14} />
-          </button>
-          <button
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            style={{
-              background: 'transparent', border: '1px solid var(--rah-border)', borderRadius: '4px',
-              color: page >= totalPages ? 'var(--rah-text-muted)' : 'var(--rah-text-soft)',
-              cursor: page >= totalPages ? 'default' : 'pointer',
-              padding: '2px 4px', display: 'flex',
-            }}
-          >
-            <ChevronRight size={14} />
-          </button>
-        </div>
+            {(Object.keys(SORT_LABELS) as SortOrder[]).map((key) => (
+              <button
+                key={key}
+                onClick={() => {
+                  setSortOrder(key);
+                  setShowSortDropdown(false);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  width: '100%',
+                  padding: '8px 10px',
+                  background: sortOrder === key ? 'rgba(255,255,255,0.04)' : 'transparent',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: sortOrder === key ? 'var(--rah-text-active)' : 'var(--rah-text-soft)',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                {sortOrder === key && <span style={{ color: 'var(--rah-accent-green)', fontSize: '12px' }}>✓</span>}
+                {SORT_LABELS[key]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+
+      <div style={{ fontSize: '11px', color: 'var(--rah-text-muted)', whiteSpace: 'nowrap' }}>
+        {loading ? 'Loading…' : `${nodes.length} nodes`}
+      </div>
+    </div>
   );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'transparent' }}>
       {toolbarHost ? createPortal(toolbar, toolbarHost) : (
-        <div style={{
-          padding: '8px 12px',
-          borderBottom: '1px solid var(--rah-border)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-        }}>
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--rah-border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
           {toolbar}
         </div>
       )}
 
-      {/* Table */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        {loading ? (
-          <div style={{ padding: '40px', color: 'var(--rah-text-muted)', textAlign: 'center', fontSize: '13px' }}>Loading...</div>
-        ) : nodes.length === 0 ? (
-          <div style={{ padding: '40px', color: 'var(--rah-text-muted)', textAlign: 'center', fontSize: '13px' }}>
-            {activeSearch ? 'No nodes match your search.' : 'No nodes yet.'}
-          </div>
-        ) : (
-          <table style={{ minWidth: '1600px', width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                <th style={thStyle({ width: '240px' })}>TITLE</th>
-                <th style={thStyle({ width: '55px', textAlign: 'right' })}>ID</th>
-                <th style={thStyle({ width: '200px' })}>DESCRIPTION</th>
-                <th style={thStyle({ width: '160px' })}>SOURCE</th>
-                <th style={thStyle({ width: '180px' })}>LINK</th>
-                <th style={thStyle({ width: '160px' })}>CONTEXT</th>
-                <th style={thStyle({ width: '50px', textAlign: 'right' })}>EDGES</th>
-                <th style={thStyle({ width: '90px' })}>EVENT</th>
-                <th style={thStyle({ width: '85px' })}>UPDATED</th>
-                <th style={thStyle({ width: '85px' })}>CREATED</th>
-                <th style={thStyle({ width: '160px' })}>METADATA</th>
-                <th style={thStyle({ width: '160px' })}>CHUNK</th>
-                <th style={thStyle({ width: '80px' })}>CHUNK STATUS</th>
-                <th style={thStyle({ width: '85px' })}>EMB UPDATED</th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.map((node, i) => {
-                const metaStr = node.metadata
-                  ? (typeof node.metadata === 'string' ? node.metadata : JSON.stringify(node.metadata))
-                  : '';
+      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '40px minmax(240px, 2fr) 72px 140px 64px minmax(220px, 1.3fr) 110px minmax(180px, 1fr)',
+            gap: '12px',
+            alignItems: 'center',
+            minHeight: '38px',
+            borderBottom: '1px solid var(--rah-border)',
+            color: 'var(--rah-text-muted)',
+            fontSize: '10px',
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            padding: '0 8px',
+            flexShrink: 0,
+          }}
+        >
+          <span>✓</span>
+          <span>Title</span>
+          <span>ID</span>
+          <span>Context</span>
+          <span>Edges</span>
+          <span>Description</span>
+          <span>Updated</span>
+          <span>Source</span>
+        </div>
+
+        <div
+          ref={listRef}
+          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+          style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+        >
+          {loading ? (
+            <div style={{ padding: '40px', color: 'var(--rah-text-muted)', textAlign: 'center', fontSize: '13px' }}>Loading...</div>
+          ) : nodes.length === 0 ? (
+            <div style={{ padding: '40px', color: 'var(--rah-text-muted)', textAlign: 'center', fontSize: '13px' }}>
+              {activeSearch ? 'No nodes match your search.' : 'No nodes yet.'}
+            </div>
+          ) : (
+            <div style={{ paddingTop: `${topSpacer}px`, paddingBottom: `${bottomSpacer}px` }}>
+              {visibleRows.map((node) => {
+                const processed = getNodeProcessedState(node.metadata) === 'processed';
+                const sourceSignal = getSourceSignal(node);
+                const description = node.description?.replace(/\s+/g, ' ').trim() || '—';
+
                 return (
-                  <tr
+                  <button
                     key={node.id}
+                    type="button"
                     onClick={() => onNodeClick(node.id)}
                     onMouseEnter={() => setHoveredRow(node.id)}
                     onMouseLeave={() => setHoveredRow(null)}
                     style={{
-                      height: '44px',
+                      width: '100%',
+                      height: `${ROW_HEIGHT}px`,
+                      display: 'grid',
+                      gridTemplateColumns: '40px minmax(240px, 2fr) 72px 140px 64px minmax(220px, 1.3fr) 110px minmax(180px, 1fr)',
+                      gap: '12px',
+                      alignItems: 'center',
+                      border: 'none',
+                      borderBottom: '1px solid var(--rah-border)',
+                      background: hoveredRow === node.id ? 'var(--rah-bg-panel)' : 'transparent',
+                      color: 'inherit',
+                      textAlign: 'left',
+                      padding: '0 8px',
                       cursor: 'pointer',
-                      background: hoveredRow === node.id
-                        ? 'var(--rah-bg-panel)'
-                        : i % 2 === 0 ? 'var(--rah-bg-base)' : 'var(--rah-bg-subtle)',
-                      transition: 'background 0.1s ease',
                     }}
                   >
-                    {/* Title */}
-                    <td style={tdStyle()}>
-                      <div style={truncCell}>
-                        <span style={{ fontSize: '13px', color: 'var(--rah-text-base)', fontWeight: 400 }}>
-                          {node.title || 'Untitled'}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: processed ? 'var(--rah-accent-green)' : 'var(--rah-text-muted)' }}>
+                      {processed ? <Check size={14} strokeWidth={3} /> : null}
+                    </span>
+
+                    <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <span style={{ fontSize: '13px', color: 'var(--rah-text-base)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {node.title || 'Untitled'}
+                      </span>
+                    </span>
+
+                    <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px', color: 'var(--rah-text-muted)' }}>
+                      {node.id}
+                    </span>
+
+                    <span style={{ minWidth: 0 }}>
+                      {node.context?.name ? (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            maxWidth: '100%',
+                            padding: '3px 8px',
+                            borderRadius: '999px',
+                            border: '1px solid var(--rah-border)',
+                            background: 'var(--rah-bg-surface)',
+                            color: 'var(--rah-text-soft)',
+                            fontSize: '11px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {node.context.name}
                         </span>
-                      </div>
-                    </td>
+                      ) : (
+                        <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>—</span>
+                      )}
+                    </span>
 
-                    {/* ID */}
-                    <td style={tdStyle({ textAlign: 'right' })}>
-                      <span style={{
-                        fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
-                        fontSize: '11px', color: 'var(--rah-text-muted)',
-                      }}>
-                        {node.id}
-                      </span>
-                    </td>
+                    <span style={{ fontSize: '12px', color: node.edge_count ? 'var(--rah-text-soft)' : 'var(--rah-text-muted)' }}>
+                      {node.edge_count ?? 0}
+                    </span>
 
-                    {/* Description */}
-                    <td style={tdStyle()}>
-                      <div style={truncCell}>
-                        <span style={{ fontSize: '11px', color: 'var(--rah-text-soft)' }}>
-                          {node.description || '\u2014'}
-                        </span>
-                      </div>
-                    </td>
+                    <span style={{ fontSize: '11px', color: 'var(--rah-text-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {description}
+                    </span>
 
-                    {/* Source */}
-                    <td style={tdStyle()}>
-                      <div style={truncCell}>
-                        <span style={{ fontSize: '11px', color: 'var(--rah-text-soft)' }}>
-                          {node.source ? node.source.slice(0, 120) : '\u2014'}
-                        </span>
-                      </div>
-                    </td>
+                    <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
+                      {formatRelativeDate(node.updated_at)}
+                    </span>
 
-                    {/* Link */}
-                    <td style={tdStyle()}>
-                      <div style={truncCell}>
-                        {node.link ? (
-                          <span style={{ fontSize: '11px', color: '#6a9fd8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <ExternalLink size={10} style={{ flexShrink: 0 }} />
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {node.link.replace(/^https?:\/\/(www\.)?/, '')}
-                            </span>
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>{'\u2014'}</span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Context */}
-                    <td style={tdStyle()}>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', overflow: 'hidden', maxHeight: '36px' }}>
-                        {node.context?.name ? (
-                          <>
-                            <span style={{
-                              fontSize: '9px', padding: '1px 5px',
-                              background: 'var(--rah-accent-green-soft)', border: '1px solid var(--rah-accent-green-soft-strong)',
-                              color: 'var(--rah-accent-green)', borderRadius: '3px',
-                              whiteSpace: 'nowrap',
-                            }}>
-                              {node.context.name}
-                            </span>
-                          </>
-                        ) : (
-                          <span style={{ fontSize: '10px', color: 'var(--rah-text-muted)' }}>{'\u2014'}</span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Edges */}
-                    <td style={tdStyle({ textAlign: 'right' })}>
-                      <span style={{ fontSize: '12px', color: node.edge_count ? 'var(--rah-text-soft)' : 'var(--rah-text-muted)' }}>
-                        {node.edge_count ?? 0}
-                      </span>
-                    </td>
-
-                    {/* Event Date */}
-                    <td style={tdStyle()}>
-                      <span style={{ fontSize: '11px', color: node.event_date ? 'var(--rah-text-soft)' : 'var(--rah-text-muted)' }}>
-                        {formatDate(node.event_date)}
-                      </span>
-                    </td>
-
-                    {/* Updated */}
-                    <td style={tdStyle()}>
-                      <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
-                        {formatRelativeDate(node.updated_at)}
-                      </span>
-                    </td>
-
-                    {/* Created */}
-                    <td style={tdStyle()}>
-                      <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
-                        {formatRelativeDate(node.created_at)}
-                      </span>
-                    </td>
-
-                    {/* Metadata */}
-                    <td style={tdStyle()}>
-                      <div style={truncCell}>
-                        <span style={{ fontSize: '10px', color: 'var(--rah-text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace' }}>
-                          {metaStr || '\u2014'}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Chunk */}
-                    <td style={tdStyle()}>
-                      <div style={truncCell}>
-                        <span style={{ fontSize: '10px', color: 'var(--rah-text-muted)' }}>
-                          {node.source ? node.source.slice(0, 100) : '\u2014'}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Chunk Status */}
-                    <td style={tdStyle()}>
-                      <span style={{
-                        fontSize: '10px',
-                        color: node.chunk_status === 'chunked' ? 'var(--rah-accent-green)' : node.chunk_status === 'error' ? '#e55' : 'var(--rah-text-muted)',
-                      }}>
-                        {node.chunk_status || '\u2014'}
-                      </span>
-                    </td>
-
-                    {/* Embedding Updated */}
-                    <td style={tdStyle()}>
-                      <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>
-                        {node.embedding_updated_at ? formatRelativeDate(node.embedding_updated_at) : '\u2014'}
-                      </span>
-                    </td>
-                  </tr>
+                    <span style={{ fontSize: '11px', color: sourceSignal === '—' ? 'var(--rah-text-muted)' : 'var(--rah-text-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {sourceSignal}
+                    </span>
+                  </button>
                 );
               })}
-            </tbody>
-          </table>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
-
-function thStyle(extra: React.CSSProperties = {}): React.CSSProperties {
-  return {
-    position: 'sticky' as const,
-    top: 0,
-    background: 'var(--rah-bg-base)',
-    padding: '8px 12px',
-    fontSize: '10px',
-    fontWeight: 500,
-    color: 'var(--rah-text-muted)',
-    textAlign: 'left',
-    letterSpacing: '0.05em',
-    whiteSpace: 'nowrap',
-    borderBottom: '1px solid var(--rah-border)',
-    zIndex: 1,
-    ...extra,
-  };
-}
-
-function tdStyle(extra: React.CSSProperties = {}): React.CSSProperties {
-  return {
-    padding: '0 12px',
-    verticalAlign: 'middle',
-    borderBottom: '1px solid var(--rah-border)',
-    overflow: 'hidden',
-    ...extra,
-  };
-}
-
-const truncCell: React.CSSProperties = {
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-};

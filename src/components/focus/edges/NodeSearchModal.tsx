@@ -166,7 +166,7 @@ export default function NodeSearchModal({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
-          maxWidth: '560px',
+          maxWidth: selectedNode ? '480px' : '560px',
           maxHeight: '70vh',
           display: 'flex',
           flexDirection: 'column',
@@ -174,52 +174,53 @@ export default function NodeSearchModal({
           alignSelf: 'flex-start',
         }}
       >
-        {/* Search input */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          background: '#141414',
-          border: '1px solid #2a2a2a',
-          borderRadius: '12px',
-          padding: '14px 18px',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.6)',
-        }}>
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ color: '#555', flexShrink: 0 }}>
-            <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
-          </svg>
-          <input
-            ref={inputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setSelectedNode(null);
-              setExplanation('');
-            }}
-            onKeyDown={(e) => { void handleSearchKeyDown(e); }}
-            placeholder="Search nodes to connect..."
-            style={{
-              flex: 1,
-              background: 'none',
-              border: 'none',
-              outline: 'none',
-              color: '#f0f0f0',
-              fontSize: '15px',
-              fontFamily: 'inherit',
-            }}
-          />
-          <kbd style={{
-            display: 'inline-flex',
+        {!selectedNode && (
+          <div style={{
+            display: 'flex',
             alignItems: 'center',
-            padding: '3px 7px',
-            background: '#222',
-            border: '1px solid #333',
-            borderRadius: '5px',
-            fontSize: '11px',
-            color: '#666',
-          }}>esc</kbd>
-        </div>
+            gap: '12px',
+            background: '#141414',
+            border: '1px solid #2a2a2a',
+            borderRadius: '12px',
+            padding: '14px 18px',
+            boxShadow: '0 24px 48px -12px rgba(0,0,0,0.6)',
+          }}>
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ color: '#555', flexShrink: 0 }}>
+              <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
+            </svg>
+            <input
+              ref={inputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setSelectedNode(null);
+                setExplanation('');
+              }}
+              onKeyDown={(e) => { void handleSearchKeyDown(e); }}
+              placeholder="Search nodes to connect..."
+              style={{
+                flex: 1,
+                background: 'none',
+                border: 'none',
+                outline: 'none',
+                color: '#f0f0f0',
+                fontSize: '15px',
+                fontFamily: 'inherit',
+              }}
+            />
+            <kbd style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '3px 7px',
+              background: '#222',
+              border: '1px solid #333',
+              borderRadius: '5px',
+              fontSize: '11px',
+              color: '#666',
+            }}>esc</kbd>
+          </div>
+        )}
 
         {/* Results */}
         {!selectedNode && suggestions.length > 0 && (
@@ -285,8 +286,8 @@ export default function NodeSearchModal({
               marginBottom: '14px',
             }}>
               <div>
-                <div style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '5px' }}>
-                  connecting to
+                <div style={{ color: '#777', fontSize: '12px', marginBottom: '5px' }}>
+                  Connecting to
                 </div>
                 <div style={{ color: '#e0e0e0', fontSize: '14px' }}>{selectedNode.title}</div>
               </div>

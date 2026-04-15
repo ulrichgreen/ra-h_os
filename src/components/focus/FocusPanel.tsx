@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { Trash2, Loader, Database, RefreshCw, Pencil, X, Save, Plus, Link2, Tag, Share2, AlignLeft, ChevronDown, ChevronRight, Check, Folder } from 'lucide-react';
+import { Trash2, Loader, Database, RefreshCw, Pencil, X, Save, Plus, Link2, Tag, Share2, AlignLeft, ChevronDown, ChevronRight, Check } from 'lucide-react';
 import { parseAndRenderContent } from '@/components/helpers/NodeLabelRenderer';
 import { Node, NodeConnection } from '@/types/database';
 import { getNodeIcon } from '@/utils/nodeIcons';
@@ -51,7 +51,7 @@ export default function FocusPanel({
   const [edgesExpanded, setEdgesExpanded] = useState<Record<number, boolean>>({});
   const [edgeSearchOpen, setEdgeSearchOpen] = useState(false);
   const [hoveredConnectionId, setHoveredConnectionId] = useState<number | null>(null);
-  const [propsCollapsed, setPropsCollapsed] = useState(false);
+  const [metadataCollapsed, setMetadataCollapsed] = useState(true);
 
   const [titleEditMode, setTitleEditMode] = useState(false);
   const [titleEditValue, setTitleEditValue] = useState('');
@@ -168,6 +168,7 @@ export default function FocusPanel({
     setEdgeEditingId(null);
     setEdgeEditingValue('');
     setHoveredSection(null);
+    setMetadataCollapsed(true);
   }, [activeTab]);
 
   const fetchNodeData = async (id: number) => {
@@ -242,23 +243,6 @@ export default function FocusPanel({
     throw new Error('Missing updated node in response');
   };
 
-  const toggleProcessedState = async () => {
-    if (activeTab === null || !currentNode) return;
-
-    const nextState = currentProcessedState === 'processed' ? 'not_processed' : 'processed';
-
-    try {
-      await updateNode(activeTab, {
-        metadata: {
-          state: nextState,
-        },
-      });
-    } catch (error) {
-      console.error('Error updating processed state:', error);
-      window.alert('Failed to update processed state. Please try again.');
-    }
-  };
-
   const renderMetadataSection = () => {
     const metadataEntries = Object.entries(currentNodeMetadata).filter(([, value]) => value !== undefined);
     const rawJson = metadataEntries.length > 0 ? JSON.stringify(currentNodeMetadata, null, 2) : '';
@@ -266,11 +250,19 @@ export default function FocusPanel({
     return (
       <section style={{ ...S.section, minWidth: 0, width: '100%', overflow: 'hidden' }}>
         <div style={S.sectionHeader}>
-          <span style={S.sectionLabel}>Metadata</span>
+          <button
+            type="button"
+            className="metadata-toggle"
+            onClick={() => setMetadataCollapsed((current) => !current)}
+            aria-expanded={!metadataCollapsed}
+          >
+            {metadataCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            <span style={S.sectionLabel}>Metadata</span>
+          </button>
           <div style={S.sectionRule} />
         </div>
 
-        {metadataEntries.length === 0 ? (
+        {metadataCollapsed ? null : metadataEntries.length === 0 ? (
           <div style={{ color: 'var(--rah-text-muted)', fontSize: '12px', fontStyle: 'italic' }}>
             No metadata stored for this node.
           </div>
@@ -1062,52 +1054,34 @@ export default function FocusPanel({
         ) : !currentNode ? (
           <div className="empty-state">Node not found.</div>
         ) : (
-          <div className={`document-view ${currentProcessedState === 'processed' ? 'document-view-processed' : ''}`}>
+          <div className="document-view">
 
             {/* ── Title ── */}
             <div className="title-row">
               <div className="title-stack">
-                {titleEditMode ? (
-                  <input
-                    ref={titleInputRef}
-                    type="text"
-                    value={titleEditValue}
-                    onChange={(e) => setTitleEditValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); void saveTitle(); }
-                      if (e.key === 'Escape') { e.preventDefault(); skipTitleBlurRef.current = true; setTitleEditMode(false); setTitleEditValue(''); }
-                    }}
-                    onBlur={() => {
-                      if (skipTitleBlurRef.current) { skipTitleBlurRef.current = false; return; }
-                      void saveTitle();
-                    }}
-                    disabled={titleSaving}
-                    className="title-input"
-                    placeholder="Enter title..."
-                  />
-                ) : (
-                  <button type="button" className="title-button" onClick={startTitleEdit}>
-                    {currentNode.title || 'Untitled'}
-                  </button>
-                )}
-
-                <div className="node-status-row">
-                  <button
-                    type="button"
-                    onClick={() => void toggleProcessedState()}
-                    className={`processed-control ${currentProcessedState === 'processed' ? 'is-processed' : ''}`}
-                    title="Toggle processed state"
-                  >
-                    <span className={`processed-control-box ${currentProcessedState === 'processed' ? 'is-processed' : ''}`}>
-                      <Check size={12} strokeWidth={2.8} />
-                    </span>
-                    <span className="processed-control-copy">
-                      <span className="processed-control-label">processed</span>
-                    </span>
-                  </button>
-
-                  {currentProcessedState === 'processed' && (
-                    <span className="processed-indicator-badge">processed</span>
+                <div className="title-heading-row">
+                  {titleEditMode ? (
+                    <input
+                      ref={titleInputRef}
+                      type="text"
+                      value={titleEditValue}
+                      onChange={(e) => setTitleEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); void saveTitle(); }
+                        if (e.key === 'Escape') { e.preventDefault(); skipTitleBlurRef.current = true; setTitleEditMode(false); setTitleEditValue(''); }
+                      }}
+                      onBlur={() => {
+                        if (skipTitleBlurRef.current) { skipTitleBlurRef.current = false; return; }
+                        void saveTitle();
+                      }}
+                      disabled={titleSaving}
+                      className="title-input"
+                      placeholder="Enter title..."
+                    />
+                  ) : (
+                    <button type="button" className="title-button" onClick={startTitleEdit}>
+                      {currentNode.title || 'Untitled'}
+                    </button>
                   )}
                 </div>
               </div>
@@ -1116,27 +1090,26 @@ export default function FocusPanel({
             {/* ── Properties block ── */}
             <div className="props-block">
 
-              {/* Node identity row — with collapse toggle + delete */}
-              <div className="prop-row node-row">
-                <div className="prop-label">node</div>
-                <div className="prop-value">
-                  <span className="node-meta-value">
-                    <span className="node-meta-icon">{getNodeIcon(currentNode, 12)}</span>
-                    <span className="node-id-pill">#{currentNode.id}</span>
-                  </span>
+              {/* Status indicator row (only when relevant) */}
+              {renderStatusIndicator() !== null && (
+                <div className="prop-row">
+                  <div className="prop-label">embed</div>
+                  <div className="prop-value">{renderStatusIndicator()}</div>
                 </div>
-                <div className="node-row-actions">
+              )}
+
+              <div className="prop-row">
+                <div className="prop-label">node</div>
+                <div className="prop-value node-row-value">
+                  <span className="title-node-label">#{currentNode.id}</span>
+                  {currentProcessedState === 'processed' ? (
+                    <span className="node-processed-indicator" title="Processed">
+                      <Check size={11} strokeWidth={3} />
+                    </span>
+                  ) : null}
                   <button
                     type="button"
-                    className="props-toggle"
-                    onClick={() => setPropsCollapsed(c => !c)}
-                    title={propsCollapsed ? 'Expand properties' : 'Collapse properties'}
-                  >
-                    {propsCollapsed ? <ChevronRight size={18} strokeWidth={2.5} /> : <ChevronDown size={18} strokeWidth={2.5} />}
-                  </button>
-                  <button
-                    type="button"
-                    className="delete-node-button"
+                    className="delete-node-button node-delete-button"
                     onClick={() => setPendingDeleteNodeId(activeTab)}
                     disabled={deletingNode === activeTab}
                     title="Delete node"
@@ -1145,16 +1118,6 @@ export default function FocusPanel({
                   </button>
                 </div>
               </div>
-
-              {!propsCollapsed && (<>
-
-              {/* Status indicator row (only when relevant) */}
-              {renderStatusIndicator() !== null && (
-                <div className="prop-row">
-                  <div className="prop-label">embed</div>
-                  <div className="prop-value">{renderStatusIndicator()}</div>
-                </div>
-              )}
 
               {/* Link */}
               <div className="prop-row">
@@ -1178,30 +1141,41 @@ export default function FocusPanel({
                       className="prop-input"
                       placeholder="https://..."
                     />
-                  ) : currentNode.link ? (
-                    normalizedCurrentLink ? (
-                      <a
-                        href={normalizedCurrentLink}
-                        className="prop-link"
-                        onClick={(e) => {
-                          if (e.metaKey || e.ctrlKey) { e.preventDefault(); startLinkEdit(); return; }
-                          if (!shouldOpenExternally(normalizedCurrentLink)) return;
-                          e.preventDefault();
-                          void openExternalUrl(normalizedCurrentLink).catch(() => window.alert(`Unable to open ${currentNode.link}`));
-                        }}
-                        title={`${normalizedCurrentLink} (Cmd+Click to edit)`}
-                      >
-                        {currentNode.link}
-                      </a>
-                    ) : (
-                      <button type="button" className="prop-empty-btn" onClick={startLinkEdit} title="Invalid link. Click to edit.">
-                        {currentNode.link}
-                      </button>
-                    )
                   ) : (
-                    <button type="button" className="prop-empty-btn" onClick={startLinkEdit}>
-                      Empty
-                    </button>
+                    <div className="link-inline-row">
+                      {currentNode.link ? (
+                        normalizedCurrentLink ? (
+                          <a
+                            href={normalizedCurrentLink}
+                            className="prop-link"
+                            onClick={(e) => {
+                              if (!shouldOpenExternally(normalizedCurrentLink)) return;
+                              e.preventDefault();
+                              void openExternalUrl(normalizedCurrentLink).catch(() => window.alert(`Unable to open ${currentNode.link}`));
+                            }}
+                            title={normalizedCurrentLink}
+                          >
+                            {currentNode.link}
+                          </a>
+                        ) : (
+                          <button type="button" className="prop-empty-btn" onClick={startLinkEdit} title="Invalid link. Click to edit.">
+                            {currentNode.link}
+                          </button>
+                        )
+                      ) : (
+                        <button type="button" className="prop-empty-btn" onClick={startLinkEdit}>
+                          Empty
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="context-inline-button"
+                        onClick={startLinkEdit}
+                        title={currentNode.link ? 'Edit link' : 'Add link'}
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1210,25 +1184,23 @@ export default function FocusPanel({
                 <div className="prop-label">context</div>
                 <div className="prop-value context-prop-value">
                   <div className="context-select-shell" ref={contextMenuRef}>
-                    <button
-                      type="button"
-                      className="context-select-trigger"
-                      disabled={contextSaving}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setContextMenuOpen((prev) => !prev);
-                      }}
-                    >
-                      <span className="context-select-current">
-                        <span className="context-select-badge">
-                          <Folder size={13} />
-                        </span>
-                        <span className={currentNode.context ? 'context-select-name' : 'context-select-empty'}>
-                          {currentNode.context?.name || 'No context'}
-                        </span>
+                    <div className="context-inline-row">
+                      <span className={currentNode.context ? 'context-select-name' : 'context-select-empty'}>
+                        {currentNode.context?.name || 'No context'}
                       </span>
-                      <ChevronDown size={13} className={`context-select-chevron ${contextMenuOpen ? 'open' : ''}`} />
-                    </button>
+                      <button
+                        type="button"
+                        className="context-inline-button"
+                        disabled={contextSaving}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setContextMenuOpen((prev) => !prev);
+                        }}
+                        title={currentNode.context ? 'Change context' : 'Add context'}
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </div>
 
                     {contextMenuOpen ? (
                       <div className="context-select-menu">
@@ -1315,9 +1287,12 @@ export default function FocusPanel({
                           {currentEdgesExpanded ? '↑ Show less' : `+ ${currentEdges.length - 3} more`}
                         </button>
                       )}
-                      <button type="button" className="conn-add-btn" onClick={() => setEdgeSearchOpen(true)}>
-                        <Plus size={11} /> Add connection
-                      </button>
+                      <div className="conn-add-inline">
+                        <span className="conn-add-label">Add connection</span>
+                        <button type="button" className="context-inline-button" onClick={() => setEdgeSearchOpen(true)} title="Add connection">
+                          <Plus size={12} />
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1376,8 +1351,6 @@ export default function FocusPanel({
                   )}
                 </div>
               </div>
-
-              </>)}
 
               {/* Drag handle / ID (hidden, for drag-to-chat) */}
               <span
@@ -1445,21 +1418,6 @@ export default function FocusPanel({
           margin: 0 auto;
         }
 
-        .document-view-processed {
-          position: relative;
-        }
-
-        .document-view-processed::before {
-          content: '';
-          position: absolute;
-          top: 4px;
-          left: -14px;
-          bottom: 4px;
-          width: 2px;
-          border-radius: 999px;
-          background: linear-gradient(180deg, rgba(74, 222, 128, 0.85), rgba(74, 222, 128, 0.15));
-        }
-
         .empty-state {
           color: var(--rah-text-muted);
           font-size: 13px;
@@ -1469,53 +1427,33 @@ export default function FocusPanel({
 
         /* ── Title row ── */
         .title-row {
-          display: flex;
-          align-items: flex-start;
-          gap: 8px;
+          display: block;
           margin-bottom: 18px;
         }
 
         .title-stack {
-          display: flex;
-          flex: 1;
+          display: block;
           min-width: 0;
-          flex-direction: column;
-          gap: 12px;
         }
 
-        .node-status-row {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-
-        .node-meta-value {
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-        }
-
-        .node-meta-icon {
-          display: flex;
-          align-items: center;
-          color: var(--rah-text-muted);
-        }
-
-        .node-id-pill {
-          font-size: 10px;
+        .title-node-label {
+          font-size: 11px;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
           color: var(--rah-text-muted);
-          background: var(--rah-bg-surface);
-          border: 1px solid var(--rah-border);
-          border-radius: 4px;
-          padding: 1px 5px;
-          line-height: 1.4;
+          line-height: 1.2;
+          letter-spacing: 0.04em;
+          display: inline;
+          vertical-align: baseline;
+        }
+
+        .title-heading-row {
+          min-width: 0;
+          display: block;
+          line-height: 1.35;
         }
 
         .title-button,
         .title-input {
-          flex: 1;
           min-width: 0;
           background: transparent;
           border: none;
@@ -1525,6 +1463,7 @@ export default function FocusPanel({
         }
 
         .title-button {
+          display: inline;
           padding: 0;
           font-size: 22px;
           font-weight: 700;
@@ -1536,96 +1475,14 @@ export default function FocusPanel({
         }
 
         .title-input {
+          display: inline-block;
+          width: calc(100% - 34px);
           font-size: 22px;
           font-weight: 700;
           line-height: 1.25;
           letter-spacing: -0.01em;
           padding: 0;
           outline: none;
-        }
-
-        .processed-control {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          background: rgba(255, 255, 255, 0.02);
-          border: 1px solid var(--rah-border);
-          border-radius: 999px;
-          padding: 7px 10px;
-          cursor: pointer;
-          color: var(--rah-text-base);
-          transition: border-color 140ms ease, background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
-          min-width: 0;
-          font-family: inherit;
-        }
-
-        .processed-control:hover {
-          border-color: var(--rah-border-strong);
-          background: rgba(255, 255, 255, 0.04);
-          transform: translateY(-1px);
-          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
-        }
-
-        .processed-control.is-processed {
-          border-color: rgba(74, 222, 128, 0.26);
-          background: rgba(74, 222, 128, 0.07);
-        }
-
-        .processed-control-box {
-          width: 20px;
-          height: 20px;
-          border-radius: 999px;
-          border: 1px solid var(--rah-border-strong);
-          background: var(--rah-bg-surface);
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          color: transparent;
-          flex-shrink: 0;
-          transition: all 140ms ease;
-        }
-
-        .processed-control-box.is-processed {
-          border-color: rgba(74, 222, 128, 0.65);
-          background: rgba(74, 222, 128, 0.18);
-          color: #86efac;
-          box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.15);
-        }
-
-        .processed-control-copy {
-          display: inline-flex;
-          min-width: 0;
-          text-align: left;
-        }
-
-        .processed-control-label {
-          font-size: 11px;
-          font-weight: 600;
-          color: var(--rah-text-active);
-          line-height: 1.2;
-          text-transform: lowercase;
-        }
-
-        .processed-indicator-badge {
-          display: inline-flex;
-          align-items: center;
-          padding: 4px 9px;
-          border-radius: 999px;
-          background: rgba(74, 222, 128, 0.10);
-          border: 1px solid rgba(74, 222, 128, 0.22);
-          color: #86efac;
-          font-size: 10px;
-          font-weight: 600;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-        }
-
-        .node-row-actions {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          flex-shrink: 0;
-          padding-right: 4px;
         }
 
         .delete-node-button {
@@ -1641,6 +1498,31 @@ export default function FocusPanel({
           flex-shrink: 0;
           border-radius: 5px;
           transition: color 120ms ease, background 120ms ease, transform 120ms ease;
+        }
+
+        .node-row-value {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .node-processed-indicator {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          border-radius: 999px;
+          color: var(--rah-accent-green);
+          background: color-mix(in srgb, var(--rah-accent-green) 14%, transparent);
+          border: 1px solid color-mix(in srgb, var(--rah-accent-green) 32%, transparent);
+          flex-shrink: 0;
+        }
+
+        .node-delete-button {
+          width: 20px;
+          height: 20px;
+          border-radius: 4px;
         }
 
         .delete-node-button:hover:enabled {
@@ -1686,27 +1568,6 @@ export default function FocusPanel({
           overflow: visible;
         }
 
-        .props-toggle {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 30px;
-          height: 30px;
-          background: transparent;
-          border: none;
-          border-radius: 5px;
-          color: var(--rah-text-soft);
-          font-size: 14px;
-          cursor: pointer;
-          transition: color 120ms ease, background 120ms ease, transform 120ms ease;
-        }
-
-        .props-toggle:hover {
-          background: var(--rah-bg-hover);
-          color: var(--rah-text-active);
-          transform: scale(1.05);
-        }
-
         /* Link */
         .prop-link {
           color: var(--rah-text-soft);
@@ -1722,6 +1583,14 @@ export default function FocusPanel({
         }
 
         .prop-link:hover { color: #3b82f6; }
+
+        .link-inline-row {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          max-width: 100%;
+        }
 
         .prop-input {
           width: 100%;
@@ -1740,39 +1609,34 @@ export default function FocusPanel({
           z-index: 4;
         }
 
-        .context-select-trigger {
-          width: 100%;
-          min-height: 38px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          padding: 0 10px 0 8px;
-          border: 1px solid var(--rah-border-strong);
-          border-radius: 10px;
-          background: linear-gradient(180deg, var(--rah-bg-surface), var(--rah-bg-panel));
-          color: var(--rah-text-primary);
-          cursor: pointer;
-        }
-
-        .context-select-current {
+        .context-inline-row {
           display: inline-flex;
           align-items: center;
           gap: 8px;
           min-width: 0;
+          max-width: 100%;
         }
 
-        .context-select-badge {
-          width: 22px;
-          height: 22px;
+        .context-inline-button {
+          width: 20px;
+          height: 20px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          border-radius: 7px;
+          padding: 0;
           border: 1px solid var(--rah-border);
-          background: var(--rah-bg-base);
+          border-radius: 5px;
+          background: transparent;
           color: var(--rah-text-muted);
+          cursor: pointer;
           flex-shrink: 0;
+          transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+        }
+
+        .context-inline-button:hover:enabled {
+          color: var(--rah-text-soft);
+          border-color: var(--rah-border-strong);
+          background: var(--rah-bg-hover);
         }
 
         .context-select-name,
@@ -1794,19 +1658,12 @@ export default function FocusPanel({
           font-style: italic;
         }
 
-        .context-select-chevron {
-          color: var(--rah-text-muted);
-          flex-shrink: 0;
-          transition: transform 120ms ease;
-        }
-
-        .context-select-chevron.open {
-          transform: rotate(180deg);
-        }
-
         .context-select-menu {
-          position: relative;
-          margin-top: 6px;
+          position: absolute;
+          top: calc(100% + 8px);
+          left: 0;
+          min-width: 220px;
+          max-width: min(320px, 100vw - 48px);
           display: flex;
           flex-direction: column;
           gap: 2px;
@@ -1970,21 +1827,32 @@ export default function FocusPanel({
 
         .conn-more-btn:hover { color: var(--rah-text-soft); }
 
-        .conn-add-btn {
-          display: flex;
+        .conn-add-inline {
+          display: inline-flex;
           align-items: center;
-          gap: 4px;
-          background: transparent;
-          border: none;
-          color: var(--rah-text-muted);
-          font-size: 11px;
-          font-family: inherit;
-          cursor: pointer;
-          padding: 3px 4px;
-          transition: color 120ms ease;
+          gap: 8px;
         }
 
-        .conn-add-btn:hover { color: var(--rah-accent-green); }
+        .conn-add-label {
+          color: var(--rah-text-muted);
+          font-size: 12px;
+        }
+
+        .metadata-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 0;
+          border: none;
+          background: transparent;
+          color: var(--rah-text-muted);
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .metadata-toggle:hover {
+          color: var(--rah-text-soft);
+        }
 
         .metadata-group {
           display: flex;
