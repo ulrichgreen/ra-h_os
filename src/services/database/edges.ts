@@ -3,10 +3,10 @@ import { Edge, EdgeContext, EdgeData, EdgeCreatedVia, NodeConnection, Node } fro
 import { eventBroadcaster } from '../events';
 import { nodeService } from './nodes';
 import { generateText } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { validateEdgeExplanation } from './quality';
-import { hasValidOpenAiKey } from '../storage/apiKeys';
+import { getPreferredOpenAiKey, hasPreferredOpenAiKey } from '../storage/openaiKeyServer';
 
 const inferredEdgeContextSchema = z.object({
   type: z.enum(['created_by', 'part_of', 'source_of', 'related_to']),
@@ -75,12 +75,13 @@ async function inferEdgeContext(params: {
   ].join('\n');
 
   try {
-    if (!hasValidOpenAiKey()) {
+    if (!hasPreferredOpenAiKey()) {
       return { type: 'related_to', confidence: 0.2, swap_direction: false };
     }
 
+    const provider = createOpenAI({ apiKey: getPreferredOpenAiKey() });
     const { text } = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: provider('gpt-4o-mini'),
       prompt,
       temperature: 0.0,
       maxOutputTokens: 120,
@@ -141,7 +142,7 @@ async function autoInferEdge(params: {
   ].join('\n');
 
   try {
-    if (!hasValidOpenAiKey()) {
+    if (!hasPreferredOpenAiKey()) {
       return {
         explanation: `Connection to ${toNode.title}; exact relationship uncertain.`,
         type: 'related_to',
@@ -150,8 +151,9 @@ async function autoInferEdge(params: {
       };
     }
 
+    const provider = createOpenAI({ apiKey: getPreferredOpenAiKey() });
     const { text } = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: provider('gpt-4o-mini'),
       prompt,
       temperature: 0.0,
       maxOutputTokens: 150,

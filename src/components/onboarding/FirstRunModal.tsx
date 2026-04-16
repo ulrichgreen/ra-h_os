@@ -28,13 +28,13 @@ export default function FirstRunModal() {
           <div style={sectionStyle}>
             <p style={sectionDescStyle}>
               To use AI features (embeddings, auto-descriptions, smart tagging),
-              add your OpenAI API key to <code style={codeStyle}>.env.local</code>:
+              add your OpenAI API key in <strong>Settings → API Keys</strong> or directly in <code style={codeStyle}>.env.local</code>:
             </p>
             <div style={codeBlockStyle}>
               <code>OPENAI_API_KEY=sk-your-key-here</code>
             </div>
             <p style={costNoteStyle}>
-              Then restart the app. Average cost for heavy use is less than $0.10/day.
+              Settings writes to <code style={codeStyle}>.env.local</code> for you. Average cost for heavy use is less than $0.10/day.
             </p>
           </div>
 

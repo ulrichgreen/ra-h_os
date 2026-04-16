@@ -1,4 +1,4 @@
-# RA-OS Documentation
+# RA-H OS Documentation
 
 ```
  ██████╗  █████╗       ██╗  ██╗
@@ -13,28 +13,31 @@
 
 | Doc | Description |
 |-----|-------------|
-| [Overview](./0_overview.md) | What is RA-OS, design philosophy |
-| [Schema](./2_schema.md) | Database schema, node/edge structure |
-| [Tools & Skills](./4_tools-and-guides.md) | MCP tools, skill system |
-| [Logging & Evals](./5_logging-and-evals.md) | Debugging, evaluation framework |
-| [UI](./6_ui.md) | 2-panel layout, components, views |
-| [MCP](./8_mcp.md) | Connect Claude Code and external agents |
-| [About](./9_open-source.md) | What's included, contributing |
+| [Overview](./0_overview.md) | What RA-H OS is and what contract it shares with the main app |
+| [Schema](./2_schema.md) | Current SQLite contract |
+| [Tools & Skills](./4_tools-and-guides.md) | MCP tools and skill system |
+| [Logging & Evals](./5_logging-and-evals.md) | Logs, evals, and debugging surfaces |
+| [UI](./6_ui.md) | Current pane and focus model |
+| [MCP](./8_mcp.md) | Full standalone MCP install and behavior guide |
+| [Open Source](./9_open-source.md) | Scope, support boundary, contributor reality |
+| [Full Local](./10_full-local.md) | Supported local path vs community patterns |
 | [Troubleshooting](./TROUBLESHOOTING.md) | Common issues and fixes |
-| [Development](./development/process.md) | Dev workflow and PR checklist |
-| [Docs Process](./development/docs-process.md) | How to maintain docs |
 
-## Getting Started
+## Start Here
+
+If you just want RA-H OS working:
+1. Read [../README.md](../README.md)
+2. Follow [MCP](./8_mcp.md) if you want external-agent access
+3. Read [Full Local](./10_full-local.md) if you want a more local-first or community setup
+
+## Local App Quick Start
 
 ```bash
-# Clone
 git clone https://github.com/bradwmorris/ra-h_os.git
 cd ra-h_os
-
-# Install
 npm install
-
-# Run
+npm rebuild better-sqlite3
+npm run bootstrap:local
 npm run dev
 ```
 
@@ -57,7 +60,7 @@ Add to your `~/.claude.json`:
 
 If you publish a newer MCP release and need clients to use it immediately, bump the pinned version here and restart the client. Do not assume plain `npx ra-h-mcp-server` always refreshes instantly.
 
-Run RA-H once first so the database exists. The standalone MCP server can write nodes without the app running, but the app owns chunking and embedding from node source. See [MCP docs](./8_mcp.md) for alternatives.
+Run RA-H once first so the database exists. The standalone MCP server can write nodes without the app running, but the app owns chunking and embedding from node source. See [MCP docs](./8_mcp.md) for the full install, verify, memory-file, and troubleshooting path.
 
 ## Questions?
 

@@ -5,13 +5,11 @@
 
 import OpenAI from 'openai';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { getPreferredOpenAiKey } from '@/services/storage/openaiKeyServer';
 import { 
   createDatabaseConnection, 
-  getDbVectorCapability,
-  serializeFloat32Vector,
   batchProcess 
 } from './sqlite-vec';
-import type { VectorCapability } from '@/services/database/sqlite-runtime';
 
 interface Node {
   id: number;
@@ -39,18 +37,16 @@ export class UniversalEmbedder {
   private openaiClient: OpenAI;
   private db: ReturnType<typeof createDatabaseConnection>;
   private textSplitter: RecursiveCharacterTextSplitter;
-  private readonly vectorCapability: VectorCapability;
   private vecChunksInsertSQL: string | null = null;
   
   constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = getPreferredOpenAiKey();
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY environment variable is not set');
     }
     
     this.openaiClient = new OpenAI({ apiKey });
     this.db = createDatabaseConnection();
-    this.vectorCapability = getDbVectorCapability(this.db);
     
     // Configure text splitter (same as old KMS system)
     this.textSplitter = new RecursiveCharacterTextSplitter({
@@ -91,14 +87,12 @@ export class UniversalEmbedder {
     const chunkIds = this.db.prepare('SELECT id FROM chunks WHERE node_id = ?').all(nodeId) as Array<{ id: number }>;
     
     // Delete from vec_chunks first, one by one to ensure they're removed
-    if (this.vectorCapability.available) {
-      for (const chunk of chunkIds) {
-        try {
-          const deleteVecStmt = this.db.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?');
-          deleteVecStmt.run(BigInt(chunk.id));
-        } catch (error) {
-          console.warn(`Could not delete vec_chunk ${chunk.id}:`, error);
-        }
+    for (const chunk of chunkIds) {
+      try {
+        const deleteVecStmt = this.db.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?');
+        deleteVecStmt.run(BigInt(chunk.id));
+      } catch (error) {
+        console.warn(`Could not delete vec_chunk ${chunk.id}:`, error);
       }
     }
     
@@ -137,20 +131,18 @@ export class UniversalEmbedder {
     
     const chunkId = Number(result.lastInsertRowid);
     
-    if (this.vectorCapability.available) {
+    try {
+      const vectorString = `[${embedding.join(',')}]`;
       try {
-        const vectorString = `[${embedding.join(',')}]`;
-        try {
-          const deleteStmt = this.db.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?');
-          deleteStmt.run(BigInt(chunkId));
-        } catch {}
+        const deleteStmt = this.db.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?');
+        deleteStmt.run(BigInt(chunkId));
+      } catch {}
 
-        const sql = 'INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?, ?)';
-        const vecInsertStmt = this.db.prepare(sql);
-        vecInsertStmt.run(BigInt(chunkId), vectorString);
-      } catch (error) {
-        console.warn(`Could not insert into vec_chunks for chunk ${chunkId}:`, error);
-      }
+      const sql = this.resolveVecChunksInsertSQL();
+      const vecInsertStmt = this.db.prepare(sql);
+      vecInsertStmt.run(BigInt(chunkId), vectorString);
+    } catch (error) {
+      console.warn(`Could not insert into vec_chunks for chunk ${chunkId}:`, error);
     }
   }
 

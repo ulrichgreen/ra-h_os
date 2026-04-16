@@ -5,16 +5,79 @@ import { openExternalUrl } from '@/utils/openExternalUrl';
 
 export default function ApiKeysViewer() {
   const [status, setStatus] = useState<'checking' | 'configured' | 'not-set'>('checking');
+  const [keyInput, setKeyInput] = useState('');
+  const [maskedKey, setMaskedKey] = useState<string | null>(null);
+  const [envPath, setEnvPath] = useState<string>('.env.local');
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    // Check via health endpoint (server-side check of process.env)
-    fetch('/api/health')
+    fetch('/api/settings/openai-key')
       .then(res => res.json())
       .then(data => {
-        setStatus(data.aiFeatures?.startsWith('enabled') ? 'configured' : 'not-set');
+        setStatus(data.configured ? 'configured' : 'not-set');
+        setMaskedKey(data.maskedKey ?? null);
+        setEnvPath(data.envPath ?? '.env.local');
       })
       .catch(() => setStatus('not-set'));
   }, []);
+
+  const saveKey = async () => {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/settings/openai-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ key: keyInput }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to save API key');
+      }
+
+      setStatus('configured');
+      setMaskedKey(payload.maskedKey ?? null);
+      setEnvPath(payload.envPath ?? envPath);
+      setKeyInput('');
+      setMessage('Saved to .env.local and updated the running app.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save API key');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeKey = async () => {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/settings/openai-key', {
+        method: 'DELETE',
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to remove API key');
+      }
+
+      setStatus('not-set');
+      setMaskedKey(null);
+      setKeyInput('');
+      setEnvPath(payload.envPath ?? envPath);
+      setMessage('Removed from .env.local and cleared the running app key.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove API key');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div style={containerStyle}>
@@ -50,13 +113,68 @@ export default function ApiKeysViewer() {
 
         <div style={instructionsStyle}>
           <p style={{ margin: 0, marginBottom: 8 }}>
-            Add your key to <code style={codeInlineStyle}>.env.local</code> in the project root:
+            Save your key here to write it into <code style={codeInlineStyle}>{envPath}</code>.
+            You can still edit the file directly if you prefer.
           </p>
           <div style={codeBlockStyle}>
             <code>OPENAI_API_KEY=sk-your-key-here</code>
           </div>
-          <p style={{ margin: 0, fontSize: 12, color: 'var(--settings-muted)' }}>
-            Restart the app after changing the key.
+          <label style={fieldLabelStyle}>
+            {status === 'configured' ? 'Replace OpenAI API key' : 'OpenAI API key'}
+          </label>
+          <input
+            type="password"
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            placeholder={status === 'configured' ? 'Paste a new key to replace the current one' : 'sk-...'}
+            style={inputStyle}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          <div style={actionsStyle}>
+            <button
+              type="button"
+              onClick={saveKey}
+              disabled={saving || keyInput.trim().length === 0}
+              style={{
+                ...primaryButtonStyle,
+                opacity: saving || keyInput.trim().length === 0 ? 0.5 : 1,
+                cursor: saving || keyInput.trim().length === 0 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {saving ? 'Saving…' : status === 'configured' ? 'Replace key' : 'Save key'}
+            </button>
+            <button
+              type="button"
+              onClick={removeKey}
+              disabled={saving || status !== 'configured'}
+              style={{
+                ...secondaryButtonStyle,
+                opacity: saving || status !== 'configured' ? 0.5 : 1,
+                cursor: saving || status !== 'configured' ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Remove key
+            </button>
+          </div>
+          {maskedKey && (
+            <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--settings-muted)' }}>
+              Current key: <code style={codeInlineStyle}>{maskedKey}</code>
+            </p>
+          )}
+          {message && (
+            <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--settings-text)' }}>
+              {message}
+            </p>
+          )}
+          {error && (
+            <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--settings-danger)' }}>
+              {error}
+            </p>
+          )}
+          <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--settings-muted)' }}>
+            This open-source build uses your own local key only. No Railway key path is used here.
           </p>
         </div>
       </div>
@@ -143,6 +261,14 @@ const instructionsStyle: CSSProperties = {
   lineHeight: 1.5,
 };
 
+const fieldLabelStyle: CSSProperties = {
+  display: 'block',
+  fontSize: 12,
+  fontWeight: 500,
+  color: 'var(--settings-text)',
+  marginBottom: 6,
+};
+
 const codeInlineStyle: CSSProperties = {
   background: 'var(--settings-code-bg)',
   padding: '2px 6px',
@@ -161,6 +287,44 @@ const codeBlockStyle: CSSProperties = {
   fontFamily: 'monospace',
   color: 'var(--settings-text)',
   marginBottom: 8,
+};
+
+const inputStyle: CSSProperties = {
+  width: '100%',
+  background: 'var(--settings-code-bg)',
+  border: '1px solid var(--settings-border)',
+  borderRadius: 6,
+  padding: '10px 12px',
+  color: 'var(--settings-text)',
+  fontSize: 13,
+  fontFamily: 'monospace',
+  marginBottom: 12,
+};
+
+const actionsStyle: CSSProperties = {
+  display: 'flex',
+  gap: 10,
+  flexWrap: 'wrap',
+};
+
+const primaryButtonStyle: CSSProperties = {
+  background: 'var(--settings-text)',
+  color: 'var(--settings-bg)',
+  border: '1px solid var(--settings-text)',
+  borderRadius: 6,
+  padding: '9px 14px',
+  fontSize: 12,
+  fontWeight: 600,
+};
+
+const secondaryButtonStyle: CSSProperties = {
+  background: 'transparent',
+  color: 'var(--settings-text)',
+  border: '1px solid var(--settings-border-strong)',
+  borderRadius: 6,
+  padding: '9px 14px',
+  fontSize: 12,
+  fontWeight: 500,
 };
 
 const helpStyle: CSSProperties = {

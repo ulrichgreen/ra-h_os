@@ -6,6 +6,7 @@
 import OpenAI from 'openai';
 import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
+import { getPreferredOpenAiKey } from '@/services/storage/openaiKeyServer';
 import {
   createDatabaseConnection,
   serializeFloat32Vector,
@@ -38,7 +39,7 @@ export class NodeEmbedder {
   private failedCount: number = 0;
 
   constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = getPreferredOpenAiKey();
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY environment variable is not set');
     }

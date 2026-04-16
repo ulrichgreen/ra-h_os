@@ -9,13 +9,13 @@
  ╚═╝  ╚═╝╚═╝  ╚═╝      ╚═╝  ╚═╝
 ```
 
-**TL;DR:** Clone this repository and you'll have a local SQLite database on your computer. External AI agents can read and write nodes in it. The app owns chunking and embedding from node source.
+**TL;DR:** Clone this repository and you get a local SQLite knowledge graph plus a UI and standalone MCP server. External agents can read and write the graph, while the app owns chunking and embedding from node source.
 
 [![Watch the demo](https://img.youtube.com/vi/IA02YB8mInM/hqdefault.jpg)](https://youtu.be/IA02YB8mInM?si=WoWpNE9QZEKEukvZ)
 
 > **Cross-platform local runtime:** macOS works out of the box. Windows and Linux are now being hardened for the core local/web app flow, but semantic/vector search still depends on either sqlite-vec for your platform or a later Qdrant setup.
 
-**Full documentation:** [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source)
+**Docs start here:** [docs/README.md](./docs/README.md)
 
 ---
 
@@ -23,9 +23,17 @@
 
 1. **Stores knowledge locally** — Notes, bookmarks, ideas, research in a SQLite database on your machine
 2. **Provides a UI** — Browse, search, and organize your nodes at `localhost:3000`
-3. **Exposes an MCP server** — Claude Code, Cursor, or any MCP client can query and add to your knowledge base
+3. **Exposes an MCP server** — Claude Code and other MCP clients can query and add to your knowledge base
 
 Your data stays on your machine. Nothing is sent anywhere unless you configure an API key.
+
+Current contract:
+- no runtime `dimensions`
+- optional `contexts`
+- node quality comes from `title`, `description`, `source`, `metadata`, and explicit `edges`
+- direct node lookup first for specific-node intent
+- broader retrieval only when graph context would help
+- standalone MCP writes node data, but the app owns chunking and embeddings
 
 ---
 
@@ -49,6 +57,11 @@ npm run dev
 ```
 
 Open [localhost:3000](http://localhost:3000). Done.
+
+Full install details:
+- [docs/README.md](./docs/README.md)
+- [docs/8_mcp.md](./docs/8_mcp.md)
+- [docs/10_full-local.md](./docs/10_full-local.md)
 
 ---
 
@@ -103,7 +116,7 @@ Restart Claude Code fully (**Cmd+Q on Mac**, not just closing the window).
 
 If you publish a newer MCP release and want clients to use it immediately, bump the pinned version here and restart the client. Do not rely on plain `npx ra-h-mcp-server` always refreshing instantly.
 
-**Verify it worked:** Ask Claude "Do you have RA-H tools available?" — you should see tools like `createNode`, `queryNodes`, and `readSkill`.
+**Verify it worked:** Ask Claude `Do you have RA-H tools available?` You should see tools like `queryNodes`, `retrieveQueryContext`, `createNode`, and `readSkill`.
 
 **For contributors** testing local changes, use the local path instead:
 ```json
@@ -117,7 +130,7 @@ If you publish a newer MCP release and want clients to use it immediately, bump 
 }
 ```
 
-**What happens:** Once connected, Claude should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph context would help, and `getContext` only for orientation. It proactively captures knowledge. When a new insight, decision, person, or reference surfaces, it should propose a specific node with a strong title, description, source, and metadata. Context is optional and should only be set when the primary scope is obvious. The MCP server stores source on the node. The app later turns that source into chunks and embeddings.
+**What happens:** Once connected, the agent should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph context would help, and `getContext` only for orientation. It should search before creating, keep context optional by default, and propose durable writeback selectively instead of pestering. The MCP server stores source on the node. The app later turns that source into chunks and embeddings.
 
 Available tools:
 
@@ -171,7 +184,7 @@ JOIN nodes n2 ON e.to_node_id = n2.id
 LIMIT 10;
 ```
 
-See [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source) for full schema documentation.
+See [docs/2_schema.md](./docs/2_schema.md) and [docs/8_mcp.md](./docs/8_mcp.md) for the current contract.
 
 ---
 
@@ -228,6 +241,6 @@ Without sqlite-vec:
 ## Community
 
 - **Discord:** [discord.gg/3cpQj6Jtc9](https://discord.gg/3cpQj6Jtc9) — ask questions, share your setup, get help
-- **Full docs:** [ra-h.app/docs/open-source](https://ra-h.app/docs/open-source)
+- **Repo docs:** [docs/README.md](./docs/README.md)
 - **Issues:** [github.com/bradwmorris/ra-h_os/issues](https://github.com/bradwmorris/ra-h_os/issues)
 - **License:** MIT

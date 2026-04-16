@@ -5,7 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { checkDatabaseHealth } from '@/services/database';
-import { hasValidOpenAiKey } from '@/services/storage/apiKeys';
+import { hasPreferredOpenAiKey } from '@/services/storage/openaiKeyServer';
 
 export const runtime = 'nodejs';
 
@@ -17,7 +17,7 @@ export async function GET() {
       status: dbHealth.connected ? 'ok' : 'degraded',
       database: dbHealth.connected ? 'connected' : 'disconnected',
       vectorSearch: dbHealth.vectorExtension ? 'enabled' : 'disabled',
-      aiFeatures: hasValidOpenAiKey() ? 'enabled' : 'disabled (no API key)',
+      aiFeatures: hasPreferredOpenAiKey() ? 'enabled' : 'disabled (no API key)',
       timestamp: new Date().toISOString(),
     };
 

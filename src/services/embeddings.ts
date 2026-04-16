@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
+import { getPreferredOpenAiKey } from './storage/openaiKeyServer';
 
 function getOpenAiClient(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = getPreferredOpenAiKey();
   if (!apiKey) {
     throw new Error('OpenAI API key not configured. Add OPENAI_API_KEY to your .env.local file.');
   }

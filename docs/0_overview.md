@@ -1,8 +1,8 @@
-# RA-OS Overview
+# RA-H OS Overview
 
 ## What is RA-OS?
 
-RA-OS is a minimal knowledge graph UI with MCP server integration. It provides a local-first knowledge management system designed to be extended by external AI agents via the Model Context Protocol.
+RA-H OS is the open-source local graph surface of RA-H. It gives you the graph, UI, and MCP path without the private Mac-app-only packaging and subscription surfaces.
 
 **Open Source:** [github.com/bradwmorris/ra-h_os](https://github.com/bradwmorris/ra-h_os)
 
@@ -10,9 +10,9 @@ RA-OS is a minimal knowledge graph UI with MCP server integration. It provides a
 
 **Local-first** — Your knowledge network belongs to you. Everything runs locally in a SQLite database you control.
 
-**Agent-agnostic** — No built-in AI chat. Instead, RA-OS exposes an MCP server that any AI agent (Claude Code, custom agents) can connect to.
+**External-agent friendly** — The open-source path is designed to work well with external MCP clients. The graph contract should not depend on prompt hacks or old taxonomy assumptions.
 
-**Simple & focused** — A compact multi-pane UI for browsing and editing your knowledge graph. No bloat.
+**Simple & focused** — The open-source surface keeps the graph, UI, and MCP contract. It does not try to mirror every private-app surface.
 
 ## Tech Stack
 
@@ -23,7 +23,7 @@ RA-OS is a minimal knowledge graph UI with MCP server integration. It provides a
 
 ## What's Included
 
-- Multi-pane UI for nodes, contexts, map, table, and focus work
+- Multi-pane UI for feed, contexts, map, table, node focus, and skills
 - Node/Edge CRUD with optional contexts
 - Full-text and semantic search
 - MCP server with graph and skill tools
@@ -34,25 +34,18 @@ RA-OS is a minimal knowledge graph UI with MCP server integration. It provides a
 
 ## What's NOT Included
 
-- Chat interface (use external agents via MCP)
+- Private-app-only built-in assistant experience
 - Voice features
-- Built-in AI agents
 - Auth/subscription system
 - Desktop packaging
 
-## Two-Panel Layout
+## Current Doctrine
 
-```
-┌─────────────┬─────────────────────────┐
-│   NODES     │        FOCUS            │
-│   Panel     │        Panel            │
-│             │                         │
-│ • Search    │ • Node content          │
-│ • Filters   │ • Connections           │
-│ • List      │ • Context + metadata    │
-│             │                         │
-└─────────────┴─────────────────────────┘
-```
+- no runtime `dimensions`
+- optional `contexts`
+- node quality driven by `title`, `description`, `source`, `metadata`, and `edges`
+- direct lookup first, broader retrieval when useful
+- app-owned chunking and embeddings from `nodes.source`
 
 ## MCP Integration
 
@@ -81,4 +74,5 @@ Core tools include: `queryNodes`, `retrieveQueryContext`, `createNode`, `writeCo
 | [Tools & Skills](./4_tools-and-guides.md) | Available MCP tools, skill system |
 | [UI](./6_ui.md) | Component structure, panels, views |
 | [MCP](./8_mcp.md) | External agent connector setup |
+| [Full Local](./10_full-local.md) | Supported local path and community patterns |
 | [Troubleshooting](./TROUBLESHOOTING.md) | Common issues and fixes |

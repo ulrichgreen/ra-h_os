@@ -1,11 +1,11 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { openai } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 import { extractWebsite } from '@/services/typescript/extractors/website';
 import { getInternalApiBaseUrl } from '@/services/runtime/apiBase';
 import { formatNodeForChat } from '../infrastructure/nodeFormatter';
 import { validateExplicitDescription } from '@/services/database/quality';
+import { createLocalOpenAIProvider } from '@/services/openai/localProvider';
 
 function ensureNodeDescription(candidate: string | undefined, fallbackLead: string): string {
   const normalizedCandidate = typeof candidate === 'string'
@@ -40,6 +40,7 @@ async function analyzeContentWithAI(
   contentType: string
 ) {
   try {
+    const provider = createLocalOpenAIProvider();
     const prompt = `Analyze this ${contentType} content and provide classification.
 
 Title: "${title}"
@@ -71,7 +72,7 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
 }`;
 
     const response = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: provider('gpt-4o-mini'),
       prompt,
       maxOutputTokens: 800
     });

@@ -49,7 +49,21 @@
 
 - `nodes_fts` indexes title, description, and source for full-text lookup.
 - `chunks_fts` indexes chunk text.
-- Vector tables store node and chunk embeddings.
+- `vec_nodes` stores node-level vectors.
+- `vec_chunks` stores chunk-level vectors.
+
+Full-text search and vector search are separate surfaces:
+- FTS uses `nodes_fts` / `chunks_fts`
+- semantic/vector retrieval uses `vec_nodes` / `vec_chunks`
+- retrieval may combine them, but docs should not blur them into one surface
+
+## Embedding Lifecycle
+
+- `nodes.source` is the canonical long-form field for chunking and chunk embeddings.
+- changing `nodes.source` should return the node to the app-owned chunk pipeline
+- standalone MCP can write `nodes.source`, but it does not directly create chunks or vector rows
+- node-level embeddings and chunk embeddings are separate runtime surfaces
+- integrity/degraded-mode behavior matters enough that docs should describe these surfaces honestly
 
 ## Important Constraints
 

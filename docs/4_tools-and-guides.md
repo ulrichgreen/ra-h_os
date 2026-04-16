@@ -1,50 +1,56 @@
 # Tools & Skills
 
-> MCP tools for graph operations and skills for procedural guidance.
+MCP tools are the graph contract. Skills are the reusable procedural layer that teaches agents how to use that contract well.
 
-**How it works:** External agents call MCP tools to read and write your graph. Contexts are optional soft organization only; node quality should come from clear nodes and explicit edges.
+## Live MCP Tools
 
----
-
-## MCP Tools
-
-RA-OS exposes these core standalone MCP tools:
-
-### Context + Graph
+### Read
 
 | Tool | Description |
 |------|-------------|
-| `getContext` | Graph overview: stats, contexts, hub nodes, recent activity, skills |
-| `retrieveQueryContext` | Pull relevant graph context for a broader current-turn task |
-| `queryNodes` | Find specific existing nodes by title, description, or source |
+| `getContext` | Graph overview for orientation |
+| `queryNodes` | Direct node lookup by title, description, or source |
+| `retrieveQueryContext` | Broader current-turn retrieval when graph grounding helps |
 | `getNodesById` | Fetch full nodes by ID |
-| `createNode` | Create a node |
-| `writeContext` | Save one confirmed durable context node after explicit user approval |
-| `updateNode` | Update a node while preserving context by default |
-| `createEdge` | Create a confirmed edge between nodes |
-| `queryEdge` | Query edges |
-| `updateEdge` | Update an edge explanation after explicit confirmation |
-| `queryContexts` | List contexts and optional attached nodes |
+| `queryEdge` | Inspect existing edges |
+| `queryContexts` | List/search contexts |
+| `searchContentEmbeddings` | Search source chunks/transcripts |
+| `sqliteQuery` | Read-only SQL (`SELECT`, `WITH`, `PRAGMA`) |
 
-### Skills + Search
+### Write
+
+| Tool | Description |
+|------|-------------|
+| `createNode` | Create a node after duplicate/update checks |
+| `updateNode` | Update a node while preserving context by default |
+| `writeContext` | Save one confirmed durable context node |
+| `createEdge` | Create a confirmed edge |
+| `updateEdge` | Correct an edge after explicit confirmation |
+
+### Skills
 
 | Tool | Description |
 |------|-------------|
 | `listSkills` | List available skills |
 | `readSkill` | Read one skill |
-| `writeSkill` | Create/update a skill |
+| `writeSkill` | Create or update a skill |
 | `deleteSkill` | Delete a skill |
-| `searchContentEmbeddings` | Search source chunks/transcripts |
-| `sqliteQuery` | Read-only SQL (`SELECT`, `WITH`, `PRAGMA`) |
 
----
+## Behavior Rules
+
+- search before creating
+- use `queryNodes` first for specific-node intent
+- use `retrieveQueryContext` only when broader grounding would help
+- leave context blank by default
+- if context is intentionally provided, prefer `context_name`
+- `writeContext`, `createEdge`, and `updateEdge` are confirmation-gated
+- judge graph quality by node quality and explicit edges, not taxonomy completeness
 
 ## Skills
 
-Skills are markdown instructions stored locally and shared across internal + external agents.
+Skills are markdown instructions stored locally and shared across internal and external agents.
 
-### Default seeded skills
-
+Default seeded skills:
 - `db-operations`
 - `create-skill`
 - `audit`
@@ -54,12 +60,9 @@ Skills are markdown instructions stored locally and shared across internal + ext
 - `calibration`
 - `connect`
 
-### Storage
-
-- Live skills: `~/Library/Application Support/RA-H/skills/`
-- Bundled defaults: `src/config/skills/`
-
----
+Storage:
+- live skills: `~/Library/Application Support/RA-H/skills/`
+- bundled defaults: `src/config/skills/`
 
 ## API Routes
 
@@ -70,13 +73,12 @@ Skills are markdown instructions stored locally and shared across internal + ext
 | `/api/guides` | GET | Compatibility alias to skills |
 | `/api/guides/[name]` | GET/PUT/DELETE | Compatibility alias to skills |
 
----
-
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `apps/mcp-server-standalone/` | Standalone MCP server (recommended) |
+| `apps/mcp-server-standalone/` | Standalone MCP server |
+| `src/tools/infrastructure/registry.ts` | Live tool registry |
 | `src/services/skills/skillService.ts` | Skills runtime service |
 | `src/config/skills/*.md` | Bundled default skills |
 | `src/components/panes/SkillsPane.tsx` | Skills pane UI |

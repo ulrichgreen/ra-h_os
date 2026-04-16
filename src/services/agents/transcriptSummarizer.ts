@@ -1,5 +1,5 @@
 import { generateText } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { createLocalOpenAIProvider } from '@/services/openai/localProvider';
 
 export interface TranscriptSummaryResult {
   subject?: string;
@@ -48,8 +48,9 @@ export async function summarizeTranscript(transcript: string): Promise<Transcrip
     : transcript;
 
   try {
+    const provider = createLocalOpenAIProvider();
     const response = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: provider('gpt-4o-mini'),
       prompt: buildPrompt(limited),
       maxOutputTokens: 600,
     });
