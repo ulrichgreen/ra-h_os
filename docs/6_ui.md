@@ -11,7 +11,6 @@ RA-H OS follows the current pane model:
 ## Main Views
 
 - `Feed` for recent and sortable node browsing
-- `Contexts` for optional context browsing
 - `Map` for graph structure
 - `Table` for dense inspection
 - `Skills` for editable agent instructions
@@ -21,11 +20,11 @@ RA-H OS follows the current pane model:
 
 - The app no longer exposes a dimensions pane.
 - Feed and table filtering are not dimension-based.
-- Persisted pane layout should only hydrate valid pane types: `views`, `node`, `contexts`, `map`, `table`, `skills`.
-- Contexts are shown as a secondary organizational aid, not as a hard requirement for capture.
+- Persisted pane layout should only hydrate valid pane types: `views`, `node`, `map`, `table`, `skills`.
+- The app does not expose a separate organizing pane or category filter surface.
 
 ## Focus And Capture
 
-- Capture must succeed when context is omitted.
+- Capture must succeed without any category or context assignment.
 - Focus surfaces should emphasize title, description, source, metadata, and edges.
-- Node cards may show context when present, but should not depend on it for meaning.
+- Node cards and focus views should not depend on category labels for meaning.

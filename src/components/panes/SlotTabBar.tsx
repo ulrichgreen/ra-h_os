@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { X, LayoutList, PanelsTopLeft, Map, FileText, Table2, BookOpen } from 'lucide-react';
+import { X, LayoutList, Map, FileText, Table2, BookOpen } from 'lucide-react';
 import type { SlotTab, PaneType, SlotId } from './types';
 
 const TAB_TYPE_ICONS: Record<PaneType, typeof LayoutList> = {
   views: LayoutList,
-  contexts: PanelsTopLeft,
   map: Map,
   node: FileText,
   table: Table2,
@@ -15,7 +14,6 @@ const TAB_TYPE_ICONS: Record<PaneType, typeof LayoutList> = {
 
 const TAB_TYPE_LABELS: Record<PaneType, string> = {
   views: 'Feed',
-  contexts: 'Contexts',
   map: 'Map',
   node: 'Node',
   table: 'Table',

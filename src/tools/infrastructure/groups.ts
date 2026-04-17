@@ -38,8 +38,9 @@ export const TOOL_GROUP_ASSIGNMENTS: Record<string, string> = {
   retrieveQueryContext: 'core',
   getNodesById: 'core',
   queryEdge: 'core',
-  queryContexts: 'core',
   searchContentEmbeddings: 'core',
+  listSkills: 'core',
+  readSkill: 'core',
 
   // Orchestration: Web search and reasoning (orchestrator only)
   webSearch: 'orchestration',
@@ -47,7 +48,6 @@ export const TOOL_GROUP_ASSIGNMENTS: Record<string, string> = {
 
   // Execution: Write operations and extraction (workers only)
   createNode: 'execution',
-  writeContext: 'execution',
   updateNode: 'execution',
   deleteNode: 'execution',
   createEdge: 'execution',
@@ -56,6 +56,8 @@ export const TOOL_GROUP_ASSIGNMENTS: Record<string, string> = {
   youtubeExtract: 'execution',
   websiteExtract: 'execution',
   paperExtract: 'execution',
+  writeSkill: 'execution',
+  deleteSkill: 'execution'
 };
 
 /**

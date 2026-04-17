@@ -1,7 +1,6 @@
 'use strict';
 
 const nodeService = require('./nodeService');
-const contextService = require('./contextService');
 
 const SEARCH_STOP_WORDS = new Set([
   'a', 'about', 'added', 'already', 'an', 'and', 'are', 'as', 'at', 'be', 'by',
@@ -109,41 +108,6 @@ function scoreNodeSearchMatch(node, query) {
   return score;
 }
 
-function normalizeContextName(value) {
-  if (typeof value !== 'string') return undefined;
-  const normalized = value.trim().replace(/\s+/g, ' ');
-  return normalized || undefined;
-}
-
-function resolveSearchContext({ context_name, contextId }) {
-  const normalizedName = normalizeContextName(context_name);
-  if (normalizedName) {
-    const context = contextService.getContextByName(normalizedName);
-    if (!context) {
-      console.warn(`directNodeLookupService received unknown context_name "${normalizedName}"; ignoring context filter.`);
-      return {};
-    }
-    return {
-      contextId: context.id,
-      context_name: context.name,
-    };
-  }
-
-  if (typeof contextId === 'number') {
-    const context = contextService.getContextById(contextId);
-    if (!context) {
-      console.warn(`directNodeLookupService received invalid legacy contextId ${contextId}; ignoring context filter.`);
-      return {};
-    }
-    return {
-      contextId: context.id,
-      context_name: context.name,
-    };
-  }
-
-  return {};
-}
-
 function hasStrongAnchorMatch(nodes, searchTerm) {
   if (!searchTerm || nodes.length === 0) return false;
   const highSignalTerms = getHighSignalSearchTerms(searchTerm);
@@ -168,12 +132,9 @@ function directNodeLookup(input = {}) {
     };
   }
 
-  const resolvedContext = resolveSearchContext(input);
-
   let safeNodes = nodeService.getNodes({
     search: searchTerm || undefined,
     limit,
-    contextId: resolvedContext.contextId,
     createdAfter: input.createdAfter,
     createdBefore: input.createdBefore,
     eventAfter: input.eventAfter,
@@ -181,7 +142,6 @@ function directNodeLookup(input = {}) {
   });
 
   const hadExtraFilters = Boolean(
-    resolvedContext.contextId !== undefined ||
     input.createdAfter ||
     input.createdBefore ||
     input.eventAfter ||
@@ -209,7 +169,6 @@ function directNodeLookup(input = {}) {
     filtersApplied: {
       search: searchTerm || undefined,
       limit,
-      context_name: resolvedContext.context_name,
       createdAfter: input.createdAfter,
       createdBefore: input.createdBefore,
       eventAfter: input.eventAfter,

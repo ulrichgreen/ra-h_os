@@ -32,7 +32,7 @@ function getExistingColumnNames(db, tableName) {
 }
 
 function validateExistingRahSchema(db) {
-  const requiredTables = ['contexts', 'nodes', 'edges', 'chunks'];
+  const requiredTables = ['nodes', 'edges', 'chunks'];
   const missingTables = requiredTables.filter(
     tableName => !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(tableName)
   );
@@ -46,16 +46,14 @@ function validateExistingRahSchema(db) {
 
   const requiredNodeColumns = [
     'title', 'description', 'source', 'link', 'event_date', 'metadata',
-    'embedding', 'embedding_updated_at', 'embedding_text', 'chunk_status', 'context_id',
+    'embedding', 'embedding_updated_at', 'embedding_text', 'chunk_status',
     'created_at', 'updated_at'
   ];
-  const requiredContextColumns = ['name', 'description', 'icon', 'created_at', 'updated_at'];
   const requiredEdgeColumns = ['from_node_id', 'to_node_id', 'source', 'created_at', 'context', 'explanation'];
   const requiredChunkColumns = ['node_id', 'chunk_idx', 'text', 'embedding_type', 'metadata', 'created_at'];
 
   const schemaChecks = [
     ['nodes', requiredNodeColumns],
-    ['contexts', requiredContextColumns],
     ['edges', requiredEdgeColumns],
     ['chunks', requiredChunkColumns],
   ];
@@ -104,15 +102,6 @@ function initDatabase() {
 
 function ensureCoreSchema(db) {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS contexts (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL,
-      icon TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
     CREATE TABLE IF NOT EXISTS nodes (
       id INTEGER PRIMARY KEY,
       title TEXT,
@@ -126,13 +115,8 @@ function ensureCoreSchema(db) {
       embedding BLOB,
       embedding_updated_at TEXT,
       embedding_text TEXT,
-      chunk_status TEXT DEFAULT 'not_chunked',
-      context_id INTEGER,
-      FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE SET NULL
+      chunk_status TEXT DEFAULT 'not_chunked'
     );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized
-      ON contexts(LOWER(TRIM(name)));
   `);
 
   ensureEdgesTableSchema(db);

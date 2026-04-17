@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Filter, ChevronDown, X, ArrowUpDown, GripVertical, Inbox, Check } from 'lucide-react';
-import type { ContextSummary, Node } from '@/types/database';
+import { ChevronDown, X, ArrowUpDown, GripVertical, Inbox, Check } from 'lucide-react';
+import type { Node } from '@/types/database';
 import { getNodeIcon } from '@/utils/nodeIcons';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import type { PendingNode } from '@/components/layout/ThreePanelLayout';
@@ -29,9 +29,6 @@ interface ViewsOverlayProps {
   refreshToken?: number;
   pendingNodes?: PendingNode[];
   onDismissPending?: (id: string) => void;
-  externalContextFilterId?: number | null;
-  onContextFilterSelect?: (contextId: number | null, contextName?: string | null) => void;
-  onClearExternalContextFilter?: () => void;
   toolbarHost?: HTMLDivElement | null;
 }
 
@@ -216,14 +213,8 @@ export default function ViewsOverlay({
   refreshToken = 0,
   pendingNodes,
   onDismissPending,
-  externalContextFilterId = null,
-  onContextFilterSelect,
-  onClearExternalContextFilter,
   toolbarHost,
 }: ViewsOverlayProps) {
-
-  const [contexts, setContexts] = useState<ContextSummary[]>([]);
-  const [contextsLoading, setContextsLoading] = useState(true);
 
   // Sort order (persisted)
   const [sortOrder, setSortOrder] = usePersistentState<SortOrder>('ui.feedSortOrder', 'updated');
@@ -245,22 +236,6 @@ export default function ViewsOverlay({
       ? 'not_processed'
       : 'all';
 
-  const fetchContexts = useCallback(async () => {
-    setContextsLoading(true);
-    try {
-      const response = await fetch('/api/contexts');
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to fetch contexts');
-      }
-      setContexts(data.data || []);
-    } catch (error) {
-      console.error('Error fetching contexts:', error);
-    } finally {
-      setContextsLoading(false);
-    }
-  }, []);
-
   const applyProcessedFilter = useCallback((nodes: Node[]) => {
     if (processedFilter === 'all') return nodes;
     return nodes.filter((node) => getNodeProcessedState(node.metadata) === processedFilter);
@@ -273,7 +248,7 @@ export default function ViewsOverlay({
       const apiSort = sortOrder === 'custom' || sortOrder === 'processed' || sortOrder === 'not_processed'
         ? 'updated'
         : sortOrder;
-      const response = await fetch(`/api/nodes?limit=500&sortBy=${apiSort}${externalContextFilterId ? `&contextId=${externalContextFilterId}` : ''}`);
+      const response = await fetch(`/api/nodes?limit=500&sortBy=${apiSort}`);
       const data = await response.json();
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'Failed to fetch nodes');
@@ -301,45 +276,28 @@ export default function ViewsOverlay({
     } finally {
       setFilteredNodesLoading(false);
     }
-  }, [sortOrder, customOrder, applyProcessedFilter, externalContextFilterId]);
+  }, [sortOrder, customOrder, applyProcessedFilter]);
 
-  // Fetch contexts on mount
-  useEffect(() => {
-    fetchContexts();
-  }, [fetchContexts]);
-
-  // Fetch nodes on mount and when sort/refreshToken/context filter change
+  // Fetch nodes on mount and when sort/refreshToken change
   useEffect(() => {
     if (refreshToken > 0) {
       console.log('🔄 Feed refreshing due to SSE event (refreshToken:', refreshToken, ')');
     }
     fetchAllNodes();
-  }, [fetchAllNodes, refreshToken, sortOrder, externalContextFilterId]);
-
-  // Refresh contexts when data changes
-  useEffect(() => {
-    if (refreshToken > 0) {
-      fetchContexts();
-    }
-  }, [refreshToken, fetchContexts]);
+  }, [fetchAllNodes, refreshToken, sortOrder]);
 
   // Close dropdowns on outside click
-  const contextPickerRef = useRef<HTMLDivElement>(null);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
-  const [showContextPicker, setShowContextPicker] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (showContextPicker && contextPickerRef.current && !contextPickerRef.current.contains(e.target as HTMLElement)) {
-        setShowContextPicker(false);
-      }
       if (showSortDropdown && sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as HTMLElement)) {
         setShowSortDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showContextPicker, showSortDropdown]);
+  }, [showSortDropdown]);
 
   // Reorder handlers
   const handleReorderDrop = useCallback((dropIdx: number) => {
@@ -615,107 +573,7 @@ export default function ViewsOverlay({
         gap: '10px',
         flexWrap: 'wrap'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: 1 }}>
-          {externalContextFilterId ? (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '3px 8px',
-                background: 'rgba(34, 197, 94, 0.06)',
-                border: '1px solid rgba(34, 197, 94, 0.12)',
-                borderRadius: '5px',
-                fontSize: '11px',
-                color: '#5a9'
-              }}
-            >
-              {contexts.find((context) => context.id === externalContextFilterId)?.name ?? 'Context'}
-              <button
-                onClick={() => onClearExternalContextFilter?.()}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#5a9',
-                  cursor: 'pointer',
-                  padding: '0',
-                  display: 'flex',
-                  alignItems: 'center'
-                }}
-              >
-                <X size={11} />
-              </button>
-            </div>
-          ) : null}
-
-          <div style={{ position: 'relative' }} ref={contextPickerRef}>
-            <button
-              onClick={() => setShowContextPicker(!showContextPicker)}
-              title="Context filter"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                padding: '4px 8px',
-                background: externalContextFilterId ? 'rgba(34, 197, 94, 0.06)' : 'transparent',
-                border: '1px solid var(--rah-border)',
-                borderRadius: '5px',
-                color: 'var(--rah-text-soft)',
-                fontSize: '11px',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <Filter size={11} />
-              Context
-            </button>
-
-            {showContextPicker && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                marginTop: '4px',
-                background: 'var(--rah-bg-panel)',
-                border: '1px solid var(--rah-border)',
-                borderRadius: '10px',
-                padding: '6px',
-                minWidth: '220px',
-                maxHeight: '320px',
-                overflowY: 'auto',
-                zIndex: 1000,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.4)'
-              }}>
-                <button
-                  onClick={() => {
-                    onClearExternalContextFilter?.();
-                    setShowContextPicker(false);
-                  }}
-                  style={pickerRowStyle}
-                >
-                  All contexts
-                </button>
-                {contextsLoading ? (
-                  <div style={{ padding: '12px', color: 'var(--rah-text-muted)', fontSize: '12px', textAlign: 'center' }}>
-                    Loading contexts...
-                  </div>
-                ) : contexts.map((context) => (
-                  <button
-                    key={context.id}
-                    onClick={() => {
-                      onContextFilterSelect?.(context.id, context.name);
-                      setShowContextPicker(false);
-                    }}
-                    style={pickerRowStyle}
-                  >
-                    <span>{context.name}</span>
-                    <span style={pickerCountStyle}>{context.count}</span>
-                  </button>
-              ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: 1 }} />
 
         {/* Sort dropdown */}
         <div style={{ position: 'relative' }} ref={sortDropdownRef}>

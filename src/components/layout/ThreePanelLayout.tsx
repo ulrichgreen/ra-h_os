@@ -1,20 +1,25 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { GripVertical, X } from 'lucide-react';
 import SettingsModal, { SettingsTab } from '../settings/SettingsModal';
 import SearchModal from '../nodes/SearchModal';
-import type { ContextSummary, Node } from '@/types/database';
+import { Node } from '@/types/database';
 import { DatabaseEvent } from '@/services/events';
 import { usePersistentState } from '@/hooks/usePersistentState';
 import { useTheme } from '@/hooks/useTheme';
 
+// Layout components
 import LeftToolbar from './LeftToolbar';
 import SplitHandle from './SplitHandle';
+import ChatPanel from './ChatPanel';
 
-import { NodePane, ContextsPane, MapPane, ViewsPane, TablePane, SkillsPane, SlotTabBar } from '../panes';
+// Pane components
+import { NodePane, MapPane, ViewsPane, TablePane, SkillsPane, SlotTabBar } from '../panes';
 import QuickAddInput from '../agents/QuickAddInput';
 import type { PaneType, SlotState, SlotTab, PaneAction, SlotId } from '../panes/types';
 import { createTabId, getActiveTab } from '../panes/types';
+import type { FocusedSkill } from '@/types/skills';
 
 export interface PendingNode {
   id: string;
@@ -25,9 +30,124 @@ export interface PendingNode {
   error?: string;
 }
 
-const SLOT_A_KEY = 'ui.slotA.v7';
-const SLOT_B_KEY = 'ui.slotB.v7';
-const SLOT_C_KEY = 'ui.slotC.v7';
+// --- localStorage migration ---
+function migrateSlotState(raw: unknown): SlotState | null {
+  if (raw === null || raw === undefined) return null;
+  const obj = raw as Record<string, unknown>;
+  const validPaneTypes = new Set<PaneType>(['views', 'node', 'map', 'table', 'skills']);
+
+  // Already v4+ format (has tabs array) — filter out removed pane types
+  if (Array.isArray(obj.tabs)) {
+    const state = raw as SlotState;
+    const mappedTabs = state.tabs.map(t => (t.type as string) === 'guides'
+      ? { ...t, id: 'skills', type: 'skills' as PaneType }
+      : t);
+    const filtered = mappedTabs.filter(t => validPaneTypes.has(t.type));
+    if (filtered.length === 0) return null;
+    const activeStillExists = filtered.some(t => t.id === state.activeTabId);
+    const activeTabId = state.activeTabId === 'guides' ? 'skills' : state.activeTabId;
+    return { tabs: filtered, activeTabId: activeStillExists ? activeTabId : filtered[0].id };
+  }
+
+  // v3 format (has type field) — migrate
+  if (typeof obj.type === 'string') {
+    const oldType = obj.type as string;
+
+    // Removed pane types should not hydrate into current panel state
+    if (!validPaneTypes.has(oldType as PaneType) && oldType !== 'guides') return null;
+    if (oldType === 'guides') {
+      return { tabs: [{ id: 'skills', type: 'skills' }], activeTabId: 'skills' };
+    }
+
+    const paneType = oldType as PaneType;
+    const tabs: SlotTab[] = [];
+
+    // Add the main type tab
+    if (paneType === 'node') {
+      // Migrate node tabs
+      const nodeTabs = (obj.nodeTabs as number[]) || [];
+      for (const nodeId of nodeTabs) {
+        tabs.push({ id: createTabId('node', nodeId), type: 'node', nodeId });
+      }
+      if (tabs.length === 0) {
+        // Empty node pane — just return null
+        return null;
+      }
+      const activeNodeTab = obj.activeNodeTab as number | null | undefined;
+      const activeTabId = activeNodeTab != null
+        ? createTabId('node', activeNodeTab)
+        : tabs[0].id;
+      return { tabs, activeTabId };
+    }
+
+    // Singleton pane type
+    tabs.push({ id: createTabId(paneType), type: paneType });
+    return { tabs, activeTabId: tabs[0].id };
+  }
+
+  return null;
+}
+
+function stripNodeTabsForPersistence(state: SlotState | null): SlotState | null {
+  if (!state) return null;
+
+  const tabs = state.tabs.filter((tab) => tab.type !== 'node');
+  if (tabs.length === 0) {
+    return null;
+  }
+
+  const activeTabId = tabs.some((tab) => tab.id === state.activeTabId)
+    ? state.activeTabId
+    : tabs[0].id;
+
+  return { tabs, activeTabId };
+}
+
+function readPersistedSlotState(key: string, fallback: SlotState | null): SlotState | null {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) {
+      return fallback;
+    }
+
+    return stripNodeTabsForPersistence(migrateSlotState(JSON.parse(raw))) ?? fallback;
+  } catch (error) {
+    console.error(`Error loading ${key} from localStorage:`, error);
+    return fallback;
+  }
+}
+
+function persistSlotState(key: string, state: SlotState | null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const sanitized = stripNodeTabsForPersistence(state);
+    if (sanitized) {
+      window.localStorage.setItem(key, JSON.stringify(sanitized));
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch (error) {
+    console.error(`Error saving ${key} to localStorage:`, error);
+  }
+}
+
+const DEFAULT_SLOT_A: SlotState = {
+  tabs: [{ id: 'views', type: 'views' }],
+  activeTabId: 'views',
+};
+
+const SLOT_A_KEY = 'ui.slotA.v6';
+const SLOT_B_KEY = 'ui.slotB.v6';
+const SLOT_C_KEY = 'ui.slotC.v6';
+const CHAT_PANEL_OPEN_KEY = 'ui.chatPanel.open';
+const CHAT_SLOT_KEY = 'ui.chatPanel.slot.v1';
 const VISIBLE_PANE_COUNT_KEY = 'ui.visiblePaneCount.v1';
 const PANEL_A_EXPANDED_KEY = 'ui.panelA.expanded.v1';
 const PANEL_B_EXPANDED_KEY = 'ui.panelB.expanded.v1';
@@ -36,182 +156,350 @@ const PANEL_A_WEIGHT_KEY = 'ui.panelA.weight.v1';
 const PANEL_B_WEIGHT_KEY = 'ui.panelB.weight.v1';
 const PANEL_C_WEIGHT_KEY = 'ui.panelC.weight.v1';
 const LEFT_NAV_EXPANDED_KEY = 'ui.leftNavExpanded';
-const ACTIVE_CONTEXT_KEY = 'ui.focus.activeContextId';
-
-const VALID_PANE_TYPES = new Set<PaneType>(['node', 'contexts', 'map', 'views', 'table', 'skills']);
-
-const DEFAULT_SLOT_A: SlotState = {
-  tabs: [{ id: 'views', type: 'views' }],
-  activeTabId: 'views',
-};
-
-const EMPTY_SEARCH_FILTERS: Array<{ type: 'context' | 'title' | 'tag'; value: string }> = [];
+const ONBOARDING_SURFACE_SEEN_KEY = 'ui.onboarding.firstRun.seen.v1';
+const ONBOARDING_HINT_DISMISSED_KEY = 'ui.onboarding.firstRun.dismissed.v1';
+const ONBOARDING_BOOTSTRAP_CHECKED_KEY = 'ui.onboarding.firstRun.checked.v1';
+const ONBOARDING_HINT_TEXT = 'Just tell your agent you want to get setup, and it will help you.';
 const SLOT_ORDER: SlotId[] = ['A', 'B', 'C'];
+const MIN_PANE_WIDTH = 280;
+const CHAT_FEATURE_ENABLED = false;
 
-function createSingletonState(type: Exclude<PaneType, 'node'>): SlotState {
-  return {
-    tabs: [{ id: createTabId(type), type }],
-    activeTabId: createTabId(type),
-  };
-}
-
-function migrateSlotState(raw: unknown): SlotState | null {
-  if (!raw || typeof raw !== 'object') {
-    return null;
+function deriveInitialPaneCount(): number {
+  if (typeof window === 'undefined') {
+    return 2;
   }
 
-  const value = raw as Record<string, unknown>;
-
-  if (Array.isArray(value.tabs)) {
-    const tabs: SlotTab[] = [];
-    for (const tab of value.tabs) {
-      if (!tab || typeof tab !== 'object') continue;
-      const tabValue = tab as Record<string, unknown>;
-      const rawType = tabValue.type === 'guides' ? 'skills' : tabValue.type;
-      if (typeof rawType !== 'string' || !VALID_PANE_TYPES.has(rawType as PaneType)) continue;
-
-      tabs.push({
-        id: typeof tabValue.id === 'string'
-          ? tabValue.id
-          : createTabId(rawType as PaneType, typeof tabValue.nodeId === 'number' ? tabValue.nodeId : undefined),
-        type: rawType as PaneType,
-        ...(typeof tabValue.nodeId === 'number' ? { nodeId: tabValue.nodeId } : {}),
-      });
+  const stored = window.localStorage.getItem(VISIBLE_PANE_COUNT_KEY);
+  if (stored) {
+    const parsed = Number(stored);
+    if (parsed >= 1 && parsed <= 3) {
+      return parsed;
     }
-
-    if (tabs.length === 0) return null;
-
-    const activeTabId = typeof value.activeTabId === 'string' && tabs.some((tab) => tab.id === value.activeTabId)
-      ? value.activeTabId
-      : tabs[0].id;
-
-    return { tabs, activeTabId };
   }
 
-  if (typeof value.type === 'string') {
-    const rawType = value.type === 'guides' ? 'skills' : value.type;
-    if (rawType === 'dimensions') return null;
-    if (!VALID_PANE_TYPES.has(rawType as PaneType)) return null;
-
-    if (rawType === 'node') {
-      const nodeTabs = Array.isArray(value.nodeTabs)
-        ? value.nodeTabs.filter((nodeId): nodeId is number => typeof nodeId === 'number')
-        : [];
-      if (nodeTabs.length === 0) return null;
-      const tabs = nodeTabs.map((nodeId) => ({ id: createTabId('node', nodeId), type: 'node' as const, nodeId }));
-      const preferredNodeId = typeof value.activeNodeTab === 'number' ? value.activeNodeTab : nodeTabs[0];
-      return {
-        tabs,
-        activeTabId: createTabId('node', preferredNodeId),
-      };
-    }
-
-    return createSingletonState(rawType as Exclude<PaneType, 'node'>);
+  try {
+    const panelCExpanded = window.localStorage.getItem(PANEL_C_EXPANDED_KEY) === 'true';
+    const panelBExpanded = window.localStorage.getItem(PANEL_B_EXPANDED_KEY) === 'true';
+    return panelCExpanded ? 3 : panelBExpanded ? 2 : 1;
+  } catch {
+    return 2;
   }
-
-  return null;
 }
 
-function sanitizeSlotState(state: SlotState | null, fallback: SlotState | null = null): SlotState | null {
-  const migrated = migrateSlotState(state);
-  return migrated ?? fallback;
-}
-
-function areSlotStatesEqual(a: SlotState | null, b: SlotState | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return a === b;
-  if (a.activeTabId !== b.activeTabId) return false;
-  if (a.tabs.length !== b.tabs.length) return false;
-
-  return a.tabs.every((tab, index) => {
-    const other = b.tabs[index];
-    return (
-      tab.id === other?.id &&
-      tab.type === other?.type &&
-      tab.nodeId === other?.nodeId
-    );
-  });
-}
-
-function getSlotTabsByType(state: SlotState | null, type: PaneType): SlotTab[] {
-  return state?.tabs.filter((tab) => tab.type === type) ?? [];
+function isTauriRuntime(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as unknown as { __TAURI__?: unknown }).__TAURI__);
 }
 
 export default function ThreePanelLayout() {
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRefs = useRef<Record<SlotId, HTMLDivElement | null>>({ A: null, B: null, C: null });
+  const hasHydratedPaneCountRef = useRef(false);
   const [theme, toggleTheme] = useTheme();
 
-  const [slotA, setSlotA] = usePersistentState<SlotState | null>(SLOT_A_KEY, DEFAULT_SLOT_A);
-  const [slotB, setSlotB] = usePersistentState<SlotState | null>(SLOT_B_KEY, null);
-  const [slotC, setSlotC] = usePersistentState<SlotState | null>(SLOT_C_KEY, null);
+  const [slotA, setSlotA] = useState<SlotState | null>(() => readPersistedSlotState(SLOT_A_KEY, DEFAULT_SLOT_A));
+  const [slotB, setSlotB] = useState<SlotState | null>(() => readPersistedSlotState(SLOT_B_KEY, null));
+  const [slotC, setSlotC] = useState<SlotState | null>(() => readPersistedSlotState(SLOT_C_KEY, null));
   const [visiblePaneCount, setVisiblePaneCount] = usePersistentState<number>(VISIBLE_PANE_COUNT_KEY, 2);
-
   const [panelAExpanded, setPanelAExpanded] = usePersistentState<boolean>(PANEL_A_EXPANDED_KEY, true);
   const [panelBExpanded, setPanelBExpanded] = usePersistentState<boolean>(PANEL_B_EXPANDED_KEY, false);
   const [panelCExpanded, setPanelCExpanded] = usePersistentState<boolean>(PANEL_C_EXPANDED_KEY, false);
   const [panelAWeight, setPanelAWeight] = usePersistentState<number>(PANEL_A_WEIGHT_KEY, 1);
   const [panelBWeight, setPanelBWeight] = usePersistentState<number>(PANEL_B_WEIGHT_KEY, 1);
   const [panelCWeight, setPanelCWeight] = usePersistentState<number>(PANEL_C_WEIGHT_KEY, 1);
+  const [chatPanelOpen, setChatPanelOpen] = usePersistentState<boolean>(CHAT_PANEL_OPEN_KEY, false);
+  const [chatSlot, setChatSlot] = usePersistentState<SlotId | null>(CHAT_SLOT_KEY, null);
   const [leftNavExpanded, setLeftNavExpanded] = usePersistentState<boolean>(LEFT_NAV_EXPANDED_KEY, false);
-  const [activeContextId, setActiveContextId] = usePersistentState<number | null>(ACTIVE_CONTEXT_KEY, null);
 
+  // Track which pane is active
   const [activePane, setActivePane] = useState<SlotId>('A');
+
+  // Settings modal state
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>();
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const [showAddStuff, setShowAddStuff] = useState(false);
-  const [nodesPanelRefresh, setNodesPanelRefresh] = useState(0);
-  const [focusPanelRefresh, setFocusPanelRefresh] = useState(0);
-  const [availableContexts, setAvailableContexts] = useState<ContextSummary[]>([]);
-  const [browseContextFilters, setBrowseContextFilters] = useState<Record<SlotId, number | null>>({
-    A: null,
-    B: null,
-    C: null,
-  });
-  const [highlightedPassage, setHighlightedPassage] = useState<{
-    nodeId: number;
-    nodeTitle: string;
-    selectedText: string;
-  } | null>(null);
-  const [pendingNodes, setPendingNodes] = useState<PendingNode[]>([]);
-  const [dragOverSlot, setDragOverSlot] = useState<SlotId | null>(null);
-  const openNodeIdsRef = useRef<number[]>([]);
-  const handleNodeDeletedRef = useRef<(nodeId: number) => void>(() => {});
-
   const handleCloseSettings = useCallback(() => {
     setShowSettings(false);
     setSettingsInitialTab(undefined);
   }, []);
 
-  useEffect(() => {
-    setSlotA((prev) => {
-      const next = sanitizeSlotState(prev, DEFAULT_SLOT_A);
-      return areSlotStatesEqual(prev, next) ? prev : next;
-    });
-    setSlotB((prev) => {
-      const next = sanitizeSlotState(prev);
-      return areSlotStatesEqual(prev, next) ? prev : next;
-    });
-    setSlotC((prev) => {
-      const next = sanitizeSlotState(prev);
-      return areSlotStatesEqual(prev, next) ? prev : next;
-    });
-  }, [setSlotA, setSlotB, setSlotC]);
+  // Search modal state
+  const [showSearchModal, setShowSearchModal] = useState(false);
+
+  // Add Stuff modal state
+  const [showAddStuff, setShowAddStuff] = useState(false);
+
+  // Pending quick-add nodes (loading placeholders)
+  const [pendingNodes, setPendingNodes] = useState<PendingNode[]>([]);
+
+  // Track selected nodes (for context)
+  const [selectedNodes, setSelectedNodes] = useState<Set<number>>(new Set<number>());
+  const [focusedNodeId, setFocusedNodeId] = useState<number | null>(null);
+  const [isMapFocusSuppressed, setIsMapFocusSuppressed] = useState(false);
+
+  // Open tabs data (full node objects for context)
+  const [openTabsData, setOpenTabsData] = useState<Node[]>([]);
+
+  // Event handlers for SSE events
+  const [nodesPanelRefresh, setNodesPanelRefresh] = useState(0);
+  const [focusPanelRefresh, setFocusPanelRefresh] = useState(0);
+  const [folderViewRefresh, setFolderViewRefresh] = useState(0);
+
+  const [focusedSkill, setFocusedSkill] = useState<FocusedSkill | null>(null);
+  const [autoOpenSkillName, setAutoOpenSkillName] = useState<string | null>(null);
+  const [showOnboardingHint, setShowOnboardingHint] = useState(false);
+
+  // Chat state (lifted to persist across pane type changes)
+  const [chatMessages, setChatMessages] = useState<unknown[]>([]);
+
+  // Source awareness - highlighted passage context for agent
+  const [highlightedPassage, setHighlightedPassage] = useState<{
+    nodeId: number;
+    nodeTitle: string;
+    selectedText: string;
+  } | null>(null);
+
+  // Ref to get current openTabs value in SSE handler
+  const openTabsRef = useRef<number[]>([]);
+
+  const dismissOnboardingHint = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(ONBOARDING_HINT_DISMISSED_KEY, 'true');
+    }
+    setShowOnboardingHint(false);
+  }, []);
 
   useEffect(() => {
+    persistSlotState(SLOT_A_KEY, slotA);
+  }, [slotA]);
+
+  useEffect(() => {
+    persistSlotState(SLOT_B_KEY, slotB);
+  }, [slotB]);
+
+  useEffect(() => {
+    persistSlotState(SLOT_C_KEY, slotC);
+  }, [slotC]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (typeof window === 'undefined' || !isTauriRuntime()) {
+      return;
+    }
+
+    if (
+      window.localStorage.getItem(ONBOARDING_SURFACE_SEEN_KEY)
+      || window.localStorage.getItem(ONBOARDING_HINT_DISMISSED_KEY)
+      || window.localStorage.getItem(ONBOARDING_BOOTSTRAP_CHECKED_KEY)
+    ) {
+      return;
+    }
+
     void (async () => {
       try {
-        const response = await fetch('/api/contexts');
-        const payload = await response.json();
-        if (response.ok && payload.success) {
-          setAvailableContexts(payload.data || []);
+        const response = await fetch('/api/nodes?limit=1');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const total = typeof data.total === 'number'
+          ? data.total
+          : Number(data.total ?? data.count ?? 0);
+
+        if (cancelled || Number.isNaN(total)) {
+          return;
+        }
+
+        window.localStorage.setItem(ONBOARDING_BOOTSTRAP_CHECKED_KEY, 'true');
+
+        if (total >= 3) {
+          return;
+        }
+
+        window.localStorage.setItem(ONBOARDING_SURFACE_SEEN_KEY, 'true');
+        setSlotA({ tabs: [{ id: 'skills', type: 'skills' }], activeTabId: 'skills' });
+        setSlotB(null);
+        setSlotC(null);
+        setVisiblePaneCount(1);
+        setActivePane('A');
+        setAutoOpenSkillName('Onboarding');
+        if (CHAT_FEATURE_ENABLED) {
+          setChatPanelOpen(true);
+          setChatSlot('A');
+          setShowOnboardingHint(true);
         }
       } catch (error) {
-        console.error('Failed to fetch contexts:', error);
+        console.error('[ThreePanelLayout] Failed to bootstrap onboarding surface:', error);
       }
     })();
-  }, [nodesPanelRefresh]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setChatPanelOpen, setChatSlot, setSlotA, setSlotB, setSlotC, setVisiblePaneCount]);
+
+  // --- Collect node tabs from both slots for chat context ---
+  const { openTabs, activeTab } = useMemo(() => {
+    const collectNodeTabs = (state: SlotState | null): number[] => {
+      if (!state) return [];
+      return state.tabs
+        .filter(t => t.type === 'node' && t.nodeId != null)
+        .map(t => t.nodeId!);
+    };
+
+    const slotStates: Record<SlotId, SlotState | null> = { A: slotA, B: slotB, C: slotC };
+    const activeSlotState = slotStates[activePane];
+    const otherNodes = (['A', 'B', 'C'] as SlotId[])
+      .filter((slot) => slot !== activePane)
+      .flatMap((slot) => collectNodeTabs(slotStates[slot]));
+
+    const activeNodes = collectNodeTabs(activeSlotState);
+    const allNodes = [...new Set([...activeNodes, ...otherNodes])];
+
+    // Active tab: prefer the active slot's node tab, then another active node.
+    let active: number | null = null;
+    if (activeSlotState) {
+      const activeT = getActiveTab(activeSlotState);
+      if (activeT?.type === 'node' && activeT.nodeId != null) {
+        active = activeT.nodeId;
+      }
+    }
+    if (active == null) {
+      for (const slot of ['A', 'B', 'C'] as SlotId[]) {
+        if (slot === activePane) continue;
+        const otherT = getActiveTab(slotStates[slot] ?? { tabs: [], activeTabId: '' });
+        if (otherT?.type === 'node' && otherT.nodeId != null) {
+          active = otherT.nodeId;
+          break;
+        }
+      }
+    }
+    if (active == null && allNodes.length > 0) {
+      active = allNodes[0];
+    }
+
+    return { openTabs: allNodes, activeTab: active };
+  }, [slotA, slotB, slotC, activePane]);
+
+  const deriveFallbackFocusedNode = useCallback((): number | null => {
+    const slotStates: Record<SlotId, SlotState | null> = { A: slotA, B: slotB, C: slotC };
+    const orderedSlots: SlotId[] = [activePane, ...(['A', 'B', 'C'] as SlotId[]).filter((slot) => slot !== activePane)];
+
+    for (const slot of orderedSlots) {
+      const activeTab = getActiveTab(slotStates[slot] ?? { tabs: [], activeTabId: '' });
+      if (activeTab?.type === 'node' && activeTab.nodeId != null) {
+        return activeTab.nodeId;
+      }
+    }
+
+    for (const slot of orderedSlots) {
+      const fallbackTab = slotStates[slot]?.tabs.find((tab) => tab.type === 'node' && tab.nodeId != null);
+      if (fallbackTab?.nodeId != null) {
+        return fallbackTab.nodeId;
+      }
+    }
+
+    return null;
+  }, [activePane, slotA, slotB, slotC]);
+
+  // Fetch full node data for open tabs
+  const fetchOpenTabsData = async (tabIds: number[]) => {
+    if (tabIds.length === 0) {
+      setOpenTabsData([]);
+      return;
+    }
+
+    try {
+      const nodePromises = tabIds.map(async (id) => {
+        const response = await fetch(`/api/nodes/${id}`);
+        if (response.ok) {
+          const data = await response.json();
+          return data.node as Node;
+        }
+        return null;
+      });
+
+      const nodes = await Promise.all(nodePromises);
+      const validNodes = nodes.filter((node): node is Node => Boolean(node)).map(node => ({
+        id: node.id,
+        title: node.title,
+        description: node.description,
+        link: node.link,
+        source: node.source,
+        created_at: node.created_at,
+        updated_at: node.updated_at,
+        chunk_status: node.chunk_status,
+        metadata: node.metadata,
+      }));
+      setOpenTabsData(validNodes);
+    } catch (error) {
+      console.error('Failed to fetch tab data:', error);
+      setOpenTabsData([]);
+    }
+  };
+
+  // Update tab data whenever openTabs changes or a node is updated
+  const openTabsKey = openTabs.join(',');
+  useEffect(() => {
+    openTabsRef.current = openTabs;
+    fetchOpenTabsData(openTabs);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTabsKey, focusPanelRefresh]);
+
+  useEffect(() => {
+    if (focusedNodeId == null) {
+      return;
+    }
+
+    const isStillOpen = [slotA, slotB, slotC].some((state) =>
+      state?.tabs.some((tab) => tab.type === 'node' && tab.nodeId === focusedNodeId),
+    );
+
+    if (!isStillOpen) {
+      setFocusedNodeId(deriveFallbackFocusedNode());
+    }
+  }, [deriveFallbackFocusedNode, focusedNodeId, slotA, slotB, slotC]);
+
+  useEffect(() => {
+    if (focusedNodeId != null || isMapFocusSuppressed) {
+      return;
+    }
+
+    const initialFocusedNode = deriveFallbackFocusedNode();
+    if (initialFocusedNode != null) {
+      setFocusedNodeId(initialFocusedNode);
+    }
+  }, [deriveFallbackFocusedNode, focusedNodeId, isMapFocusSuppressed]);
+
+  // Timeout cleanup for stuck pending nodes (90s)
+  useEffect(() => {
+    if (pendingNodes.length === 0) return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setPendingNodes(prev => prev.filter(p => {
+        // Keep error nodes for 30s so user can see them, then auto-dismiss
+        if (p.status === 'error') return now - p.submittedAt < 120_000;
+        // Auto-dismiss processing nodes after 90s
+        return now - p.submittedAt < 90_000;
+      }));
+    }, 5_000);
+    return () => clearInterval(interval);
+  }, [pendingNodes.length]);
+
+  const handleRefreshAll = useCallback(() => {
+    setNodesPanelRefresh(prev => prev + 1);
+    setFolderViewRefresh(prev => prev + 1);
+    setFocusPanelRefresh(prev => prev + 1);
+  }, []);
+
+  const getSuggestedPaneType = useCallback((): Exclude<PaneType, 'node'> => {
+    const openTypes = new Set<PaneType>();
+    slotA?.tabs.forEach((tab) => openTypes.add(tab.type));
+    slotB?.tabs.forEach((tab) => openTypes.add(tab.type));
+    slotC?.tabs.forEach((tab) => openTypes.add(tab.type));
+
+    const order: Exclude<PaneType, 'node'>[] = ['map', 'table', 'skills', 'views'];
+    return order.find((paneType) => !openTypes.has(paneType)) || 'map';
+  }, [slotA, slotB, slotC]);
 
   const getSlotState = useCallback((slot: SlotId): SlotState | null => {
     switch (slot) {
@@ -239,8 +527,7 @@ export default function ThreePanelLayout() {
     () => SLOT_ORDER.slice(0, Math.max(1, Math.min(3, visiblePaneCount))),
     [visiblePaneCount]
   );
-  const [focusedNodeId, setFocusedNodeId] = useState<number | null>(null);
-  const [isMapFocusSuppressed, setIsMapFocusSuppressed] = useState(false);
+  const searchModalFilters = useMemo(() => [], []);
 
   const isPanelExpanded = useCallback((slot: SlotId) => {
     return visibleSlots.includes(slot);
@@ -281,21 +568,31 @@ export default function ThreePanelLayout() {
     }
   }, [setPanelAWeight, setPanelBWeight, setPanelCWeight]);
 
-  const slotStates = useMemo<Record<SlotId, SlotState | null>>(() => ({ A: slotA, B: slotB, C: slotC }), [slotA, slotB, slotC]);
+  const isSlotEmpty = useCallback((slot: SlotId) => {
+    const state = getSlotState(slot);
+    return !state || state.tabs.length === 0;
+  }, [getSlotState]);
 
-  const allOpenNodeIds = useMemo(() => {
-    const ids = new Set<number>();
-    (Object.values(slotStates) as Array<SlotState | null>).forEach((state) => {
-      getSlotTabsByType(state, 'node').forEach((tab) => {
-        if (tab.nodeId != null) ids.add(tab.nodeId);
-      });
-    });
-    return [...ids];
-  }, [slotStates]);
+  const getAvailableVisibleContentSlots = useCallback(() => {
+    if (!CHAT_FEATURE_ENABLED) {
+      return visibleSlots;
+    }
+    return visibleSlots.filter((slot) => slot !== chatSlot);
+  }, [chatSlot, visibleSlots]);
 
   useEffect(() => {
-    openNodeIdsRef.current = allOpenNodeIds;
-  }, [allOpenNodeIds]);
+    if (hasHydratedPaneCountRef.current || typeof window === 'undefined') {
+      return;
+    }
+
+    hasHydratedPaneCountRef.current = true;
+
+    if (window.localStorage.getItem(VISIBLE_PANE_COUNT_KEY) !== null) {
+      return;
+    }
+
+    setVisiblePaneCount(deriveInitialPaneCount());
+  }, [setVisiblePaneCount]);
 
   useEffect(() => {
     setPanelAExpanded(true);
@@ -304,217 +601,346 @@ export default function ThreePanelLayout() {
   }, [setPanelAExpanded, setPanelBExpanded, setPanelCExpanded, visiblePaneCount]);
 
   useEffect(() => {
-    if (!visibleSlots.includes(activePane)) {
-      setActivePane(visibleSlots[0] ?? 'A');
+    if (!visibleSlots.includes(activePane) || (CHAT_FEATURE_ENABLED && activePane === chatSlot)) {
+      const fallback = getAvailableVisibleContentSlots()[0] ?? visibleSlots[0] ?? 'A';
+      setActivePane(fallback);
     }
-  }, [activePane, visibleSlots]);
-
-  const deriveFallbackFocusedNode = useCallback((): number | null => {
-    const orderedSlots: SlotId[] = [activePane, ...(['A', 'B', 'C'] as SlotId[]).filter((slot) => slot !== activePane)];
-
-    for (const slot of orderedSlots) {
-      const state = slotStates[slot];
-      const activeTab = state ? getActiveTab(state) : undefined;
-      if (activeTab?.type === 'node' && activeTab.nodeId != null) {
-        return activeTab.nodeId;
-      }
-    }
-
-    for (const slot of orderedSlots) {
-      const fallbackTab = slotStates[slot]?.tabs.find((tab) => tab.type === 'node' && tab.nodeId != null);
-      if (fallbackTab?.nodeId != null) {
-        return fallbackTab.nodeId;
-      }
-    }
-
-    return null;
-  }, [activePane, slotStates]);
+  }, [activePane, chatSlot, getAvailableVisibleContentSlots, visibleSlots]);
 
   useEffect(() => {
-    if (focusedNodeId == null) {
+    if (!CHAT_FEATURE_ENABLED) {
+      if (chatPanelOpen) {
+        setChatPanelOpen(false);
+      }
+      if (chatSlot !== null) {
+        setChatSlot(null);
+      }
       return;
     }
 
-    if (!allOpenNodeIds.includes(focusedNodeId)) {
-      setFocusedNodeId(deriveFallbackFocusedNode());
-    }
-  }, [allOpenNodeIds, deriveFallbackFocusedNode, focusedNodeId]);
-
-  useEffect(() => {
-    if (focusedNodeId != null || isMapFocusSuppressed) {
+    if (!chatPanelOpen) {
+      if (chatSlot !== null) {
+        setChatSlot(null);
+      }
       return;
     }
 
-    const initialFocusedNode = deriveFallbackFocusedNode();
-    if (initialFocusedNode != null) {
-      setFocusedNodeId(initialFocusedNode);
+    // Keep chat pinned to its current visible slot. Reassign only when chat has
+    // no slot yet or its slot is no longer visible (for example after reducing
+    // pane count). Otherwise an empty sibling pane can cause A<->B flip-flopping.
+    if (chatSlot !== null && visibleSlots.includes(chatSlot)) {
+      return;
     }
-  }, [deriveFallbackFocusedNode, focusedNodeId, isMapFocusSuppressed]);
 
-  const handleRefreshAll = useCallback(() => {
-    setNodesPanelRefresh((prev) => prev + 1);
-    setFocusPanelRefresh((prev) => prev + 1);
-  }, []);
+    const spareVisibleSlots = visibleSlots.filter((slot) => slot !== chatSlot && isSlotEmpty(slot));
+    const nextChatSlot = spareVisibleSlots[spareVisibleSlots.length - 1]
+      ?? visibleSlots[visibleSlots.length - 1]
+      ?? 'A';
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-        event.preventDefault();
-        setShowSearchModal(true);
-      }
+    if (chatSlot !== nextChatSlot) {
+      setChatSlot(nextChatSlot);
+    }
+  }, [chatPanelOpen, chatSlot, isSlotEmpty, setChatPanelOpen, setChatSlot, visibleSlots]);
 
-      if ((event.metaKey || event.ctrlKey) && event.key === 'n') {
-        if (document.activeElement?.closest('[data-rah-app]')) {
-          event.preventDefault();
-          setShowAddStuff(true);
-        }
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'r') {
-        event.preventDefault();
-        handleRefreshAll();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleRefreshAll]);
-
+  // --- SSE connection for real-time updates ---
   useEffect(() => {
     let eventSource: EventSource | null = null;
 
     try {
       eventSource = new EventSource('/api/events');
+
+      eventSource.onopen = () => {
+        console.log('SSE connected for real-time updates');
+      };
+
       eventSource.onmessage = (event) => {
         try {
           const data: DatabaseEvent = JSON.parse(event.data);
 
           switch (data.type) {
             case 'NODE_CREATED':
-              setNodesPanelRefresh((prev) => prev + 1);
+              setNodesPanelRefresh(prev => prev + 1);
               break;
-            case 'NODE_UPDATED':
-              setNodesPanelRefresh((prev) => prev + 1);
-              if (openNodeIdsRef.current.includes(Number(data.data.nodeId))) {
-                setFocusPanelRefresh((prev) => prev + 1);
+
+            case 'NODE_UPDATED': {
+              const currentOpenTabs = openTabsRef.current;
+              const updatedNodeId = Number(data.data.nodeId);
+              if (currentOpenTabs.includes(updatedNodeId)) {
+                setFocusPanelRefresh(prev => prev + 1);
+              }
+              setNodesPanelRefresh(prev => prev + 1);
+              break;
+            }
+
+            case 'NODE_DELETED':
+              handleNodeDeleted(data.data.nodeId);
+              setNodesPanelRefresh(prev => prev + 1);
+              break;
+
+            case 'EDGE_CREATED':
+            case 'EDGE_DELETED': {
+              const currentOpenTabsForEdge = openTabsRef.current;
+              if (currentOpenTabsForEdge.includes(data.data.fromNodeId) ||
+                  currentOpenTabsForEdge.includes(data.data.toNodeId)) {
+                setFocusPanelRefresh(prev => prev + 1);
               }
               break;
-            case 'NODE_DELETED':
-              handleNodeDeletedRef.current(Number(data.data.nodeId));
-              setNodesPanelRefresh((prev) => prev + 1);
+            }
+
+            case 'DIMENSION_UPDATED':
+              setNodesPanelRefresh(prev => prev + 1);
+              setFolderViewRefresh(prev => prev + 1);
               break;
-            case 'EDGE_CREATED':
-            case 'EDGE_DELETED':
-              setFocusPanelRefresh((prev) => prev + 1);
+
+            case 'HELPER_UPDATED':
+            case 'AGENT_UPDATED':
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('agents:updated', { detail: data.data }));
+              }
               break;
+
+            case 'SKILL_UPDATED':
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('skills:updated'));
+                window.dispatchEvent(new CustomEvent('guides:updated'));
+              }
+              break;
+
             case 'GUIDE_UPDATED':
               if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('skills:updated', { detail: data.data }));
+                window.dispatchEvent(new CustomEvent('skills:updated'));
+                window.dispatchEvent(new CustomEvent('guides:updated'));
               }
               break;
-            case 'QUICK_ADD_COMPLETED':
-              if (data.data?.quickAddId) {
-                setPendingNodes((prev) => prev.filter((item) => item.id !== data.data.quickAddId));
-                setNodesPanelRefresh((prev) => prev + 1);
+
+            case 'QUICK_ADD_COMPLETED': {
+              const completedId = data.data?.quickAddId;
+              if (completedId) {
+                setPendingNodes(prev => prev.filter(p => p.id !== completedId));
               }
               break;
-            case 'QUICK_ADD_FAILED':
-              if (data.data?.quickAddId) {
-                setPendingNodes((prev) => prev.map((item) => (
-                  item.id === data.data.quickAddId
-                    ? { ...item, status: 'error', error: data.data.error || 'Unknown error' }
-                    : item
-                )));
+            }
+
+            case 'QUICK_ADD_FAILED': {
+              const failedId = data.data?.quickAddId;
+              const errorMsg = data.data?.error || 'Processing failed';
+              if (failedId) {
+                setPendingNodes(prev => prev.map(p =>
+                  p.id === failedId ? { ...p, status: 'error' as const, error: errorMsg } : p
+                ));
               }
               break;
+            }
+
+            case 'CONNECTION_ESTABLISHED':
+              console.log('SSE connection established');
+              break;
+
+            default:
+              console.log('Unknown SSE event:', data.type);
           }
         } catch (error) {
           console.error('Failed to parse SSE event:', error);
         }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('SSE connection error:', error);
       };
     } catch (error) {
       console.error('Failed to establish SSE connection:', error);
     }
 
     return () => {
-      eventSource?.close();
+      if (eventSource) {
+        eventSource.close();
+      }
     };
   }, []);
 
-  useEffect(() => {
-    if (pendingNodes.length === 0) return;
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setPendingNodes((prev) => prev.filter((item) => {
-        const age = now - item.submittedAt;
-        if (item.status === 'processing' && age > 90_000) return false;
-        if (item.status === 'error' && age > 120_000) return false;
-        return true;
-      }));
-    }, 5000);
+  // --- Tab helpers ---
 
-    return () => clearInterval(timer);
-  }, [pendingNodes.length]);
-
-  const upsertSingletonTab = useCallback((slot: SlotId, paneType: Exclude<PaneType, 'node'>) => {
-    const tabId = createTabId(paneType);
-    const setter = getSlotSetter(slot);
-
-    setter({ tabs: [{ id: tabId, type: paneType }], activeTabId: tabId });
-
-    setPanelExpanded(slot, true);
-    setActivePane(slot);
-  }, [getSlotSetter, setPanelExpanded]);
-
-  const addNodeTabToSlot = useCallback((slot: SlotId, nodeId: number) => {
-    const nodeTabId = createTabId('node', nodeId);
-    const setter = getSlotSetter(slot);
+  const setSingletonPaneInSlot = useCallback((
+    setter: React.Dispatch<React.SetStateAction<SlotState | null>>,
+    paneType: Exclude<PaneType, 'node'>,
+  ) => {
+    const tab: SlotTab = { id: createTabId(paneType), type: paneType };
 
     setter((prev) => {
-      const current = sanitizeSlotState(prev);
-      const nodeTabs = (current?.tabs ?? []).filter((tab) => tab.type === 'node');
-      if (nodeTabs.some((tab) => tab.id === nodeTabId)) {
-        return { tabs: nodeTabs, activeTabId: nodeTabId };
+      if (!prev || prev.tabs.length === 0) {
+        return { tabs: [tab], activeTabId: tab.id };
       }
-      return {
-        tabs: [...nodeTabs, { id: nodeTabId, type: 'node', nodeId }],
-        activeTabId: nodeTabId,
-      };
-    });
 
-    setPanelExpanded(slot, true);
-    setActivePane(slot);
+      const existingIndex = prev.tabs.findIndex((t) => t.type === paneType);
+      if (existingIndex >= 0) {
+        return { ...prev, activeTabId: prev.tabs[existingIndex].id };
+      }
+
+      const tabs = [...prev.tabs];
+      const nonNodeIndex = tabs.findIndex((t) => t.type !== 'node');
+
+      if (nonNodeIndex >= 0) {
+        tabs[nonNodeIndex] = tab;
+      } else {
+        tabs.push(tab);
+      }
+
+      return { tabs, activeTabId: tab.id };
+    });
+  }, []);
+
+  const focusPaneIfOpen = useCallback((paneType: Exclude<PaneType, 'node'>): SlotId | null => {
+    const tabId = createTabId(paneType);
+
+    for (const slot of visibleSlots) {
+      if (slot === chatSlot) {
+        continue;
+      }
+
+      const state = getSlotState(slot);
+      if (state?.tabs.some((tab) => tab.id === tabId)) {
+        getSlotSetter(slot)((prev) => prev ? { ...prev, activeTabId: tabId } : prev);
+        setActivePane(slot);
+        return slot;
+      }
+    }
+
+    return null;
+  }, [chatSlot, getSlotSetter, getSlotState, visibleSlots]);
+
+  const openPaneSingleton = useCallback((paneType: Exclude<PaneType, 'node'>, preferredSlot?: SlotId) => {
+    const existing = focusPaneIfOpen(paneType);
+    if (existing) {
+      return existing;
+    }
+
+    const orderedVisibleSlots = preferredSlot && visibleSlots.includes(preferredSlot)
+      ? [preferredSlot, ...visibleSlots.filter((slot) => slot !== preferredSlot)]
+      : visibleSlots;
+
+    const contentSlots = orderedVisibleSlots.filter((slot) => slot !== chatSlot);
+    const visibleEmpty = contentSlots.find((slot) => isSlotEmpty(slot));
+    if (visibleEmpty) {
+      setSingletonPaneInSlot(getSlotSetter(visibleEmpty), paneType);
+      setActivePane(visibleEmpty);
+      return visibleEmpty;
+    }
+
+    const replacementTarget = contentSlots.includes(activePane)
+      ? activePane
+      : contentSlots[contentSlots.length - 1]
+        ?? orderedVisibleSlots[orderedVisibleSlots.length - 1]
+        ?? 'A';
+
+    setSingletonPaneInSlot(getSlotSetter(replacementTarget), paneType);
+    setActivePane(replacementTarget);
+    return replacementTarget;
+  }, [activePane, chatSlot, focusPaneIfOpen, getSlotSetter, isSlotEmpty, setSingletonPaneInSlot, visibleSlots]);
+
+  // Add or focus a tab in a slot
+  const addOrFocusTab = useCallback((
+    setter: (value: SlotState | null | ((prev: SlotState | null) => SlotState | null)) => void,
+    currentState: SlotState | null,
+    tab: SlotTab,
+  ) => {
+    if (tab.type !== 'node') {
+      setter({ tabs: [tab], activeTabId: tab.id });
+      return;
+    }
+
+    const nodeTabs = currentState?.tabs.filter((t) => t.type === 'node') ?? [];
+    const existing = nodeTabs.find((t) => t.id === tab.id);
+
+    if (existing) {
+      setter({ tabs: nodeTabs, activeTabId: tab.id });
+    } else {
+      setter({
+        tabs: [...nodeTabs, tab],
+        activeTabId: tab.id,
+      });
+    }
+  }, []);
+
+  // Remove a tab from a slot
+  const removeTabFromSlot = useCallback((
+    setter: (value: SlotState | null | ((prev: SlotState | null) => SlotState | null)) => void,
+    currentState: SlotState | null,
+    tabId: string,
+  ) => {
+    if (!currentState) return;
+    const newTabs = currentState.tabs.filter(t => t.id !== tabId);
+    if (newTabs.length === 0) {
+      setter(null);
+      return;
+    }
+    let newActiveTabId = currentState.activeTabId;
+    if (currentState.activeTabId === tabId) {
+      const oldIndex = currentState.tabs.findIndex(t => t.id === tabId);
+      const newIndex = Math.min(oldIndex, newTabs.length - 1);
+      newActiveTabId = newTabs[newIndex].id;
+    }
+    setter(prev => prev ? { ...prev, tabs: newTabs, activeTabId: newActiveTabId } : null);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowSearchModal(true);
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
+        e.preventDefault();
+        setVisiblePaneCount((current) => Math.min(3, current + 1));
+      }
+
+      if (CHAT_FEATURE_ENABLED && (e.metaKey || e.ctrlKey) && e.key === 'j') {
+        e.preventDefault();
+        setChatPanelOpen((prev: boolean) => !prev);
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        if (document.activeElement?.closest('[data-rah-app]')) {
+          e.preventDefault();
+          setShowAddStuff(true);
+        }
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'r') {
+        e.preventDefault();
+        handleRefreshAll();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleRefreshAll, setChatPanelOpen, setVisiblePaneCount]);
+
+  // --- Node tab management ---
+  const addNodeTabToSlot = useCallback((
+    slot: SlotId,
+    nodeId: number,
+  ) => {
+    const tab: SlotTab = { id: createTabId('node', nodeId), type: 'node', nodeId };
+    const setter = getSlotSetter(slot);
+    const state = getSlotState(slot);
+    addOrFocusTab(setter, state, tab);
     setIsMapFocusSuppressed(false);
     setFocusedNodeId(nodeId);
-  }, [getSlotSetter, setPanelExpanded]);
-
-  const closeTabInSlot = useCallback((slot: SlotId, tabId: string) => {
-    const setter = getSlotSetter(slot);
-
-    setter((prev) => {
-      const current = sanitizeSlotState(prev);
-      if (!current) return null;
-
-      const tabs = current.tabs.filter((tab) => tab.id !== tabId);
-      if (tabs.length === 0) {
-        return null;
-      }
-
-      const activeTabId = current.activeTabId === tabId
-        ? tabs[Math.max(0, tabs.length - 1)].id
-        : current.activeTabId;
-
-      return { tabs, activeTabId };
-    });
-  }, [getSlotSetter]);
+  }, [getSlotSetter, getSlotState, addOrFocusTab]);
 
   const openNodeFromSlot = useCallback((nodeId: number, fromSlot?: SlotId) => {
     const existingTabId = createTabId('node', nodeId);
+    const contentSlots = visibleSlots.filter((slot) => slot !== chatSlot);
 
     for (const slot of visibleSlots) {
+      if (slot === chatSlot) {
+        continue;
+      }
       const state = getSlotState(slot);
       if (state?.tabs.some((tab) => tab.id === existingTabId)) {
-        getSlotSetter(slot)({ tabs: state.tabs, activeTabId: existingTabId });
+        getSlotSetter(slot)((prev) => prev ? { ...prev, activeTabId: existingTabId } : prev);
+        setSelectedNodes(new Set([nodeId]));
         setIsMapFocusSuppressed(false);
         setFocusedNodeId(nodeId);
         setActivePane(slot);
@@ -522,7 +948,7 @@ export default function ThreePanelLayout() {
       }
     }
 
-    const visibleNodeSlots = visibleSlots.filter((slot) => {
+    const visibleNodeSlots = contentSlots.filter((slot) => {
       const state = getSlotState(slot);
       return state?.tabs.some((tab) => tab.type === 'node');
     });
@@ -535,132 +961,194 @@ export default function ThreePanelLayout() {
 
     if (preferredNodeTarget) {
       addNodeTabToSlot(preferredNodeTarget, nodeId);
+      setSelectedNodes(new Set([nodeId]));
       setIsMapFocusSuppressed(false);
       setFocusedNodeId(nodeId);
       setActivePane(preferredNodeTarget);
       return;
     }
 
-    const emptyTarget = visibleSlots.find((slot) => {
-      const state = getSlotState(slot);
-      return !state || state.tabs.length === 0;
-    });
-    const target = emptyTarget
-      ?? (visibleSlots.includes(activePane) ? activePane : null)
-      ?? visibleSlots[visibleSlots.length - 1]
-      ?? 'A';
+    const orderedTargets = fromSlot
+      ? [...contentSlots.filter((slot) => slot !== fromSlot), fromSlot]
+      : contentSlots;
+    const emptyTarget = orderedTargets.find((slot) => isSlotEmpty(slot));
+    const preferredActiveTarget = orderedTargets.includes(activePane) ? activePane : null;
+    const target = emptyTarget ?? preferredActiveTarget ?? orderedTargets[orderedTargets.length - 1] ?? 'A';
 
     addNodeTabToSlot(target, nodeId);
+    setSelectedNodes(new Set([nodeId]));
     setIsMapFocusSuppressed(false);
     setFocusedNodeId(nodeId);
-  }, [activePane, addNodeTabToSlot, getSlotSetter, getSlotState, visibleSlots]);
+    setActivePane(target);
+  }, [activePane, addNodeTabToSlot, chatSlot, getSlotSetter, getSlotState, isSlotEmpty, visibleSlots]);
 
-  const openPaneSingleton = useCallback((paneType: Exclude<PaneType, 'node'>, preferredSlot?: SlotId) => {
-    for (const slot of visibleSlots) {
-      const state = getSlotState(slot);
-      if (state?.tabs.some((tab) => tab.type === paneType)) {
-        getSlotSetter(slot)({ tabs: state.tabs, activeTabId: createTabId(paneType) });
-        setPanelExpanded(slot, true);
-        setActivePane(slot);
-        return slot;
-      }
-    }
+  const handleNodeSelect = useCallback((nodeId: number, _multiSelect: boolean) => {
+    openNodeFromSlot(nodeId);
+  }, [openNodeFromSlot]);
 
-    const orderedSlots = preferredSlot && visibleSlots.includes(preferredSlot)
-      ? [preferredSlot, ...visibleSlots.filter((slot) => slot !== preferredSlot)]
-      : visibleSlots;
-    const emptyTarget = orderedSlots.find((slot) => {
-      const state = getSlotState(slot);
-      return !state || state.tabs.length === 0;
-    });
-    const target = emptyTarget
-      ?? (orderedSlots.includes(activePane) ? activePane : null)
-      ?? orderedSlots[orderedSlots.length - 1]
-      ?? 'A';
-
-    upsertSingletonTab(target, paneType);
-    return target;
-  }, [activePane, getSlotSetter, getSlotState, setPanelExpanded, upsertSingletonTab, visibleSlots]);
-
-  const handleTabSelect = useCallback((slot: SlotId, tabId: string) => {
-    const state = getSlotState(slot);
-    if (!state) return;
-    getSlotSetter(slot)({ tabs: state.tabs, activeTabId: tabId });
-    const tab = state.tabs.find((current) => current.id === tabId);
-    if (tab?.type === 'node' && tab.nodeId != null) {
+  const handleTabSelectA = useCallback((tabId: string) => {
+    setSlotA(prev => prev ? { ...prev, activeTabId: tabId } : null);
+    // If it's a node tab, update selection
+    const tab = slotA?.tabs.find(t => t.id === tabId);
+    if (tab?.type === 'node' && tab.nodeId) {
+      setSelectedNodes(new Set([tab.nodeId]));
       setIsMapFocusSuppressed(false);
       setFocusedNodeId(tab.nodeId);
     }
-    setActivePane(slot);
-  }, [getSlotSetter, getSlotState]);
+    setActivePane('A');
+  }, [slotA, setSlotA]);
+
+  const handleTabSelectB = useCallback((tabId: string) => {
+    setSlotB(prev => prev ? { ...prev, activeTabId: tabId } : null);
+    const tab = slotB?.tabs.find(t => t.id === tabId);
+    if (tab?.type === 'node' && tab.nodeId) {
+      setSelectedNodes(new Set([tab.nodeId]));
+      setIsMapFocusSuppressed(false);
+      setFocusedNodeId(tab.nodeId);
+    }
+    setActivePane('B');
+  }, [slotB, setSlotB]);
+
+  const handleTabSelectC = useCallback((tabId: string) => {
+    setSlotC(prev => prev ? { ...prev, activeTabId: tabId } : null);
+    const tab = slotC?.tabs.find(t => t.id === tabId);
+    if (tab?.type === 'node' && tab.nodeId) {
+      setSelectedNodes(new Set([tab.nodeId]));
+      setIsMapFocusSuppressed(false);
+      setFocusedNodeId(tab.nodeId);
+    }
+    setActivePane('C');
+  }, [slotC, setSlotC]);
 
   const clearMapFocus = useCallback(() => {
     setIsMapFocusSuppressed(true);
     setFocusedNodeId(null);
   }, []);
 
+  const handleCloseTabA = useCallback((tabId: string) => {
+    removeTabFromSlot(setSlotA, slotA, tabId);
+    // Remove from selection if it's a node
+    const tab = slotA?.tabs.find(t => t.id === tabId);
+    if (tab?.type === 'node' && tab.nodeId) {
+      setSelectedNodes(prev => {
+        const next = new Set(prev);
+        next.delete(tab.nodeId!);
+        return next;
+      });
+    }
+  }, [slotA, setSlotA, removeTabFromSlot]);
+
+  const handleCloseTabB = useCallback((tabId: string) => {
+    removeTabFromSlot(setSlotB, slotB, tabId);
+  }, [slotB, setSlotB, removeTabFromSlot]);
+
+  const handleCloseTabC = useCallback((tabId: string) => {
+    removeTabFromSlot(setSlotC, slotC, tabId);
+  }, [slotC, setSlotC, removeTabFromSlot]);
+
+  // Get node-specific props from a slot for rendering NodePane
+  const getNodeTabsFromSlot = useCallback((state: SlotState | null): { openTabs: number[]; activeTab: number | null } => {
+    if (!state) return { openTabs: [], activeTab: null };
+    const nodeTabs = state.tabs.filter(t => t.type === 'node' && t.nodeId != null);
+    const nodeIds = nodeTabs.map(t => t.nodeId!);
+    const activeT = getActiveTab(state);
+    const activeNodeId = activeT?.type === 'node' && activeT.nodeId != null ? activeT.nodeId : null;
+    return { openTabs: nodeIds, activeTab: activeNodeId };
+  }, []);
+
+  const handleNodeCreated = useCallback((newNode: Node) => {
+    openNodeFromSlot(newNode.id);
+  }, [openNodeFromSlot]);
+
   const handleNodeDeleted = useCallback((nodeId: number) => {
     const tabId = createTabId('node', nodeId);
-    (['A', 'B', 'C'] as SlotId[]).forEach((slot) => closeTabInSlot(slot, tabId));
-  }, [closeTabInSlot]);
+    removeTabFromSlot(setSlotA, slotA, tabId);
+    removeTabFromSlot(setSlotB, slotB, tabId);
+    removeTabFromSlot(setSlotC, slotC, tabId);
+  }, [slotA, slotB, slotC, setSlotA, setSlotB, setSlotC, removeTabFromSlot]);
 
-  useEffect(() => {
-    handleNodeDeletedRef.current = handleNodeDeleted;
-  }, [handleNodeDeleted]);
+  const handleReorderTabsA = useCallback((fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || !slotA) return;
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= slotA.tabs.length || toIndex >= slotA.tabs.length) return;
+    const updated = [...slotA.tabs];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
+    setSlotA(prev => prev ? { ...prev, tabs: updated } : null);
+  }, [slotA, setSlotA]);
 
-  const handleReorderTabs = useCallback((slot: SlotId, fromIndex: number, toIndex: number) => {
-    const state = getSlotState(slot);
-    if (!state || fromIndex === toIndex) return;
-    if (fromIndex < 0 || toIndex < 0 || fromIndex >= state.tabs.length || toIndex >= state.tabs.length) return;
+  const handleReorderTabsB = useCallback((fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || !slotB) return;
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= slotB.tabs.length || toIndex >= slotB.tabs.length) return;
+    const updated = [...slotB.tabs];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
+    setSlotB(prev => prev ? { ...prev, tabs: updated } : null);
+  }, [slotB, setSlotB]);
 
-    const tabs = [...state.tabs];
-    const [moved] = tabs.splice(fromIndex, 1);
-    tabs.splice(toIndex, 0, moved);
-    getSlotSetter(slot)({ tabs, activeTabId: state.activeTabId });
-  }, [getSlotSetter, getSlotState]);
+  const handleReorderTabsC = useCallback((fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || !slotC) return;
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= slotC.tabs.length || toIndex >= slotC.tabs.length) return;
+    const updated = [...slotC.tabs];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
+    setSlotC(prev => prev ? { ...prev, tabs: updated } : null);
+  }, [slotC, setSlotC]);
 
-  const handleCrossSlotDrop = useCallback((targetSlot: SlotId, tab: SlotTab, fromSlot: SlotId) => {
-    closeTabInSlot(fromSlot, tab.id);
-    if (tab.type === 'node' && tab.nodeId != null) {
-      addNodeTabToSlot(targetSlot, tab.nodeId);
-      return;
+  const handleFolderViewDataChanged = useCallback(() => {
+    setFolderViewRefresh(prev => prev + 1);
+    setNodesPanelRefresh(prev => prev + 1);
+  }, []);
+
+  const handleNodeOpenFromDimensions = useCallback((nodeId: number) => {
+    openNodeFromSlot(nodeId, 'A');
+  }, [openNodeFromSlot]);
+
+  // Handle pane type selection from toolbar — add/focus tab in active slot
+  const handlePaneTypeClick = useCallback((paneType: PaneType) => {
+    if (paneType !== 'node') {
+      openPaneSingleton(paneType);
     }
-    if (tab.type !== 'node') {
-      upsertSingletonTab(targetSlot, tab.type);
-    }
-  }, [addNodeTabToSlot, closeTabInSlot, upsertSingletonTab]);
+  }, [openPaneSingleton]);
 
-  const handleContextSelect = useCallback((slot: SlotId, contextId: number | null, _contextName?: string | null) => {
-    setBrowseContextFilters((prev) => ({ ...prev, [slot]: contextId }));
-    setActiveContextId(contextId);
-    if (contextId != null) {
-      openPaneSingleton('views', slot);
+  // Auto-open Feed pane if not already visible
+  const ensureFeedOpen = useCallback(() => {
+    const visibleFeedSlot = visibleSlots.find((slot) => {
+      if (slot === chatSlot) return false;
+      return getSlotState(slot)?.tabs.some((tab) => tab.type === 'views');
+    });
+
+    if (visibleFeedSlot) {
+      const state = getSlotState(visibleFeedSlot);
+      const viewsTab = state?.tabs.find((tab) => tab.type === 'views');
+      if (viewsTab) {
+        getSlotSetter(visibleFeedSlot)((prev) => prev ? { ...prev, activeTabId: viewsTab.id } : prev);
+        setActivePane(visibleFeedSlot);
+        return;
+      }
     }
-  }, [openPaneSingleton, setActiveContextId]);
+
+    openPaneSingleton('views');
+  }, [chatSlot, getSlotSetter, getSlotState, openPaneSingleton, visibleSlots]);
 
   const handleQuickAddSubmit = useCallback(async ({ input, mode, description }: { input: string; mode: 'link' | 'text'; description?: string }) => {
     try {
       const response = await fetch('/api/quick-add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          input,
-          mode,
-          description,
-          contextId: activeContextId,
-        }),
+        body: JSON.stringify({ input, mode, description })
       });
 
       if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || 'Failed to submit Quick Add');
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to submit Quick Add');
       }
 
-      const payload = await response.json();
-      const result = payload.result as { id?: string; inputType?: string } | undefined;
+      const data = await response.json();
+      const result = data.result as { id: string; inputType: string } | undefined;
+
       if (result?.id) {
-        setPendingNodes((prev) => [{
-          id: result.id!,
+        setPendingNodes(prev => [{
+          id: result.id,
           input: input.trim(),
           inputType: result.inputType || 'note',
           submittedAt: Date.now(),
@@ -668,89 +1156,210 @@ export default function ThreePanelLayout() {
         }, ...prev]);
       }
 
-      openPaneSingleton('views', 'A');
+      ensureFeedOpen();
       setShowAddStuff(false);
     } catch (error) {
-      console.error('[ThreePanelLayout] Quick Add failed:', error);
+      console.error('[ThreePanelLayout] Quick Add error:', error);
     }
-  }, [activeContextId, openPaneSingleton]);
+  }, [ensureFeedOpen]);
 
-  const handleSlotAction = useCallback((slot: SlotId, action: PaneAction) => {
+  // Handle closing a pane
+  const handleCloseSlotA = useCallback(() => {
+    setSlotA(null);
+    setActivePane('A');
+  }, [setSlotA]);
+
+  const handleCloseSlotB = useCallback(() => {
+    setSlotB(null);
+    setActivePane('A');
+  }, [setSlotB]);
+
+  const handleCloseSlotC = useCallback(() => {
+    setSlotC(null);
+    setActivePane(visibleSlots[0] ?? 'A');
+  }, [setSlotC, visibleSlots]);
+
+  // Handle pane actions
+  const handleSlotAAction = useCallback((action: PaneAction) => {
     switch (action.type) {
-      case 'switch-pane-type':
+      case 'switch-pane-type': {
         if (action.paneType !== 'node') {
-          upsertSingletonTab(slot, action.paneType);
+          setSingletonPaneInSlot(setSlotA, action.paneType);
+          setActivePane('A');
         }
         break;
-      case 'open-context':
-        handleContextSelect(action.targetSlot ?? slot, action.contextId, action.contextName);
-        break;
+      }
       case 'open-node':
-        openNodeFromSlot(action.nodeId, action.targetSlot ?? slot);
-        break;
-      case 'close-pane':
-        closeActiveSlot(slot);
+        openNodeFromSlot(action.nodeId, 'A');
         break;
     }
-  }, [handleContextSelect, openNodeFromSlot, upsertSingletonTab]);
+  }, [openNodeFromSlot, setSingletonPaneInSlot]);
 
-  const closeActiveSlot = useCallback((slot: SlotId) => {
-    getSlotSetter(slot)(null);
-    if (activePane === slot) {
-      const fallback = visibleSlots.find((candidate) => candidate !== slot) ?? 'A';
-      setActivePane(fallback);
+  const handleSlotBAction = useCallback((action: PaneAction) => {
+    switch (action.type) {
+      case 'switch-pane-type': {
+        if (action.paneType !== 'node') {
+          setSingletonPaneInSlot(setSlotB, action.paneType);
+          setActivePane('B');
+        }
+        break;
+      }
+      case 'open-node':
+        openNodeFromSlot(action.nodeId, 'B');
+        break;
     }
-  }, [activePane, getSlotSetter, visibleSlots]);
+  }, [openNodeFromSlot, setSingletonPaneInSlot]);
+
+  const handleSlotCAction = useCallback((action: PaneAction) => {
+    switch (action.type) {
+      case 'switch-pane-type': {
+        if (action.paneType !== 'node') {
+          setSingletonPaneInSlot(setSlotC, action.paneType);
+          setActivePane('C');
+        }
+        break;
+      }
+      case 'open-node':
+        openNodeFromSlot(action.nodeId, 'C');
+        break;
+    }
+  }, [openNodeFromSlot, setSingletonPaneInSlot]);
+
+  // Handle search result selection
+  const handleSearchNodeSelect = useCallback((nodeId: number) => {
+    handleNodeSelect(nodeId, false);
+    setShowSearchModal(false);
+  }, [handleNodeSelect]);
 
   const handleSwapPanes = useCallback((source: SlotId, target: SlotId) => {
     if (source === target) return;
 
     const sourceState = getSlotState(source);
     const targetState = getSlotState(target);
-    const sourceExpanded = isPanelExpanded(source);
-    const targetExpanded = isPanelExpanded(target);
-    const sourceWeight = getPanelWeight(source);
-    const targetWeight = getPanelWeight(target);
 
     getSlotSetter(source)(targetState);
     getSlotSetter(target)(sourceState);
-    setPanelExpanded(source, targetExpanded);
-    setPanelExpanded(target, sourceExpanded);
-    setPanelWeight(source, targetWeight);
-    setPanelWeight(target, sourceWeight);
 
-    if (activePane === source) setActivePane(target);
-    else if (activePane === target) setActivePane(source);
-  }, [activePane, getPanelWeight, getSlotSetter, getSlotState, isPanelExpanded, setPanelExpanded, setPanelWeight]);
+    if (activePane === source) {
+      setActivePane(target);
+    } else if (activePane === target) {
+      setActivePane(source);
+    }
 
-  const handleSlotDragOver = useCallback((event: React.DragEvent, slot: SlotId) => {
-    if (event.dataTransfer.types.includes('application/x-rah-pane') || event.dataTransfer.types.includes('application/x-rah-tab')) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
+    if (chatSlot === source) {
+      setChatSlot(target);
+    } else if (chatSlot === target) {
+      setChatSlot(source);
+    }
+  }, [activePane, chatSlot, getSlotSetter, getSlotState, setChatSlot]);
+
+  // --- Drag state for cross-slot tab dragging ---
+  const [dragOverSlot, setDragOverSlot] = useState<SlotId | null>(null);
+
+  const handleSlotDragOver = useCallback((e: React.DragEvent, slot: SlotId) => {
+    if (e.dataTransfer.types.includes('application/x-rah-pane') ||
+        e.dataTransfer.types.includes('application/x-rah-tab') ||
+        e.dataTransfer.types.includes('application/node-info')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = e.dataTransfer.types.includes('application/x-rah-pane') ? 'move' : 'copy';
       setDragOverSlot(slot);
     }
   }, []);
 
-  const handleSlotDrop = useCallback((event: React.DragEvent, targetSlot: SlotId) => {
-    event.preventDefault();
+  const handleSlotDragLeave = useCallback(() => {
+    setDragOverSlot(null);
+  }, []);
+
+  const handleSlotDrop = useCallback((e: React.DragEvent, targetSlot: SlotId) => {
     setDragOverSlot(null);
 
-    const paneData = event.dataTransfer.getData('application/x-rah-pane');
+    const paneData = e.dataTransfer.getData('application/x-rah-pane');
     if (paneData) {
-      handleSwapPanes(paneData as SlotId, targetSlot);
+      const sourceSlot = paneData as SlotId;
+      if (sourceSlot !== targetSlot) {
+        handleSwapPanes(sourceSlot, targetSlot);
+      }
       return;
     }
 
-    const tabData = event.dataTransfer.getData('application/x-rah-tab');
+    let tabData = e.dataTransfer.getData('application/x-rah-tab');
+    if (!tabData) {
+      tabData = e.dataTransfer.getData('application/node-info');
+    }
     if (!tabData) return;
 
     try {
-      const parsed = JSON.parse(tabData) as { sourceSlot: SlotId; tab: SlotTab };
-      handleCrossSlotDrop(targetSlot, parsed.tab, parsed.sourceSlot);
-    } catch (error) {
-      console.error('Failed to parse dropped tab payload:', error);
+      const parsed = JSON.parse(tabData);
+      const sourceSlot = parsed.sourceSlot as SlotId | undefined;
+
+      // If it has tabId/tabType, it's a full tab drag
+      if (parsed.tabId && parsed.tabType) {
+        const tab: SlotTab = {
+          id: parsed.tabId,
+          type: parsed.tabType,
+          ...(parsed.nodeId != null ? { nodeId: parsed.nodeId } : {}),
+        };
+
+        // Same slot — just select
+        if (sourceSlot === targetSlot) {
+          if (targetSlot === 'A') {
+            setSlotA(prev => prev ? { ...prev, activeTabId: tab.id } : null);
+          } else if (targetSlot === 'B') {
+            setSlotB(prev => prev ? { ...prev, activeTabId: tab.id } : null);
+          } else {
+            setSlotC(prev => prev ? { ...prev, activeTabId: tab.id } : null);
+          }
+          return;
+        }
+
+        // Cross-slot: remove from source, add to target
+        if (sourceSlot === 'A') removeTabFromSlot(setSlotA, slotA, tab.id);
+        if (sourceSlot === 'B') removeTabFromSlot(setSlotB, slotB, tab.id);
+        if (sourceSlot === 'C') removeTabFromSlot(setSlotC, slotC, tab.id);
+
+        const targetSetter = getSlotSetter(targetSlot);
+        const targetState = getSlotState(targetSlot);
+        addOrFocusTab(targetSetter, targetState, tab);
+        setActivePane(targetSlot);
+        return;
+      }
+
+      // Legacy: node-info drop (from sidebar etc.)
+      const nodeId = parsed.id;
+      if (typeof nodeId !== 'number') return;
+
+      const tab: SlotTab = { id: createTabId('node', nodeId), type: 'node', nodeId };
+      const targetSetter = getSlotSetter(targetSlot);
+      const targetState = getSlotState(targetSlot);
+
+      addOrFocusTab(targetSetter, targetState, tab);
+      setActivePane(targetSlot);
+    } catch (err) {
+      console.error('Failed to parse dropped tab data:', err);
     }
-  }, [handleCrossSlotDrop, handleSwapPanes]);
+  }, [getSlotSetter, getSlotState, handleSwapPanes, slotA, slotB, slotC, addOrFocusTab, removeTabFromSlot, setSlotC]);
+
+  // Cross-slot drop handler for SlotTabBar
+  const handleCrossSlotDropA = useCallback((tab: SlotTab, fromSlot: SlotId) => {
+    if (fromSlot === 'B') removeTabFromSlot(setSlotB, slotB, tab.id);
+    if (fromSlot === 'C') removeTabFromSlot(setSlotC, slotC, tab.id);
+    addOrFocusTab(setSlotA, slotA, tab);
+    setActivePane('A');
+  }, [slotA, slotB, slotC, setSlotA, setSlotB, setSlotC, addOrFocusTab, removeTabFromSlot]);
+
+  const handleCrossSlotDropB = useCallback((tab: SlotTab, fromSlot: SlotId) => {
+    if (fromSlot === 'A') removeTabFromSlot(setSlotA, slotA, tab.id);
+    if (fromSlot === 'C') removeTabFromSlot(setSlotC, slotC, tab.id);
+    addOrFocusTab(setSlotB, slotB, tab);
+    setActivePane('B');
+  }, [slotA, slotB, slotC, setSlotA, setSlotB, setSlotC, addOrFocusTab, removeTabFromSlot]);
+
+  const handleCrossSlotDropC = useCallback((tab: SlotTab, fromSlot: SlotId) => {
+    if (fromSlot === 'A') removeTabFromSlot(setSlotA, slotA, tab.id);
+    if (fromSlot === 'B') removeTabFromSlot(setSlotB, slotB, tab.id);
+    addOrFocusTab(setSlotC, slotC, tab);
+    setActivePane('C');
+  }, [slotA, slotB, slotC, setSlotA, setSlotB, setSlotC, addOrFocusTab, removeTabFromSlot]);
 
   const handleResizePanels = useCallback((left: SlotId, right: SlotId, clientX: number) => {
     const leftEl = panelRefs.current[left];
@@ -762,9 +1371,8 @@ export default function ThreePanelLayout() {
     const combinedWidth = leftRect.width + rightRect.width;
     if (combinedWidth <= 0) return;
 
-    const minWidth = 220;
     const rawLeftWidth = clientX - leftRect.left;
-    const nextLeftWidth = Math.max(minWidth, Math.min(combinedWidth - minWidth, rawLeftWidth));
+    const nextLeftWidth = Math.max(MIN_PANE_WIDTH, Math.min(combinedWidth - MIN_PANE_WIDTH, rawLeftWidth));
     const nextRightWidth = combinedWidth - nextLeftWidth;
     const totalWeight = getPanelWeight(left) + getPanelWeight(right);
 
@@ -772,116 +1380,196 @@ export default function ThreePanelLayout() {
     setPanelWeight(right, (nextRightWidth / combinedWidth) * totalWeight);
   }, [getPanelWeight, setPanelWeight]);
 
-  const renderSlot = (slot: SlotId, state: SlotState) => {
-    const activeTab = getActiveTab(state);
-    if (!activeTab) return null;
+  // --- Compute toolbar indicators ---
+  const { openTabTypes, activeTabType } = useMemo(() => {
+    const types = new Set<PaneType>();
+    if (slotA) {
+      for (const tab of slotA.tabs) types.add(tab.type);
+    }
+    if (slotB) {
+      for (const tab of slotB.tabs) types.add(tab.type);
+    }
+    if (slotC) {
+      for (const tab of slotC.tabs) types.add(tab.type);
+    }
 
-    const tabBar = (
+    const activeSlot = getSlotState(activePane);
+    const activeT = activeSlot ? getActiveTab(activeSlot) : null;
+
+    return {
+      openTabTypes: types,
+      activeTabType: activeT?.type ?? null,
+    };
+  }, [slotA, slotB, slotC, activePane, getSlotState]);
+
+  // --- Render a slot based on the active tab ---
+  const renderSlotContent = (slot: SlotId, state: SlotState) => {
+    const isActive = activePane === slot;
+    const onCollapse = slot === 'A'
+      ? handleCloseSlotA
+      : slot === 'B'
+        ? handleCloseSlotB
+        : handleCloseSlotC;
+    const activeT = getActiveTab(state);
+    if (!activeT) return null;
+
+    const renderTabBar = () => (
       <SlotTabBar
         tabs={state.tabs}
         activeTabId={state.activeTabId}
         slot={slot}
-        onTabSelect={(tabId) => handleTabSelect(slot, tabId)}
-        onTabClose={(tabId) => closeTabInSlot(slot, tabId)}
-        onReorderTabs={(fromIndex, toIndex) => handleReorderTabs(slot, fromIndex, toIndex)}
-        onCrossSlotDrop={(tab, fromSlot) => handleCrossSlotDrop(slot, tab, fromSlot)}
+        onTabSelect={slot === 'A' ? handleTabSelectA : slot === 'B' ? handleTabSelectB : handleTabSelectC}
+        onTabClose={slot === 'A' ? handleCloseTabA : slot === 'B' ? handleCloseTabB : handleCloseTabC}
+        onReorderTabs={slot === 'A' ? handleReorderTabsA : slot === 'B' ? handleReorderTabsB : handleReorderTabsC}
+        onCrossSlotDrop={slot === 'A' ? handleCrossSlotDropA : slot === 'B' ? handleCrossSlotDropB : handleCrossSlotDropC}
       />
     );
 
-    const commonProps = {
-      slot,
-      isActive: activePane === slot,
-      onPaneAction: (action: PaneAction) => handleSlotAction(slot, action),
-      onCollapse: () => closeActiveSlot(slot),
-      onSwapPanes: handleSwapPanes,
-      tabBar,
-    };
+    const tabBarElement = activeT.type === 'node' ? renderTabBar() : undefined;
 
-    switch (activeTab.type) {
+    switch (activeT.type) {
       case 'node': {
-        const nodeTabs = getSlotTabsByType(state, 'node').map((tab) => tab.nodeId!).filter((id): id is number => typeof id === 'number');
+        const { openTabs: nodeTabs, activeTab: activeNodeTab } = getNodeTabsFromSlot(state);
         return (
           <NodePane
-            {...commonProps}
+            slot={slot}
+            isActive={isActive}
+            onPaneAction={slot === 'A' ? handleSlotAAction : slot === 'B' ? handleSlotBAction : handleSlotCAction}
+            onCollapse={onCollapse}
+            onSwapPanes={handleSwapPanes}
+            tabBar={tabBarElement}
             openTabs={nodeTabs}
-            activeTab={activeTab.nodeId ?? null}
-            onTabSelect={(nodeId) => handleTabSelect(slot, createTabId('node', nodeId))}
-            onTabClose={(nodeId) => closeTabInSlot(slot, createTabId('node', nodeId))}
-            onNodeClick={(nodeId) => addNodeTabToSlot(slot, nodeId)}
-            onReorderTabs={(fromIndex, toIndex) => handleReorderTabs(slot, fromIndex, toIndex)}
+            activeTab={activeNodeTab}
+            onTabSelect={(nodeId) => {
+              const tabId = createTabId('node', nodeId);
+              if (slot === 'A') handleTabSelectA(tabId);
+              else if (slot === 'B') handleTabSelectB(tabId);
+              else handleTabSelectC(tabId);
+            }}
+            onTabClose={(nodeId) => {
+              const tabId = createTabId('node', nodeId);
+              if (slot === 'A') handleCloseTabA(tabId);
+              else if (slot === 'B') handleCloseTabB(tabId);
+              else handleCloseTabC(tabId);
+            }}
+            onNodeClick={(nodeId) => {
+              addNodeTabToSlot(slot, nodeId);
+              setSelectedNodes(new Set([nodeId]));
+              setActivePane(slot);
+            }}
+            onReorderTabs={slot === 'A' ? (fromIndex: number, toIndex: number) => {
+              const nodeTabIndices = state.tabs.reduce<number[]>((acc, t, i) => {
+                if (t.type === 'node') acc.push(i);
+                return acc;
+              }, []);
+              if (fromIndex < nodeTabIndices.length && toIndex < nodeTabIndices.length) {
+                handleReorderTabsA(nodeTabIndices[fromIndex], nodeTabIndices[toIndex]);
+              }
+            } : slot === 'B' ? (fromIndex: number, toIndex: number) => {
+              const nodeTabIndices = state.tabs.reduce<number[]>((acc, t, i) => {
+                if (t.type === 'node') acc.push(i);
+                return acc;
+              }, []);
+              if (fromIndex < nodeTabIndices.length && toIndex < nodeTabIndices.length) {
+                handleReorderTabsB(nodeTabIndices[fromIndex], nodeTabIndices[toIndex]);
+              }
+            } : (fromIndex: number, toIndex: number) => {
+              const nodeTabIndices = state.tabs.reduce<number[]>((acc, t, i) => {
+                if (t.type === 'node') acc.push(i);
+                return acc;
+              }, []);
+              if (fromIndex < nodeTabIndices.length && toIndex < nodeTabIndices.length) {
+                handleReorderTabsC(nodeTabIndices[fromIndex], nodeTabIndices[toIndex]);
+              }
+            }}
             refreshTrigger={focusPanelRefresh}
             onOpenInOtherSlot={(nodeId) => openNodeFromSlot(nodeId, slot)}
-            onTextSelect={(nodeId, nodeTitle, text) => setHighlightedPassage({ nodeId, nodeTitle, selectedText: text })}
+            onTextSelect={(nodeId, nodeTitle, text) => {
+              setHighlightedPassage({ nodeId, nodeTitle, selectedText: text });
+            }}
             highlightedPassage={highlightedPassage}
           />
         );
       }
-      case 'contexts':
-        return (
-          <ContextsPane
-            {...commonProps}
-            onNodeOpen={(nodeId) => openNodeFromSlot(nodeId, slot)}
-            onContextSelect={(contextId, contextName) => handleContextSelect(slot, contextId, contextName)}
-          />
-        );
+
       case 'map':
         return (
           <MapPane
-            {...commonProps}
+            slot={slot}
+            isActive={isActive}
+            onPaneAction={slot === 'A' ? handleSlotAAction : slot === 'B' ? handleSlotBAction : handleSlotCAction}
+            onCollapse={onCollapse}
+            onSwapPanes={handleSwapPanes}
+            tabBar={undefined}
             onNodeClick={(nodeId) => openNodeFromSlot(nodeId, slot)}
             focusedNodeId={focusedNodeId}
             onClearFocus={clearMapFocus}
           />
         );
+
       case 'views':
         return (
           <ViewsPane
-            {...commonProps}
+            slot={slot}
+            isActive={isActive}
+            onPaneAction={slot === 'A' ? handleSlotAAction : slot === 'B' ? handleSlotBAction : handleSlotCAction}
+            onCollapse={onCollapse}
+            onSwapPanes={handleSwapPanes}
+            tabBar={undefined}
             onNodeClick={(nodeId) => openNodeFromSlot(nodeId, slot)}
             onNodeOpenInOtherPane={(nodeId) => openNodeFromSlot(nodeId, slot)}
             refreshToken={nodesPanelRefresh}
             pendingNodes={pendingNodes}
-            onDismissPending={(id) => setPendingNodes((prev) => prev.filter((item) => item.id !== id))}
-            externalContextFilterId={browseContextFilters[slot]}
-            onContextFilterSelect={(contextId) => {
-              setBrowseContextFilters((prev) => ({ ...prev, [slot]: contextId }));
-            }}
-            onClearExternalContextFilter={() => {
-              setBrowseContextFilters((prev) => ({ ...prev, [slot]: null }));
-            }}
+            onDismissPending={(id) => setPendingNodes(prev => prev.filter(p => p.id !== id))}
           />
         );
+
       case 'table':
         return (
           <TablePane
-            {...commonProps}
+            slot={slot}
+            isActive={isActive}
+            onPaneAction={slot === 'A' ? handleSlotAAction : slot === 'B' ? handleSlotBAction : handleSlotCAction}
+            onCollapse={onCollapse}
+            onSwapPanes={handleSwapPanes}
+            tabBar={undefined}
             onNodeClick={(nodeId) => openNodeFromSlot(nodeId, slot)}
             refreshToken={nodesPanelRefresh}
           />
         );
+
       case 'skills':
-        return <SkillsPane {...commonProps} />;
+        return (
+          <SkillsPane
+            slot={slot}
+            isActive={isActive}
+            onPaneAction={slot === 'A' ? handleSlotAAction : slot === 'B' ? handleSlotBAction : handleSlotCAction}
+            onCollapse={onCollapse}
+            onSwapPanes={handleSwapPanes}
+            tabBar={undefined}
+            focusedSkill={focusedSkill}
+            onFocusSkill={(skill) => {
+              setFocusedSkill(skill);
+              if (CHAT_FEATURE_ENABLED && skill) {
+                setChatPanelOpen(true);
+              }
+            }}
+            autoOpenSkillName={autoOpenSkillName}
+            onAutoOpenHandled={() => setAutoOpenSkillName(null)}
+          />
+        );
+
       default:
         return null;
     }
   };
 
-  const openTabTypes = useMemo(() => {
-    const types = new Set<PaneType>();
-    (Object.values(slotStates) as Array<SlotState | null>).forEach((state) => {
-      state?.tabs.forEach((tab) => types.add(tab.type));
-    });
-    return types;
-  }, [slotStates]);
-
-  const activeTabType = useMemo(() => {
-    const state = getSlotState(activePane);
-    return state ? getActiveTab(state)?.type ?? null : null;
-  }, [activePane, getSlotState]);
-
+  const slotStates: Record<SlotId, SlotState | null> = { A: slotA, B: slotB, C: slotC };
   const getSlotContainerStyle = (slot: SlotId) => {
     const state = slotStates[slot];
+    const hasContent = Boolean(state && state.tabs.length > 0);
     const weight = getPanelWeight(slot);
+    const showsChat = CHAT_FEATURE_ENABLED && chatPanelOpen && chatSlot === slot;
 
     return {
       flex: `${weight} ${weight} 0`,
@@ -891,7 +1579,7 @@ export default function ThreePanelLayout() {
       flexDirection: 'column' as const,
       background: 'var(--rah-bg-surface)',
       borderRadius: '10px',
-      border: state ? '1px solid transparent' : '1px dashed var(--rah-border)',
+      border: hasContent || showsChat ? '1px solid transparent' : '1px dashed var(--rah-border)',
       outline: dragOverSlot === slot ? '2px dashed var(--rah-accent-green)' : 'none',
       outlineOffset: '-4px',
       transition: 'outline 0.15s ease, background 0.15s ease',
@@ -900,7 +1588,66 @@ export default function ThreePanelLayout() {
 
   const renderExpandedEmptyPanel = (slot: SlotId) => (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rah-text-muted)', fontSize: '13px' }}>
+      <div
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('application/x-rah-pane', slot);
+          e.dataTransfer.effectAllowed = 'move';
+        }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes('application/x-rah-pane')) return;
+          e.preventDefault();
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const source = e.dataTransfer.getData('application/x-rah-pane') as SlotId;
+          if (source && source !== slot) {
+            handleSwapPanes(source, slot);
+          }
+        }}
+        style={{
+          minHeight: '48px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 12px',
+          cursor: 'grab',
+        }}
+      >
+        <GripVertical size={14} color="var(--rah-text-muted)" />
+        <button
+          type="button"
+          onClick={() => {
+            getSlotSetter(slot)(null);
+          }}
+          title="Clear pane"
+          style={{
+            width: '28px',
+            height: '28px',
+            borderRadius: '8px',
+            border: '1px solid var(--rah-border-strong)',
+            background: 'var(--rah-bg-elevated)',
+            color: 'var(--rah-text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--rah-text-muted)',
+          fontSize: '13px',
+        }}
+      >
         Select a pane from the nav
       </div>
     </div>
@@ -914,9 +1661,10 @@ export default function ThreePanelLayout() {
         height: '100vh',
         width: '100vw',
         background: 'var(--rah-bg-base)',
-        overflow: 'hidden',
+        overflow: 'hidden'
       }}
     >
+      {/* Left Toolbar */}
       <LeftToolbar
         onSearchClick={() => setShowSearchModal(true)}
         onAddStuffClick={() => setShowAddStuff(true)}
@@ -927,28 +1675,24 @@ export default function ThreePanelLayout() {
           setSettingsInitialTab(undefined);
           setShowSettings(true);
         }}
-        onPaneTypeClick={(paneType) => {
-          if (paneType !== 'node') {
-            openPaneSingleton(paneType, 'A');
-          }
-        }}
+        onPaneTypeClick={handlePaneTypeClick}
         isExpanded={leftNavExpanded}
         onToggleExpanded={() => setLeftNavExpanded((prev) => !prev)}
         openTabTypes={openTabTypes}
         activeTabType={activeTabType}
+        focusedSkill={focusedSkill}
         theme={theme}
         onThemeToggle={toggleTheme}
-        contexts={availableContexts}
-        onContextQuickSelect={(contextId) => {
-          const target = openPaneSingleton('views', 'A');
-          setBrowseContextFilters((prev) => ({ ...prev, [target]: contextId }));
-          setActiveContextId(contextId);
-        }}
       />
 
-      <div ref={containerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: '8px', gap: '4px' }}>
+      <div
+        ref={containerRef}
+        style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: '8px', gap: '4px', minWidth: 0 }}
+      >
         {visibleSlots.flatMap((slot, index) => {
           const state = slotStates[slot];
+          const showsChat = CHAT_FEATURE_ENABLED && chatPanelOpen && chatSlot === slot;
+          const nextSlot = visibleSlots[index + 1];
           const items: React.ReactNode[] = [];
 
           items.push(
@@ -957,17 +1701,44 @@ export default function ThreePanelLayout() {
               ref={(node) => {
                 panelRefs.current[slot] = node;
               }}
-              onClick={() => setActivePane(slot)}
-              onDragOver={(event) => handleSlotDragOver(event, slot)}
-              onDragLeave={() => setDragOverSlot(null)}
-              onDrop={(event) => handleSlotDrop(event, slot)}
+              onClick={() => {
+                if (!showsChat) {
+                  setActivePane(slot);
+                }
+              }}
+              onDragOver={(e) => handleSlotDragOver(e, slot)}
+              onDragLeave={handleSlotDragLeave}
+              onDrop={(e) => handleSlotDrop(e, slot)}
               style={getSlotContainerStyle(slot)}
             >
-              {state ? renderSlot(slot, state) : renderExpandedEmptyPanel(slot)}
+              {showsChat ? (
+                <ChatPanel
+                  isOpen={true}
+                  isSoloPane={visibleSlots.length === 1}
+                  slot={slot}
+                  onClose={() => setChatPanelOpen(false)}
+                  onOpen={() => setChatPanelOpen(true)}
+                  onSwapPanes={handleSwapPanes}
+                  openTabsData={openTabsData}
+                  activeTabId={activeTab}
+                  focusedSkill={focusedSkill}
+                  onClearFocusedSkill={() => setFocusedSkill(null)}
+                  onNodeClick={(nodeId) => {
+                    openNodeFromSlot(nodeId);
+                  }}
+                  chatMessages={chatMessages as unknown[]}
+                  setChatMessages={setChatMessages as React.Dispatch<React.SetStateAction<unknown[]>>}
+                  highlightedPassage={highlightedPassage}
+                  onClearPassage={() => setHighlightedPassage(null)}
+                  onboardingHint={showOnboardingHint ? ONBOARDING_HINT_TEXT : null}
+                  onDismissOnboardingHint={showOnboardingHint ? dismissOnboardingHint : undefined}
+                />
+              ) : state
+                ? renderSlotContent(slot, state)
+                : renderExpandedEmptyPanel(slot)}
             </div>
           );
 
-          const nextSlot = visibleSlots[index + 1];
           if (nextSlot) {
             items.push(
               <SplitHandle
@@ -982,22 +1753,44 @@ export default function ThreePanelLayout() {
         })}
       </div>
 
+      {CHAT_FEATURE_ENABLED && !chatPanelOpen && (
+        <ChatPanel
+          isOpen={false}
+          isSoloPane={false}
+          onClose={() => setChatPanelOpen(false)}
+          onOpen={() => setChatPanelOpen(true)}
+          openTabsData={openTabsData}
+          activeTabId={activeTab}
+          focusedSkill={focusedSkill}
+          onClearFocusedSkill={() => setFocusedSkill(null)}
+          onNodeClick={(nodeId) => {
+            openNodeFromSlot(nodeId, 'C');
+          }}
+          chatMessages={chatMessages as unknown[]}
+          setChatMessages={setChatMessages as React.Dispatch<React.SetStateAction<unknown[]>>}
+          highlightedPassage={highlightedPassage}
+          onClearPassage={() => setHighlightedPassage(null)}
+          onboardingHint={showOnboardingHint ? ONBOARDING_HINT_TEXT : null}
+          onDismissOnboardingHint={showOnboardingHint ? dismissOnboardingHint : undefined}
+        />
+      )}
+
+      {/* Search Modal */}
       <SearchModal
         isOpen={showSearchModal}
         onClose={() => setShowSearchModal(false)}
-        onNodeSelect={(nodeId) => {
-          openNodeFromSlot(nodeId);
-          setShowSearchModal(false);
-        }}
-        existingFilters={EMPTY_SEARCH_FILTERS}
+        onNodeSelect={handleSearchNodeSelect}
+        existingFilters={searchModalFilters}
       />
 
+      {/* Settings Modal */}
       <SettingsModal
         isOpen={showSettings}
         onClose={handleCloseSettings}
         initialTab={settingsInitialTab}
       />
 
+      {/* Add Stuff Modal */}
       <QuickAddInput
         isOpen={showAddStuff}
         onClose={() => setShowAddStuff(false)}

@@ -11,15 +11,6 @@
 - `metadata`
 - `chunk_status`
 - `event_date`
-- `context_id` nullable FK to `contexts.id`
-- `created_at`
-- `updated_at`
-
-### `contexts`
-- `id`
-- `name`
-- `description`
-- `icon`
 - `created_at`
 - `updated_at`
 
@@ -51,37 +42,34 @@
 - `chunks_fts` indexes chunk text.
 - `vec_nodes` stores node-level vectors.
 - `vec_chunks` stores chunk-level vectors.
-
-Full-text search and vector search are separate surfaces:
-- FTS uses `nodes_fts` / `chunks_fts`
-- semantic/vector retrieval uses `vec_nodes` / `vec_chunks`
-- retrieval may combine them, but docs should not blur them into one surface
+- Full-text search and vector search are separate surfaces:
+  - FTS uses `nodes_fts` / `chunks_fts`
+  - semantic/vector retrieval uses `vec_nodes` / `vec_chunks`
+  - retrieval can combine them, but they should not be described as the same thing
 
 ## Embedding Lifecycle
 
 - `nodes.source` is the canonical long-form field for chunking and chunk embeddings.
-- changing `nodes.source` should return the node to the app-owned chunk pipeline
-- standalone MCP can write `nodes.source`, but it does not directly create chunks or vector rows
-- node-level embeddings and chunk embeddings are separate runtime surfaces
-- integrity/degraded-mode behavior matters enough that docs should describe these surfaces honestly
+- Creating or changing `nodes.source` must put the node back through the app-owned chunk pipeline so the `chunks` rows, `chunks_fts`, and `vec_chunks` state reflect the latest source.
+- Standalone MCP can write `nodes.source`, but it does not directly create `chunks` or vector rows. The app later processes those pending nodes.
+- Deleting a node must remove dependent chunk rows and must not leave stale node/chunk search or vector state behind.
+- Node-level embeddings are a separate surface from chunk embeddings. The contract for what feeds the node-level embedding must be explicit, and updates to those fields must trigger a fresh node-level embedding run.
+- Integrity and degraded-mode checks must cover both search surfaces and embedding-related write surfaces, not just top-level node reads.
+
+## Edge Contract
+
+- `edges.explanation` is now a top-level field and should be treated as the human-readable reason the connection exists.
+- `edges.context` still exists as structured JSON for inferred type, confidence, and creation metadata.
+- docs should not describe edge context JSON as if it is the only user-facing explanation surface.
 
 ## Important Constraints
 
 - `dimensions` and `node_dimensions` are no longer canonical tables.
 - New installs should never create them.
 - Existing installs migrate by snapshotting old dimension data, then dropping the legacy tables.
-- `contexts` are optional. `nodes.context_id` must allow `NULL`.
+- FTS repair and integrity handling are now operational concerns. Do not describe automatic live rebuild behavior as normal product behavior.
 
 ## Common Queries
-
-Nodes in a context:
-
-```sql
-SELECT *
-FROM nodes
-WHERE context_id = ?
-ORDER BY updated_at DESC;
-```
 
 Most connected nodes:
 

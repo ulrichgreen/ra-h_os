@@ -322,30 +322,7 @@ export default function DatabaseTableView({ onNodeClick, refreshToken = 0, toolb
                       {node.id}
                     </span>
 
-                    <span style={{ minWidth: 0 }}>
-                      {node.context?.name ? (
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            maxWidth: '100%',
-                            padding: '3px 8px',
-                            borderRadius: '999px',
-                            border: '1px solid var(--rah-border)',
-                            background: 'var(--rah-bg-surface)',
-                            color: 'var(--rah-text-soft)',
-                            fontSize: '11px',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {node.context.name}
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: '11px', color: 'var(--rah-text-muted)' }}>—</span>
-                      )}
-                    </span>
+                    <span style={{ minWidth: 0, fontSize: '11px', color: 'var(--rah-text-muted)' }}>—</span>
 
                     <span style={{ fontSize: '12px', color: node.edge_count ? 'var(--rah-text-soft)' : 'var(--rah-text-muted)' }}>
                       {node.edge_count ?? 0}

@@ -7,7 +7,7 @@ description: "Use for new-user setup, empty or near-empty graphs, or major reset
 
 ## Your Job
 
-Three things: help the user understand the basic structure of the system, help them start building useful graph data in it, and bootstrap the context capsule when durable cross-session facts become clear.
+Three things: help the user understand the basic structure of the system, help them start building useful graph data in it, and turn early useful context into strong nodes and edges.
 
 Adapt to the user.
 
@@ -30,28 +30,6 @@ Only bring up setup details if the user actually needs them:
    - **Anthropic** — mainly relevant for compatible runtime paths and local/dev setups.
 4. If they are not ready to configure anything yet, keep onboarding. They can still learn the structure and add manual content.
 
-## Capsule Bootstrap
-
-As part of onboarding, also bootstrap the context capsule on the user's behalf.
-
-When the user gives durable identity, preference, worldview, project, or agent-behavior information:
-
-1. Call `readSkill('context-capsule')`
-2. Call `readCapsule`
-3. When you have enough confidence, call `writeCapsule`
-
-Use the capsule for:
-- preferred name
-- agent name or greeting preference
-- interaction style
-- major projects
-- major interests
-- explicit worldview or belief signals
-- what the user is using RA-H for
-
-Do not write the capsule for tentative, one-off, or low-confidence statements.
-Keep it compressed and canonical. Replace stale instructions instead of preserving contradictory history.
-
 ## Explain the System First
 
 Before asking anything, orient the user. Be direct, not salesy:
@@ -60,7 +38,6 @@ Before asking anything, orient the user. Be direct, not salesy:
 
 Explain the structure in simple terms:
 
-- **Contexts** — an optional soft organization layer. These are broad areas like health, job, life, or research. A node can belong to one context when it is explicit and useful, but context is not required.
 - **Nodes** — individual things. A project, idea, person, source, belief, decision, or topic. Each node must have a clear description of what it is and why it matters.
 - **Edges** — explicit connections between things. Each edge must clearly explain the relationship.
 - **Metadata and edges** — secondary structure that makes nodes more useful once the core artifact is clear.
@@ -71,7 +48,7 @@ Then say:
 
 Also explain one practical thing early:
 
-> "You do not need to perfectly design this up front. We want a few concrete nodes, clear contexts when they matter, and a few clean edges so the graph becomes useful quickly."
+> "You do not need to perfectly design this up front. We want a few concrete nodes and a few clean edges so the graph becomes useful quickly."
 
 ## Interview Flow
 
@@ -101,7 +78,6 @@ Keep it conversational. Use these buckets and adapt based on what the user gives
 Work these in naturally when they are relevant:
 
 - **First node creation** — explain that a node is one concrete thing worth keeping: a project, source, person, belief, decision, or idea.
-- **Contexts** — explain that contexts are optional helpers, not required setup. If the user has none, that is fine.
 - **MCP connection** — if the user mentions Claude Code or external agents, offer a quick setup path and point them to the MCP docs/skill flow rather than reciting a giant config block immediately.
 - **What to do after setup** — once the graph has a few solid nodes, the next useful move is usually one of:
   - connect related nodes with explicit edges
@@ -113,9 +89,9 @@ Work these in naturally when they are relevant:
 Do your best to build the graph as useful context emerges.
 
 - Add nodes when the user mentions concrete things worth keeping.
-- Assign a context only when it is an obvious match to one of the user's existing contexts. Prefer leaving context empty over low-confidence guessing.
 - Surface likely edges when relationships are clear enough to explain well, but create them only after the user confirms.
 - Explain what you're adding in plain language so the user understands the structure as it develops.
+- During normal conversation outside explicit onboarding capture, do not keep asking to save every useful statement. Only suggest a save when the context is unusually durable and valuable, and keep the prompt brief.
 
 When the graph is empty or nearly empty, bias toward creating a small, clean starter set rather than over-modeling everything.
 
@@ -125,21 +101,15 @@ Before writing anything, call `readSkill('db-operations')` for full quality stan
 
 - Search before creating — avoid duplicates from day one
 - Every description must be concrete: what it IS and why it matters to them, not what it "explores" or "discusses"
-- Contexts are optional and should only be used for an obvious existing match; otherwise leave them empty
 - Every edge needs an explicit explanation sentence, and agent-driven edge creation should only happen after confirmation
 
 ## Propose Before Writing
 
 When there is enough context, summarize the proposed structure before touching the database:
 
-> "Here's what I'm planning to create: [list contexts with one-line rationale], [list starter nodes], [list key edges]. Does this look right? Anything to adjust?"
+> "Here's what I'm planning to create: [list starter nodes], [list key edges]. Does this look right? Anything to adjust?"
 
 Write only after confirmation.
-
-If onboarding also surfaced durable cross-session facts, include the capsule update in the proposal:
-
-> "I also plan to bootstrap your context capsule with your name, interaction preferences, and current priorities so future chats start grounded. Sound right?"
-> "I also plan to bootstrap your context capsule with your name and interaction preferences so future chats start grounded. Sound right?"
 
 For very early setup, include the first actionable next step too:
 

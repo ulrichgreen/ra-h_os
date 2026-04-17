@@ -6,6 +6,7 @@ import PaneHeader from './PaneHeader';
 import type { BasePaneProps } from './types';
 import SkillCard from '@/components/skills/SkillCard';
 import SkillMarkdown from '@/components/skills/SkillMarkdown';
+import type { FocusedSkill } from '@/types/skills';
 
 interface SkillMeta {
   name: string;
@@ -17,12 +18,19 @@ interface Skill extends SkillMeta {
   content: string;
 }
 
+interface SkillsPaneProps extends BasePaneProps {
+  focusedSkill?: FocusedSkill | null;
+  onFocusSkill?: (skill: FocusedSkill | null) => void;
+  autoOpenSkillName?: string | null;
+  onAutoOpenHandled?: () => void;
+}
+
 export default function SkillsPane({
   slot,
   onCollapse,
   onSwapPanes,
   tabBar,
-}: BasePaneProps) {
+}: SkillsPaneProps) {
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [loading, setLoading] = useState(true);

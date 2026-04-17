@@ -3,10 +3,8 @@ import { queryNodesTool } from '../database/queryNodes';
 import { retrieveQueryContextTool } from '../database/retrieveQueryContext';
 import { getNodesByIdTool } from '../database/getNodesById';
 import { queryEdgeTool } from '../database/queryEdge';
-import { queryContextsTool } from '../database/queryContexts';
 import { createNodeTool } from '../database/createNode';
 import { updateNodeTool } from '../database/updateNode';
-import { writeContextTool } from '../database/writeContext';
 import { deleteNodeTool } from '../database/deleteNode';
 import { createEdgeTool } from '../database/createEdge';
 import { updateEdgeTool } from '../database/updateEdge';
@@ -17,17 +15,22 @@ import { youtubeExtractTool } from '../other/youtubeExtract';
 import { websiteExtractTool } from '../other/websiteExtract';
 import { paperExtractTool } from '../other/paperExtract';
 import { sqliteQueryTool } from '../other/sqliteQuery';
+import { listSkillsTool } from '../skills/listSkills';
+import { readSkillTool } from '../skills/readSkill';
+import { writeSkillTool } from '../skills/writeSkill';
+import { deleteSkillTool } from '../skills/deleteSkill';
 import { logEvalToolCall } from '@/services/evals/evalsLogger';
 
-// Read tools (graph queries)
+// Read tools (graph queries + skills)
 const CORE_TOOLS: Record<string, any> = {
   sqliteQuery: sqliteQueryTool,
   queryNodes: queryNodesTool,
   retrieveQueryContext: retrieveQueryContextTool,
   getNodesById: getNodesByIdTool,
   queryEdge: queryEdgeTool,
-  queryContexts: queryContextsTool,
   searchContentEmbeddings: searchContentEmbeddingsTool,
+  listSkills: listSkillsTool,
+  readSkill: readSkillTool,
 };
 
 // Utility tools
@@ -39,7 +42,6 @@ const ORCHESTRATION_TOOLS: Record<string, any> = {
 // Write tools (includes extraction)
 const EXECUTION_TOOLS: Record<string, any> = {
   createNode: createNodeTool,
-  writeContext: writeContextTool,
   updateNode: updateNodeTool,
   deleteNode: deleteNodeTool,
   createEdge: createEdgeTool,
@@ -47,6 +49,8 @@ const EXECUTION_TOOLS: Record<string, any> = {
   youtubeExtract: youtubeExtractTool,
   websiteExtract: websiteExtractTool,
   paperExtract: paperExtractTool,
+  writeSkill: writeSkillTool,
+  deleteSkill: deleteSkillTool,
 };
 
 export const TOOL_SETS = {

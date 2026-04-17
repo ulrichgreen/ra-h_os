@@ -7,7 +7,6 @@ import {
   RefreshCw,
   LayoutList,
   Map,
-  Folder,
   ChevronDown,
   ChevronRight,
   Table2,
@@ -21,7 +20,6 @@ import {
 import type { PaneType } from '../panes/types';
 import type { FocusedSkill } from '@/types/skills';
 import type { Theme } from '@/hooks/useTheme';
-import type { ContextSummary } from '@/types/database';
 
 interface LeftToolbarProps {
   onSearchClick: () => void;
@@ -38,8 +36,6 @@ interface LeftToolbarProps {
   focusedSkill?: FocusedSkill | null;
   theme: Theme;
   onThemeToggle: () => void;
-  contexts?: ContextSummary[];
-  onContextQuickSelect?: (contextId: number, contextName: string) => void;
 }
 
 const NAV_WIDTH_COLLAPSED = 50;
@@ -124,10 +120,7 @@ export default function LeftToolbar({
   focusedSkill,
   theme,
   onThemeToggle,
-  contexts = [],
-  onContextQuickSelect,
 }: LeftToolbarProps) {
-  const [contextsExpanded, setContextsExpanded] = useState(false);
   const [paneSelectorOpen, setPaneSelectorOpen] = useState(false);
 
   const renderPaneGlyph = (count: 1 | 2 | 3, active: boolean) => (
@@ -302,77 +295,6 @@ export default function LeftToolbar({
                   activeTone="green"
                 />
               ))}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <NavButton
-                      icon={Folder}
-                      label="Contexts"
-                      expanded={isExpanded}
-                      active={activeTabType === 'contexts' || openTabTypes.has('contexts')}
-                      onClick={() => onPaneTypeClick('contexts')}
-                      activeTone="green"
-                    />
-                  </div>
-                  {isExpanded ? (
-                    <button
-                      type="button"
-                      onClick={() => setContextsExpanded((prev) => !prev)}
-                      style={{
-                        width: '28px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: contextsExpanded ? 'var(--rah-bg-hover)' : 'transparent',
-                        color: contextsExpanded ? 'var(--rah-text-active)' : 'var(--rah-text-muted)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        flexShrink: 0,
-                      }}
-                      title="Toggle context list"
-                    >
-                      {contextsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    </button>
-                  ) : null}
-                </div>
-
-                {isExpanded && contextsExpanded && contexts.length > 0 ? (
-                  <div style={{ marginLeft: '14px', paddingLeft: '12px', borderLeft: '1px solid var(--rah-border)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    {contexts.map((context) => (
-                      <button
-                        key={context.id}
-                        type="button"
-                        onClick={() => onContextQuickSelect?.(context.id, context.name)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '8px',
-                          width: '100%',
-                          minHeight: '28px',
-                          border: 'none',
-                          background: 'transparent',
-                          color: 'var(--rah-text-secondary)',
-                          cursor: 'pointer',
-                          padding: '0 8px',
-                          borderRadius: '8px',
-                          textAlign: 'left',
-                        }}
-                      >
-                        <span style={{ fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {context.name}
-                        </span>
-                        <span style={{ fontSize: '10px', color: 'var(--rah-text-muted)', flexShrink: 0 }}>
-                          {context.count}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
             </div>
           </div>
         </div>

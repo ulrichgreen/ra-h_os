@@ -36,8 +36,6 @@ export const getNodesByIdTool = tool({
             title: node.title,
             link: node.link,
             event_date: node.event_date ?? null,
-            context_id: node.context_id ?? null,
-            context: node.context ?? null,
             chunk_status: node.chunk_status || 'unknown',
             created_at: node.created_at,
             updated_at: node.updated_at,

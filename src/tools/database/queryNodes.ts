@@ -4,8 +4,6 @@ import { formatNodeForChat } from '../infrastructure/nodeFormatter';
 import { directNodeLookup } from '@/services/retrieval/directNodeLookup';
 
 type QueryNodeFilters = {
-  contextId?: number;
-  context_name?: string;
   search?: string;
   limit?: number;
   createdAfter?: string;
@@ -15,10 +13,9 @@ type QueryNodeFilters = {
 };
 
 export const queryNodesTool = tool({
-  description: 'Find specific existing nodes in the graph by searching title, description, and source. Use this first when the user is trying to locate a node they already created or a specific existing podcast, article, idea, person, project, or note. For broader current-turn grounding of a substantive question, use retrieveQueryContext instead. Leave context blank by default. If the user explicitly wants a context filter, use context_name rather than a numeric ID.',
+  description: 'Find specific existing nodes in the graph by searching title, description, and source. Use this first when the user is trying to locate a node they already created or a specific existing podcast, article, idea, person, project, or note. For broader current-turn grounding of a substantive question, use retrieveQueryContext instead.',
   inputSchema: z.object({
     filters: z.object({
-      context_name: z.string().describe('Optional primary context name filter. Use only when the user explicitly wants a context-specific lookup.').optional(),
       search: z.string().describe('Search term to match against node title, description, or source').optional(),
       limit: z.number().min(1).max(50).default(10).describe('Maximum number of results to return'),
       createdAfter: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes created on or after this date.'),
@@ -33,8 +30,6 @@ export const queryNodesTool = tool({
       const result = await directNodeLookup({
         search: filters.search,
         limit: filters.limit,
-        context_name: filters.context_name,
-        contextId: filters.contextId,
         createdAfter: filters.createdAfter,
         createdBefore: filters.createdBefore,
         eventAfter: filters.eventAfter,

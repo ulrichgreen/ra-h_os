@@ -9,7 +9,7 @@ description: "Use for structured review, QA, cleanup, or governance checks acros
 
 1. Node quality: duplicates, vague descriptions, missing dates, weak titles.
 2. Edge quality: missing links, weak explanations, wrong directionality.
-3. Context quality: drift, overlap, low-signal buckets, or contexts being overused where stronger node metadata should carry the meaning.
+3. Graph structure quality: weak clustering, redundant organizational nodes, or cases where stronger titles, descriptions, metadata, and edges should carry the meaning.
 4. Skill quality: trigger clarity, overlap, dead/unused skills.
 
 ## Output Format

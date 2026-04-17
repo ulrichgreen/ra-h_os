@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { contextService, nodeService } from '@/services/database';
+import { nodeService } from '@/services/database';
 import { Node, NodeFilters } from '@/types/database';
 import { autoEmbedQueue } from '@/services/embedding/autoEmbedQueue';
 import { generateDescription } from '@/services/database/descriptionService';
 import { coerceDescriptionForStorage } from '@/services/database/quality';
+import { applyRequestSupabaseAuth, getCurrentSupabaseToken } from '@/services/auth/internalAuth';
 import { normalizeNodeLink } from '@/utils/nodeLink';
 import { buildCanonicalNodeMetadata } from '@/services/nodes/metadata';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
+  const cleanupAuth = applyRequestSupabaseAuth(request);
   try {
     const searchParams = request.nextUrl.searchParams;
     
@@ -18,14 +20,6 @@ export async function GET(request: NextRequest) {
       limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 100,
       offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : 0
     };
-
-    const contextIdParam = searchParams.get('contextId');
-    if (contextIdParam) {
-      const parsed = parseInt(contextIdParam, 10);
-      if (!Number.isNaN(parsed)) {
-        filters.contextId = parsed;
-      }
-    }
 
     // Handle sortBy parameter (sortBy=edges|updated|created)
     const sortByParam = searchParams.get('sortBy');
@@ -57,6 +51,8 @@ export async function GET(request: NextRequest) {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch nodes'
     }, { status: 500 });
+  } finally {
+    cleanupAuth();
   }
 }
 
@@ -75,6 +71,7 @@ function sanitizeTitle(title: string): string {
 }
 
 export async function POST(request: NextRequest) {
+  const cleanupAuth = applyRequestSupabaseAuth(request);
   try {
     const body = await request.json();
 
@@ -148,19 +145,6 @@ export async function POST(request: NextRequest) {
           ? body.metadata.source
           : undefined;
 
-    let resolvedContextId: number | null | undefined;
-    try {
-      resolvedContextId = await contextService.resolveContextId({
-        context_id: body.context_id,
-        context_name: body.context_name,
-      });
-    } catch (error) {
-      return NextResponse.json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Invalid context input'
-      }, { status: 400 });
-    }
-
     const node = await nodeService.createNode({
       title: body.title,
       description: finalDescription,
@@ -168,7 +152,6 @@ export async function POST(request: NextRequest) {
       event_date: eventDate ?? undefined,
       link: normalizedLink ?? undefined,
       chunk_status: chunkStatus,
-      context_id: resolvedContextId,
       metadata: buildCanonicalNodeMetadata({
         metadata: body.metadata || {},
         type: inferredType,
@@ -177,7 +160,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (chunkStatus === 'not_chunked' && node.id) {
-      autoEmbedQueue.enqueue(node.id, { reason: 'node_created' });
+      autoEmbedQueue.enqueue(node.id, {
+        reason: 'node_created',
+      });
     }
 
     return NextResponse.json({
@@ -192,5 +177,7 @@ export async function POST(request: NextRequest) {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create node'
     }, { status: 500 });
+  } finally {
+    cleanupAuth();
   }
 }

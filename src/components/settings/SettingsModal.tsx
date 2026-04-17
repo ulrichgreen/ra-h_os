@@ -4,9 +4,8 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import ApiKeysViewer from './ApiKeysViewer';
 import ExternalAgentsPanel from './ExternalAgentsPanel';
-import ContextViewer from './ContextViewer';
 
-export type SettingsTab = 'apikeys' | 'context' | 'agents';
+export type SettingsTab = 'apikeys' | 'agents';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -15,10 +14,10 @@ interface SettingsModalProps {
 }
 
 const DEFAULT_TAB: SettingsTab = 'apikeys';
-const TAB_ORDER: SettingsTab[] = ['apikeys', 'context', 'agents'];
+const TAB_ORDER: SettingsTab[] = ['apikeys', 'agents'];
+
 const TAB_LABELS: Record<SettingsTab, string> = {
   apikeys: 'API Keys',
-  context: 'Context',
   agents: 'Agents',
 };
 
@@ -31,11 +30,9 @@ export default function SettingsModal({ isOpen, onClose, initialTab }: SettingsM
 
   useEffect(() => {
     if (!isOpen) return;
-
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
-
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
@@ -50,6 +47,7 @@ export default function SettingsModal({ isOpen, onClose, initialTab }: SettingsM
   return createPortal(
     <div style={backdropStyle} onClick={onClose}>
       <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+        {/* Sidebar */}
         <div style={sidebarStyle}>
           <div style={logoStyle}>Settings</div>
 
@@ -70,36 +68,27 @@ export default function SettingsModal({ isOpen, onClose, initialTab }: SettingsM
             ))}
           </nav>
 
-          <div style={footerStyle}>
-            <div style={footerLabelStyle}>Local Mode</div>
-            <p style={footerTextStyle}>
-              This build runs entirely on your machine. Add your API key here to unlock descriptions,
-              embeddings, and agent-assisted workflows.
-            </p>
+          <div style={userSectionStyle}>
+            <div style={userLabelStyle}>Local Mode</div>
+            <div style={userEmailStyle}>Bring your own API keys for descriptions, embeddings, and agent workflows.</div>
           </div>
         </div>
 
+        {/* Content */}
         <div style={contentStyle}>
           <div style={headerStyle}>
             <h2 style={titleStyle}>{TAB_LABELS[activeTab]}</h2>
             <button
               onClick={onClose}
               style={closeBtnStyle}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = 'var(--settings-text)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = 'var(--settings-muted)';
-              }}
-              title="Close (ESC)"
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--settings-text)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--settings-muted)'; }}
             >
               ×
             </button>
           </div>
-
           <div style={contentAreaStyle}>
             {activeTab === 'apikeys' && <ApiKeysViewer />}
-            {activeTab === 'context' && <ContextViewer />}
             {activeTab === 'agents' && <ExternalAgentsPanel />}
           </div>
         </div>
@@ -109,6 +98,7 @@ export default function SettingsModal({ isOpen, onClose, initialTab }: SettingsM
   );
 }
 
+// Styles
 const backdropStyle: CSSProperties = {
   position: 'fixed',
   inset: 0,
@@ -133,7 +123,7 @@ const modalStyle: CSSProperties = {
 };
 
 const sidebarStyle: CSSProperties = {
-  width: '220px',
+  width: '200px',
   background: 'var(--settings-sidebar-bg)',
   borderRight: '1px solid var(--settings-border)',
   display: 'flex',
@@ -146,6 +136,7 @@ const logoStyle: CSSProperties = {
   fontSize: '15px',
   fontWeight: 600,
   color: 'var(--settings-text)',
+  letterSpacing: '-0.01em',
 };
 
 const navStyle: CSSProperties = {
@@ -164,8 +155,7 @@ const navItemStyle: CSSProperties = {
   borderRadius: '8px',
 };
 
-const footerStyle: CSSProperties = {
-  marginTop: 'auto',
+const userSectionStyle: CSSProperties = {
   padding: '16px 20px',
   borderTop: '1px solid var(--settings-border)',
   display: 'flex',
@@ -173,19 +163,31 @@ const footerStyle: CSSProperties = {
   gap: '8px',
 };
 
-const footerLabelStyle: CSSProperties = {
+const userLabelStyle: CSSProperties = {
   fontSize: '10px',
-  fontWeight: 600,
-  letterSpacing: '0.06em',
+  fontWeight: 500,
   textTransform: 'uppercase',
+  letterSpacing: '0.05em',
   color: 'var(--settings-muted)',
 };
 
-const footerTextStyle: CSSProperties = {
+const userEmailStyle: CSSProperties = {
   fontSize: '12px',
   color: 'var(--settings-subtext)',
-  margin: 0,
-  lineHeight: 1.5,
+  wordBreak: 'break-all',
+};
+
+const signOutBtnStyle: CSSProperties = {
+  marginTop: '4px',
+  padding: '8px 12px',
+  background: 'transparent',
+  color: 'var(--settings-text)',
+  border: '1px solid var(--settings-border-strong)',
+  borderRadius: '6px',
+  fontSize: '12px',
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'background 0.15s ease, border-color 0.15s ease',
 };
 
 const contentStyle: CSSProperties = {
@@ -211,13 +213,13 @@ const titleStyle: CSSProperties = {
 };
 
 const closeBtnStyle: CSSProperties = {
-  background: 'transparent',
+  background: 'none',
   border: 'none',
   color: 'var(--settings-muted)',
+  fontSize: '20px',
   cursor: 'pointer',
-  fontSize: '24px',
-  lineHeight: 1,
   padding: '4px 8px',
+  lineHeight: 1,
   transition: 'color 0.15s ease',
 };
 

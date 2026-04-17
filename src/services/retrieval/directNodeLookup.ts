@@ -1,4 +1,3 @@
-import { contextService } from '@/services/database/contextService';
 import { nodeService } from '@/services/database/nodes';
 import { countHighSignalQueryTermMatches, getHighSignalSearchTerms, scoreNodeSearchMatch } from '@/services/database/searchRanking';
 import type { Node } from '@/types/database';
@@ -6,8 +5,6 @@ import type { Node } from '@/types/database';
 export interface DirectNodeLookupInput {
   search?: string;
   limit?: number;
-  context_name?: string;
-  contextId?: number;
   createdAfter?: string;
   createdBefore?: string;
   eventAfter?: string;
@@ -20,47 +17,11 @@ export interface DirectNodeLookupResult {
   filtersApplied: {
     search?: string;
     limit: number;
-    context_name?: string;
     createdAfter?: string;
     createdBefore?: string;
     eventAfter?: string;
     eventBefore?: string;
   };
-}
-
-function normalizeContextName(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const normalized = value.trim().replace(/\s+/g, ' ');
-  return normalized || undefined;
-}
-
-async function resolveSearchContext(input: DirectNodeLookupInput): Promise<{ contextId?: number; context_name?: string }> {
-  const normalizedName = normalizeContextName(input.context_name);
-  if (normalizedName) {
-    const context = await contextService.getContextByName(normalizedName);
-    if (!context) {
-      console.warn(`directNodeLookup received unknown context_name "${normalizedName}"; ignoring context filter.`);
-      return {};
-    }
-    return {
-      contextId: context.id,
-      context_name: context.name,
-    };
-  }
-
-  if (typeof input.contextId === 'number') {
-    const context = await contextService.getContextById(input.contextId);
-    if (!context) {
-      console.warn(`directNodeLookup received invalid legacy contextId ${input.contextId}; ignoring context filter.`);
-      return {};
-    }
-    return {
-      contextId: context.id,
-      context_name: context.name,
-    };
-  }
-
-  return {};
 }
 
 function hasStrongAnchorMatch(nodes: Node[], searchTerm: string): boolean {
@@ -87,11 +48,9 @@ export async function directNodeLookup(input: DirectNodeLookupInput): Promise<Di
     };
   }
 
-  const resolvedContext = await resolveSearchContext(input);
   const effectiveFilters = {
     search: searchTerm,
     limit,
-    contextId: resolvedContext.contextId,
     searchMode: 'standard' as const,
     createdAfter: input.createdAfter,
     createdBefore: input.createdBefore,
@@ -102,7 +61,6 @@ export async function directNodeLookup(input: DirectNodeLookupInput): Promise<Di
   let safeNodes = await nodeService.getNodes(effectiveFilters);
 
   const hadExtraFilters = Boolean(
-    effectiveFilters.contextId !== undefined ||
     effectiveFilters.createdAfter ||
     effectiveFilters.createdBefore ||
     effectiveFilters.eventAfter ||
@@ -130,7 +88,6 @@ export async function directNodeLookup(input: DirectNodeLookupInput): Promise<Di
     filtersApplied: {
       search: searchTerm,
       limit,
-      context_name: resolvedContext.context_name,
       createdAfter: input.createdAfter,
       createdBefore: input.createdBefore,
       eventAfter: input.eventAfter,

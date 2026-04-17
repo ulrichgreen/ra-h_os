@@ -2,12 +2,10 @@ import { getSQLiteClient } from './sqlite-client';
 import { Node, NodeFilters } from '@/types/database';
 import { eventBroadcaster } from '../events';
 import { EmbeddingService } from '@/services/embeddings';
-import { scoreNodeSearchMatch } from './searchRanking';
+import { getHighSignalSearchTerms, scoreNodeSearchMatch } from './searchRanking';
 import { buildCanonicalNodeMetadata, mergeNodeMetadata } from '@/services/nodes/metadata';
 
-type NodeRow = Node & {
-  context_json: string | null;
-};
+type NodeRow = Node;
 type NodeSearchRow = NodeRow & { rank?: number; similarity?: number };
 
 function sanitizeFtsQuery(input: string): string {
@@ -21,35 +19,7 @@ function sanitizeFtsQuery(input: string): string {
 }
 
 function extractRelaxedSearchTerms(query: string): string[] {
-  const stopWords = new Set([
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'find',
-    'for', 'from', 'hello', 'i', 'in', 'is', 'it', 'me', 'my', 'of', 'on',
-    'or', 'recent', 'stuff', 'term', 'that', 'the', 'this', 'to', 'with', 'you'
-  ]);
-
-  const rawTerms = query
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .split(/\s+/)
-    .map(term => term.trim())
-    .filter(Boolean);
-
-  const expanded = new Set<string>();
-
-  for (const term of rawTerms) {
-    if (!stopWords.has(term) && term.length >= 3) {
-      expanded.add(term);
-    }
-
-    const alphaParts = term.replace(/\d+/g, ' ').split(/\s+/).filter(Boolean);
-    for (const part of alphaParts) {
-      if (!stopWords.has(part) && part.length >= 3) {
-        expanded.add(part);
-      }
-    }
-  }
-
-  return Array.from(expanded).slice(0, 8);
+  return getHighSignalSearchTerms(query).slice(0, 8);
 }
 
 function reciprocalRankFuse<T extends { id: number }>(
@@ -90,7 +60,6 @@ export class NodeService {
       eventAfter,
       eventBefore,
       chunkStatus,
-      contextId,
     } = filters;
 
     if (search?.trim()) {
@@ -112,8 +81,6 @@ export class NodeService {
     if (eventAfter) { query += ` AND n.event_date >= ?`; params.push(eventAfter); }
     if (eventBefore) { query += ` AND n.event_date < ?`; params.push(eventBefore); }
     if (chunkStatus) { query += ` AND n.chunk_status = ?`; params.push(chunkStatus); }
-    if (contextId !== undefined) { query += ` AND n.context_id = ?`; params.push(contextId); }
-
     const result = sqlite.query<{ total: number }>(query, params);
     return result.rows[0]?.total ?? 0;
   }
@@ -131,7 +98,6 @@ export class NodeService {
       eventAfter,
       eventBefore,
       chunkStatus,
-      contextId,
     } = filters;
 
     if (search?.trim()) {
@@ -143,14 +109,9 @@ export class NodeService {
     let query = `
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
-             n.created_at, n.updated_at, n.context_id,
-             CASE
-               WHEN c.id IS NULL THEN NULL
-               ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-             END as context_json,
+             n.created_at, n.updated_at,
              (SELECT COUNT(*) FROM edges WHERE from_node_id = n.id OR to_node_id = n.id) as edge_count
       FROM nodes n
-      LEFT JOIN contexts c ON c.id = n.context_id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -182,11 +143,6 @@ export class NodeService {
       query += ` AND n.chunk_status = ?`;
       params.push(chunkStatus);
     }
-    if (contextId !== undefined) {
-      query += ` AND n.context_id = ?`;
-      params.push(contextId);
-    }
-
     // Sorting logic
     if (search) {
       // For search queries, prioritize by relevance: exact title → starts with → contains in title → description → source
@@ -243,13 +199,8 @@ export class NodeService {
     const query = `
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
-             n.created_at, n.updated_at, n.context_id,
-             CASE
-               WHEN c.id IS NULL THEN NULL
-               ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-             END as context_json
+             n.created_at, n.updated_at
       FROM nodes n
-      LEFT JOIN contexts c ON c.id = n.context_id
       WHERE n.id = ?
     `;
     const result = sqlite.query<NodeRow>(query, [id]);
@@ -275,7 +226,6 @@ export class NodeService {
       event_date,
       chunk_status,
       metadata = {},
-      context_id,
     } = nodeData;
     const canonicalMetadata = buildCanonicalNodeMetadata({ metadata });
     const now = new Date().toISOString();
@@ -284,8 +234,8 @@ export class NodeService {
     const nodeId = sqlite.transaction(() => {
       // Insert node using prepare/run for lastInsertRowid access
       const nodeResult = sqlite.prepare(`
-        INSERT INTO nodes (title, description, source, link, event_date, metadata, chunk_status, context_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO nodes (title, description, source, link, event_date, metadata, chunk_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         title,
         description ?? null,
@@ -294,7 +244,6 @@ export class NodeService {
         event_date ?? null,
         JSON.stringify(canonicalMetadata),
         chunk_status ?? null,
-        context_id ?? null,
         now,
         now
       );
@@ -353,10 +302,6 @@ export class NodeService {
       if (source !== undefined) { setFields.push('source = ?'); params.push(source); }
       if (link !== undefined) { setFields.push('link = ?'); params.push(link); }
       if (event_date !== undefined) { setFields.push('event_date = ?'); params.push(event_date); }
-      if (Object.prototype.hasOwnProperty.call(updates, 'context_id')) {
-        setFields.push('context_id = ?');
-        params.push(updates.context_id ?? null);
-      }
       if (Object.prototype.hasOwnProperty.call(updates, 'chunk_status')) {
         setFields.push('chunk_status = ?');
         params.push(updates.chunk_status ?? null);
@@ -419,11 +364,9 @@ export class NodeService {
   }
 
   private mapNodeRow(row: NodeRow): Node {
-    const { context_json, ...baseRow } = row;
     return {
-      ...baseRow,
-      metadata: baseRow.metadata ? (typeof baseRow.metadata === 'string' ? JSON.parse(baseRow.metadata) : baseRow.metadata) : null,
-      context: context_json ? JSON.parse(context_json) : null,
+      ...row,
+      metadata: row.metadata ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : null,
     };
   }
 
@@ -433,7 +376,6 @@ export class NodeService {
       createdBefore,
       eventAfter,
       eventBefore,
-      contextId,
     } = filters;
 
     const clauses: string[] = [];
@@ -443,8 +385,6 @@ export class NodeService {
     if (createdBefore) { clauses.push(`${alias}.created_at < ?`); params.push(createdBefore); }
     if (eventAfter) { clauses.push(`${alias}.event_date >= ?`); params.push(eventAfter); }
     if (eventBefore) { clauses.push(`${alias}.event_date < ?`); params.push(eventBefore); }
-    if (contextId !== undefined) { clauses.push(`${alias}.context_id = ?`); params.push(contextId); }
-
     return { clauses, params };
   }
 
@@ -517,7 +457,8 @@ export class NodeService {
 
         return Number(result.rows[0]?.total ?? 0);
       } catch (error) {
-        sqlite.disableFtsTable('nodes', 'nodes_fts query failed during count search', error);
+        sqlite.getIntegrityReport(true);
+        console.warn('[NodeSearch] FTS count failed, falling back to LIKE count:', error);
       }
     }
 
@@ -546,6 +487,7 @@ export class NodeService {
   ): NodeSearchRow[] {
     const ftsQuery = sanitizeFtsQuery(search);
     if (!ftsQuery) return [];
+
     if (!sqlite.canUseFtsTable('nodes')) return [];
 
     const { clauses, params } = this.buildNodeFilterClauses(filters);
@@ -561,15 +503,10 @@ export class NodeService {
         )
         SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
                n.chunk_status, n.embedding_updated_at, n.embedding_text,
-               n.created_at, n.updated_at, n.context_id,
-               CASE
-                 WHEN c.id IS NULL THEN NULL
-                 ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-               END as context_json,
+               n.created_at, n.updated_at,
                fm.rank
         FROM fts_matches fm
         JOIN nodes n ON n.id = fm.rowid
-        LEFT JOIN contexts c ON c.id = n.context_id
         ${whereClauses}
         ORDER BY fm.rank
         LIMIT ?
@@ -577,7 +514,8 @@ export class NodeService {
 
       return result.rows;
     } catch (error) {
-      sqlite.disableFtsTable('nodes', 'nodes_fts query failed during node search', error);
+      sqlite.getIntegrityReport(true);
+      console.warn('[NodeSearch] FTS search failed, falling back to LIKE:', error);
       return [];
     }
   }
@@ -593,13 +531,8 @@ export class NodeService {
     let query = `
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
-             n.created_at, n.updated_at, n.context_id,
-             CASE
-               WHEN c.id IS NULL THEN NULL
-               ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-             END as context_json
+             n.created_at, n.updated_at
       FROM nodes n
-      LEFT JOIN contexts c ON c.id = n.context_id
       WHERE 1=1
     `;
     const queryParams = [...params];
@@ -641,13 +574,8 @@ export class NodeService {
     let query = `
       SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
              n.chunk_status, n.embedding_updated_at, n.embedding_text,
-             n.created_at, n.updated_at, n.context_id,
-             CASE
-               WHEN c.id IS NULL THEN NULL
-               ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-             END as context_json
+             n.created_at, n.updated_at
       FROM nodes n
-      LEFT JOIN contexts c ON c.id = n.context_id
       WHERE 1=1
     `;
     const queryParams = [...params];
@@ -718,15 +646,10 @@ export class NodeService {
         )
         SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
                n.chunk_status, n.embedding_updated_at, n.embedding_text,
-               n.created_at, n.updated_at, n.context_id,
-               CASE
-                 WHEN c.id IS NULL THEN NULL
-                 ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-               END as context_json,
+               n.created_at, n.updated_at,
                (1.0 / (1.0 + vm.distance)) AS similarity
         FROM vector_matches vm
         JOIN nodes n ON n.id = vm.node_id
-        LEFT JOIN contexts c ON c.id = n.context_id
         ${whereClauses}
         ORDER BY vm.distance
         LIMIT ?
@@ -767,6 +690,14 @@ export class NodeService {
       updatedNodes.push(updated);
     }
     return updatedNodes;
+  }
+
+  async getAllDimensions(): Promise<string[]> {
+    return [];
+  }
+
+  async getDimensionStats(): Promise<{dimension: string, count: number}[]> {
+    return [];
   }
 
 }

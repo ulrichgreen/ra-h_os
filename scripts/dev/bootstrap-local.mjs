@@ -153,16 +153,6 @@ function ensureCoreSchema(db) {
       FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
     );
 
-    CREATE TABLE IF NOT EXISTS contexts (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      icon TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized ON contexts(LOWER(TRIM(name)));
-
     CREATE TABLE IF NOT EXISTS logs (
       id INTEGER PRIMARY KEY,
       ts TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
@@ -408,31 +398,6 @@ function ensureCoreSchema(db) {
   if (!hasNodeCol('chunk_status')) {
     db.exec("ALTER TABLE nodes ADD COLUMN chunk_status TEXT DEFAULT 'not_chunked';");
   }
-  if (!hasNodeCol('context_id')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN context_id INTEGER REFERENCES contexts(id) ON DELETE SET NULL;');
-  }
-
-  const contextCols = db.prepare('PRAGMA table_info(contexts)').all().map(col => col.name);
-  const hasContextCol = (name) => contextCols.includes(name);
-  if (!hasContextCol('description')) {
-    db.exec("ALTER TABLE contexts ADD COLUMN description TEXT NOT NULL DEFAULT '';");
-  }
-  if (!hasContextCol('icon')) {
-    db.exec('ALTER TABLE contexts ADD COLUMN icon TEXT;');
-  }
-  if (!hasContextCol('created_at')) {
-    db.exec("ALTER TABLE contexts ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-  }
-  if (!hasContextCol('updated_at')) {
-    db.exec("ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-  }
-
-  db.exec(`
-    UPDATE contexts
-    SET description = COALESCE(NULLIF(TRIM(description), ''), name)
-    WHERE description IS NULL OR LENGTH(TRIM(description)) = 0;
-    CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);
-  `);
 
   if (hasNodeCol('content')) {
     db.exec(`

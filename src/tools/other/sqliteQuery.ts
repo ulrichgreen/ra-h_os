@@ -45,7 +45,7 @@ function isReadOnlyQuery(sql: string): boolean {
 }
 
 export const sqliteQueryTool = tool({
-  description: 'Execute read-only SQL queries (SELECT/WITH/PRAGMA). Tables: nodes, contexts, edges, chunks, logs, and migration snapshots. Use PRAGMA table_info(tablename) for schema.',
+  description: 'Execute read-only SQL queries (SELECT/WITH/PRAGMA). Tables: nodes, edges, chunks, logs, chats, voice_usage, and migration snapshots. Use PRAGMA table_info(tablename) for schema.',
 
   inputSchema: z.object({
     sql: z.string().describe('The SQL query to execute. Must be a SELECT, WITH, or PRAGMA statement.'),

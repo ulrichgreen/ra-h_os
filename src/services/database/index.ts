@@ -4,7 +4,6 @@ import type { DatabaseIntegrityReport } from './sqlite-client';
 export { nodeService, NodeService } from './nodes';
 export { chunkService, ChunkService } from './chunks';
 export { edgeService, EdgeService } from './edges';
-export { contextService, ContextService } from './contextService';
 // export { HelperService } from './helpers'; // Removed - migrated to JSON-based service
 
 // Types

@@ -13,7 +13,7 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 4. Search before create to avoid duplicates.
 5. Every create/update must include a natural description that clearly says what the thing is, why it matters here, and its current workflow status.
 6. Use event dates when known (when it happened, not when saved).
-7. Leave context blank by default. Only apply context when the user explicitly wants it or when one obvious existing context is clearly useful. One node gets at most one primary context, and leaving context blank is valid.
+7. Leave extra taxonomy out of normal writes. Good nodes and good edges should carry the structure.
 8. Do not create edges autonomously. Surface likely edge candidates first, then create them only after the user explicitly confirms.
 9. For user-authored ideas, notes, or dictated thoughts, preserve the user's wording in `source` as fully as possible with only minimal cleanup.
 
@@ -24,9 +24,6 @@ description: "Use for graph read, write, connect, classify, or traverse operatio
 - `source`: full verbatim or canonical content of the node (transcript, article text, book passage, user's thoughts). The standalone MCP server stores this on the node. The RA-H app later chunks and embeds it for semantic search.
 - For idea capture from chat, the `source` should usually be the raw user thought, not a compressed assistant summary.
 - `link`: external source URL only.
-- Normal writes should omit context entirely unless the user explicitly wants one.
-- If context is intentionally provided, prefer `context_name`.
-- Treat numeric `context_id` as an internal implementation detail, not a normal agent-facing field.
 - `metadata`: use the canonical node metadata contract when metadata is needed:
   - `type`
   - `state` (`processed` or `not_processed`)
@@ -48,7 +45,7 @@ It must still make three things clear:
 2. Why — why it is in the graph; what Brad is interested in; what it connects to
 3. Status — where it sits in his workflow (queued, in progress, processed, unknown)
 
-If the agent has graph context (context capsule, focused nodes, recent connected nodes, or an explicit active context), it should infer the why from that context and write it naturally. Do not let the service auto-generate a weak context-free description when you already have enough signal.
+If the agent has graph context (focused nodes, recent connected nodes, or nearby graph structure), it should infer the why from that context and write it naturally. Do not let the service auto-generate a weak context-free description when you already have enough signal.
 
 If the why genuinely cannot be inferred, say that naturally. Do not use labels like `WHAT:`, `WHY:`, or `STATUS:` and do not substitute vague filler like `insightful for understanding` or `relevant to Brad's work`.
 

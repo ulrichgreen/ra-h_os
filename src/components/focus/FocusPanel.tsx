@@ -12,7 +12,6 @@ import { openExternalUrl, shouldOpenExternally } from '@/utils/openExternalUrl';
 import { normalizeNodeLink } from '@/utils/nodeLink';
 import NodeSearchModal from './edges/NodeSearchModal';
 import { getNodeProcessedState, parseNodeMetadata } from '@/services/nodes/metadata';
-import type { ContextSummary } from '@/types/database';
 
 interface FocusPanelProps {
   openTabs: number[];
@@ -68,9 +67,6 @@ export default function FocusPanel({
   const [sourceEditMode, setSourceEditMode] = useState(false);
   const [sourceEditValue, setSourceEditValue] = useState('');
   const [sourceSaving, setSourceSaving] = useState(false);
-  const [availableContexts, setAvailableContexts] = useState<ContextSummary[]>([]);
-  const [contextSaving, setContextSaving] = useState(false);
-  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [hoveredSection, setHoveredSection] = useState<HoverSection>(null);
 
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -79,7 +75,6 @@ export default function FocusPanel({
   const sourceTextareaRef = useRef<HTMLTextAreaElement>(null);
   const skipTitleBlurRef = useRef(false);
   const skipLinkBlurRef = useRef(false);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const currentNode = activeTab !== null ? nodesData[activeTab] : undefined;
   const normalizedCurrentLink = normalizeNodeLink(currentNode?.link || null);
@@ -104,34 +99,6 @@ export default function FocusPanel({
   useEffect(() => {
     if (sourceEditMode) sourceTextareaRef.current?.focus();
   }, [sourceEditMode]);
-
-  useEffect(() => {
-    if (!contextMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!contextMenuRef.current?.contains(event.target as globalThis.Node)) {
-        setContextMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [contextMenuOpen]);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const response = await fetch('/api/contexts');
-        const data = await response.json();
-        if (response.ok && data.success) {
-          setAvailableContexts(data.data || []);
-        }
-      } catch (error) {
-        console.error('Failed to fetch contexts:', error);
-      }
-    })();
-  }, []);
-
 
   useEffect(() => {
     openTabs.forEach((tabId) => {
@@ -165,7 +132,6 @@ export default function FocusPanel({
     setDescEditValue('');
     setSourceEditMode(false);
     setSourceEditValue('');
-    setContextMenuOpen(false);
     setEdgeSearchOpen(false);
     setEdgeEditingId(null);
     setEdgeEditingValue('');
@@ -386,20 +352,6 @@ export default function FocusPanel({
       window.alert('Failed to save source. Please try again.');
     } finally {
       setSourceSaving(false);
-    }
-  };
-
-  const saveContext = async (value: string) => {
-    if (!activeTab) return;
-    setContextSaving(true);
-    try {
-      await updateNode(activeTab, { context_id: value ? Number(value) : null });
-      setContextMenuOpen(false);
-    } catch (error) {
-      console.error('Error saving context:', error);
-      window.alert('Failed to save context. Please try again.');
-    } finally {
-      setContextSaving(false);
     }
   };
 
@@ -1189,60 +1141,6 @@ export default function FocusPanel({
                       </button>
                     </div>
                   )}
-                </div>
-              </div>
-
-              <div className="prop-row">
-                <div className="prop-label">context</div>
-                <div className="prop-value context-prop-value">
-                  <div className="context-select-shell" ref={contextMenuRef}>
-                    <div className="context-inline-row">
-                      <span className={currentNode.context ? 'context-select-name' : 'context-select-empty'}>
-                        {currentNode.context?.name || 'No context'}
-                      </span>
-                      <button
-                        type="button"
-                        className="context-inline-button"
-                        disabled={contextSaving}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setContextMenuOpen((prev) => !prev);
-                        }}
-                        title={currentNode.context ? 'Change context' : 'Add context'}
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
-
-                    {contextMenuOpen ? (
-                      <div className="context-select-menu">
-                        <button
-                          type="button"
-                          className={`context-option ${currentNode.context_id == null ? 'active' : ''}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void saveContext('');
-                          }}
-                        >
-                          No context
-                        </button>
-                        {availableContexts.map((context) => (
-                          <button
-                            key={context.id}
-                            type="button"
-                            className={`context-option ${currentNode.context_id === context.id ? 'active' : ''}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void saveContext(String(context.id));
-                            }}
-                          >
-                            <span>{context.name}</span>
-                            <span className="context-option-count">{context.count}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
                 </div>
               </div>
 

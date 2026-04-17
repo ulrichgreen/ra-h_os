@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { contextService, nodeService } from '@/services/database';
+import { nodeService } from '@/services/database';
 import { autoEmbedQueue } from '@/services/embedding/autoEmbedQueue';
 import { hasSufficientContent } from '@/services/embedding/constants';
 import { coerceDescriptionForStorage } from '@/services/database/quality';
+import { applyRequestSupabaseAuth, getCurrentSupabaseToken } from '@/services/auth/internalAuth';
 import { normalizeNodeLink } from '@/utils/nodeLink';
 import { mergeNodeMetadata } from '@/services/nodes/metadata';
 
@@ -12,6 +13,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const cleanupAuth = applyRequestSupabaseAuth(request);
   try {
     const { id } = await params;
     const nodeId = parseInt(id, 10);
@@ -43,6 +45,8 @@ export async function GET(
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch node'
     }, { status: 500 });
+  } finally {
+    cleanupAuth();
   }
 }
 
@@ -50,6 +54,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const cleanupAuth = applyRequestSupabaseAuth(request);
   try {
     const { id } = await params;
     const nodeId = parseInt(id, 10);
@@ -100,34 +105,6 @@ export async function PUT(
       updates.metadata = mergeNodeMetadata(existingNode.metadata, body.metadata);
     }
 
-    const hasContextName = typeof body.context_name === 'string' && body.context_name.trim().length > 0;
-    const wantsClearContext = body.clear_context === true;
-
-    delete updates.context_name;
-    delete updates.clear_context;
-
-    if (hasContextName && wantsClearContext) {
-      return NextResponse.json({
-        success: false,
-        error: 'context_name cannot be combined with clear_context: true.'
-      }, { status: 400 });
-    }
-
-    if (hasContextName || Object.prototype.hasOwnProperty.call(body, 'context_id') || wantsClearContext) {
-      try {
-        const resolvedContextId = await contextService.resolveContextId({
-          context_id: wantsClearContext ? null : body.context_id,
-          context_name: hasContextName ? body.context_name : undefined,
-        });
-        updates.context_id = resolvedContextId;
-      } catch (error) {
-        return NextResponse.json({
-          success: false,
-          error: error instanceof Error ? error.message : 'Invalid context input'
-        }, { status: 400 });
-      }
-    }
-
     const incomingSource = typeof body.source === 'string' ? body.source : undefined;
     const existingSource = existingNode.source ?? '';
 
@@ -147,9 +124,11 @@ export async function PUT(
 
     const node = await nodeService.updateNode(nodeId, updates);
 
-    if (shouldQueueEmbed) {
-      autoEmbedQueue.enqueue(nodeId, { reason: 'node_updated' });
-    }
+      if (shouldQueueEmbed) {
+        autoEmbedQueue.enqueue(nodeId, {
+          reason: 'node_updated',
+        });
+      }
 
     return NextResponse.json({
       success: true,
@@ -162,6 +141,8 @@ export async function PUT(
       success: false,
       error: error instanceof Error ? error.message : 'Failed to update node'
     }, { status: 500 });
+  } finally {
+    cleanupAuth();
   }
 }
 
@@ -169,6 +150,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const cleanupAuth = applyRequestSupabaseAuth(request);
   try {
     const { id } = await params;
     const nodeId = parseInt(id, 10);
@@ -193,5 +175,7 @@ export async function DELETE(
       success: false,
       error: error instanceof Error ? error.message : 'Failed to delete node'
     }, { status: 500 });
+  } finally {
+    cleanupAuth();
   }
 }

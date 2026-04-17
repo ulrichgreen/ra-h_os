@@ -29,10 +29,10 @@ Your data stays on your machine. Nothing is sent anywhere unless you configure a
 
 Current contract:
 - no runtime `dimensions`
-- optional `contexts`
+- no separate runtime `contexts` layer or context capsule
 - node quality comes from `title`, `description`, `source`, `metadata`, and explicit `edges`
 - direct node lookup first for specific-node intent
-- broader retrieval only when graph context would help
+- `getContext` for orientation and `retrieveQueryContext` for broader current-turn grounding
 - standalone MCP writes node data, but the app owns chunking and embeddings
 
 ---
@@ -130,18 +130,16 @@ If you publish a newer MCP release and want clients to use it immediately, bump 
 }
 ```
 
-**What happens:** Once connected, the agent should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph context would help, and `getContext` only for orientation. It should search before creating, keep context optional by default, and propose durable writeback selectively instead of pestering. The MCP server stores source on the node. The app later turns that source into chunks and embeddings.
+**What happens:** Once connected, the agent should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph grounding would help, and `getContext` only for orientation. It should search before creating, propose durable writeback selectively instead of pestering, and treat the graph itself as the source of grounding rather than a separate contexts layer. The MCP server stores source on the node. The app later turns that source into chunks and embeddings.
 
 Available tools:
 
 | Tool | What it does |
 |------|--------------|
-| `getContext` | Get graph overview — stats, contexts, hub nodes, recent activity |
+| `getContext` | Get graph overview — stats, hub nodes, guides, and orientation signals |
 | `retrieveQueryContext` | Pull relevant graph context for a broader current-turn task |
-| `queryContexts` | List contexts, inspect a context, or search contexts |
 | `queryNodes` | Find nodes by keyword |
 | `createNode` | Create a new node |
-| `writeContext` | Save one confirmed durable context node after explicit user approval |
 | `getNodesById` | Fetch nodes by ID |
 | `updateNode` | Edit an existing node |
 | `createEdge` | Link two nodes together after explicit confirmation |
@@ -158,7 +156,7 @@ Available tools:
 - "What's in my knowledge graph?"
 - "Search my knowledge base for notes about React performance"
 - "Add a node about the article I just read on transformers"
-- "Show me the nodes connected to my research context"
+- "Show me the nodes connected to this project idea"
 
 ---
 

@@ -84,7 +84,6 @@ export const queryEdgeTool = tool({
               id: connection.connected_node.id,
               title: connection.connected_node.title,
               description: truncateText(connection.connected_node.description, 140),
-              context: connection.connected_node.context ?? null,
               formatted_display: formattedNode
             }
           };

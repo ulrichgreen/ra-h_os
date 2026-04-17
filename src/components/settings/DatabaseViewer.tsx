@@ -325,24 +325,7 @@ export default function DatabaseViewer() {
                   </div>
                 </td>
                 <td style={{ padding: '12px 16px', verticalAlign: 'top', width: '18%' }}>
-                  {node.context?.name ? (
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '3px 10px',
-                        borderRadius: '999px',
-                        background: '#142817',
-                        color: '#c4f5d2',
-                        fontSize: '11px',
-                        border: '1px solid #1f3b23',
-                      }}
-                    >
-                      {node.context.name}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: '11px', color: '#555' }}>Unscoped</span>
-                  )}
+                  <span style={{ fontSize: '11px', color: '#555' }}>—</span>
                 </td>
                 <td style={{ padding: '12px 16px', verticalAlign: 'top', width: '10%' }}>
                   <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{node.edge_count ?? 0}</div>

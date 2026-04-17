@@ -19,7 +19,6 @@ interface NodeRecord {
   title: string;
   source: string | null;
   description: string | null;
-  context_name: string | null;
   embedding?: Buffer | null;
   embedding_updated_at?: string | null;
   embedding_text?: string | null;
@@ -57,7 +56,6 @@ export class NodeEmbedder {
 
 Title: ${node.title}
 Source: ${node.source || 'No source'}
-Context: ${node.context_name || 'none'}
 
 Focus on the main concepts, key relationships, and practical implications.`;
 
@@ -103,7 +101,7 @@ Focus on the main concepts, key relationships, and practical implications.`;
       node.title,
       node.source || '',
       node.description,
-      node.context_name
+      null
     );
 
     // Add AI analysis if source exists
@@ -173,29 +171,26 @@ Focus on the main concepts, key relationships, and practical implications.`;
     if (nodeId) {
       // Single node
         query = `
-        SELECT n.id, n.title, n.source, n.description, c.name as context_name,
+        SELECT n.id, n.title, n.source, n.description,
                n.embedding, n.embedding_updated_at
         FROM nodes n
-        LEFT JOIN contexts c ON c.id = n.context_id
         WHERE n.id = ?
       `;
       params = [nodeId];
     } else if (forceReEmbed) {
       // All nodes
       query = `
-        SELECT n.id, n.title, n.source, n.description, c.name as context_name,
+        SELECT n.id, n.title, n.source, n.description,
                n.embedding, n.embedding_updated_at
         FROM nodes n
-        LEFT JOIN contexts c ON c.id = n.context_id
         ORDER BY n.id
       `;
     } else {
       // Only nodes without embeddings
       query = `
-        SELECT n.id, n.title, n.source, n.description, c.name as context_name,
+        SELECT n.id, n.title, n.source, n.description,
                n.embedding, n.embedding_updated_at
         FROM nodes n
-        LEFT JOIN contexts c ON c.id = n.context_id
         WHERE n.embedding IS NULL OR n.embedding_updated_at IS NULL
         ORDER BY n.id
       `;

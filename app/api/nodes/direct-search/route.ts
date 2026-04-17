@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { applyRequestSupabaseAuth } from '@/services/auth/internalAuth';
 import { directNodeLookup } from '@/services/retrieval/directNodeLookup';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
+  const cleanupAuth = applyRequestSupabaseAuth(request);
+
   try {
     const body = await request.json();
     const query = typeof body.query === 'string' ? body.query : '';
@@ -18,8 +21,6 @@ export async function POST(request: NextRequest) {
     const result = await directNodeLookup({
       search: query,
       limit: typeof body.limit === 'number' ? body.limit : undefined,
-      context_name: typeof body.context_name === 'string' ? body.context_name : undefined,
-      contextId: typeof body.contextId === 'number' ? body.contextId : undefined,
       createdAfter: typeof body.createdAfter === 'string' ? body.createdAfter : undefined,
       createdBefore: typeof body.createdBefore === 'string' ? body.createdBefore : undefined,
       eventAfter: typeof body.eventAfter === 'string' ? body.eventAfter : undefined,
@@ -39,5 +40,7 @@ export async function POST(request: NextRequest) {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to run direct node lookup',
     }, { status: 500 });
+  } finally {
+    cleanupAuth();
   }
 }

@@ -146,21 +146,6 @@ export default function ListView({ nodes, onNodeClick }: ListViewProps) {
                 }}>
                   {processedState}
                 </span>
-                {node.context?.name && (
-                  <span
-                    style={{
-                      padding: '2px 8px',
-                      background: 'var(--rah-bg-active)',
-                      border: '1px solid var(--rah-border-strong)',
-                      borderRadius: '8px',
-                      fontSize: '11px',
-                      color: 'var(--rah-text-base)'
-                    }}
-                  >
-                    {node.context.name}
-                  </span>
-                )}
-
                 {/* Date */}
                 <span style={{
                   fontSize: '11px',

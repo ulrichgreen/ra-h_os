@@ -133,27 +133,6 @@ export default function GridView({ nodes, onNodeClick }: GridViewProps) {
                 </div>
               )}
 
-              {/* Footer with Context */}
-              {node.context?.name && (
-                <div style={{
-                  display: 'flex',
-                  gap: '4px',
-                  flexWrap: 'wrap',
-                  marginTop: 'auto'
-                }}>
-                  <span
-                    style={{
-                      padding: '2px 6px',
-                      background: '#1a1a1a',
-                      borderRadius: '3px',
-                      fontSize: '10px',
-                      color: '#888'
-                    }}
-                  >
-                    {node.context.name}
-                  </span>
-                </div>
-              )}
             </button>
           );
         })}

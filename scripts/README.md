@@ -24,7 +24,7 @@ npm run backup
 ```
 - Creates timestamped backup in `/backups/` folder
 - Example: `rah_backup_20250902_102846.sql`
-- Includes all nodes, chunks, edges, contexts, and migration snapshots
+- Includes all nodes, chunks, edges, logs, chats, voice usage, and migration snapshots
 
 ### Restore from Backup
 ```bash
@@ -59,7 +59,7 @@ node scripts/helpers/delete-helper.js "helper-id"
 - All nodes (42,000+ knowledge items)
 - Content chunks and embeddings
 - Node connections/edges
-- Contexts, metadata, and migration snapshots
+- Metadata, logs, chats, voice usage, and migration snapshots
 - Database schema and indexes
 
 ## Notes

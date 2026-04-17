@@ -1,7 +1,6 @@
 'use strict';
 
 const { query, transaction, getDb } = require('./sqlite-client');
-const contextService = require('./contextService');
 
 function parseMetadata(metadata) {
   if (!metadata) return {};
@@ -54,8 +53,6 @@ function mapNodeRow(row) {
   return {
     ...row,
     metadata: row.metadata ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : null,
-    context: row.context_json ? JSON.parse(row.context_json) : null,
-    context_json: undefined,
   };
 }
 
@@ -63,17 +60,16 @@ function mapNodeRow(row) {
  * Get nodes with optional filtering.
  */
 function getNodes(filters = {}) {
-  const { search, limit = 100, offset = 0, contextId } = filters;
+  const { search, limit = 100, offset = 0 } = filters;
+
+  if (normalizeString(search)) {
+    return searchNodes(filters);
+  }
 
   let sql = `
     SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
-           n.created_at, n.updated_at, n.context_id,
-           CASE
-             WHEN c.id IS NULL THEN NULL
-             ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-           END as context_json
+           n.created_at, n.updated_at
     FROM nodes n
-    LEFT JOIN contexts c ON c.id = n.context_id
     WHERE 1=1
   `;
   const params = [];
@@ -83,11 +79,6 @@ function getNodes(filters = {}) {
     sql += ` AND (n.title LIKE ? COLLATE NOCASE OR n.description LIKE ? COLLATE NOCASE OR n.source LIKE ? COLLATE NOCASE)`;
     params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
-  if (contextId !== undefined) {
-    sql += ' AND n.context_id = ?';
-    params.push(contextId);
-  }
-
   // Sort by search relevance or updated_at
   if (search) {
     sql += ` ORDER BY
@@ -130,13 +121,8 @@ function searchNodes(filters = {}) {
 function getNodeById(id) {
   const sql = `
     SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
-           n.created_at, n.updated_at, n.context_id,
-           CASE
-             WHEN c.id IS NULL THEN NULL
-             ELSE json_object('id', c.id, 'name', c.name, 'description', c.description, 'icon', c.icon)
-           END as context_json
+           n.created_at, n.updated_at
     FROM nodes n
-    LEFT JOIN contexts c ON c.id = n.context_id
     WHERE n.id = ?
   `;
 
@@ -172,8 +158,7 @@ function createNode(nodeData) {
     source,
     link,
     event_date,
-    metadata = {},
-    context_id
+    metadata = {}
   } = nodeData;
 
   const title = sanitizeTitle(rawTitle);
@@ -183,13 +168,12 @@ function createNode(nodeData) {
   const db = getDb();
 
   const sourceToStore = source ?? ([title, description].filter(Boolean).join('\n\n').trim() || null);
-  const effectiveContextId = context_id ?? null;
   const chunkStatus = getChunkStatusForSource(sourceToStore);
 
   const nodeId = transaction(() => {
     const stmt = db.prepare(`
-      INSERT INTO nodes (title, description, source, link, event_date, metadata, chunk_status, context_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO nodes (title, description, source, link, event_date, metadata, chunk_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -200,7 +184,6 @@ function createNode(nodeData) {
       event_date ?? null,
       JSON.stringify(canonicalMetadata),
       chunkStatus,
-      effectiveContextId ?? null,
       now,
       now
     );
@@ -259,10 +242,6 @@ function updateNode(id, updates, options = {}) {
       setFields.push('chunk_status = ?');
       params.push(getChunkStatusForSource(normalizedSource));
     }
-    if (Object.prototype.hasOwnProperty.call(updates, 'context_id')) {
-      setFields.push('context_id = ?');
-      params.push(updates.context_id ?? null);
-    }
     if (mergedMetadata !== undefined) {
       setFields.push('metadata = ?');
       params.push(JSON.stringify(mergedMetadata));
@@ -304,7 +283,7 @@ function getNodeCount() {
 
 /**
  * Get knowledge graph context overview.
- * Returns stats, contexts, hub nodes, and recent activity.
+ * Returns stats, hub nodes, and recent activity.
  */
 function getContext() {
   const nodeCount = query('SELECT COUNT(*) as count FROM nodes')[0].count;
@@ -323,12 +302,11 @@ function getContext() {
     LEFT JOIN edges e ON n.id = e.from_node_id OR n.id = e.to_node_id
     GROUP BY n.id
     ORDER BY edge_count DESC
-    LIMIT 5
+    LIMIT 10
   `);
 
   return {
-    stats: { nodeCount, edgeCount, dimensionCount: 0, contextCount: contextService.listContexts().length },
-    contexts: contextService.listContexts(),
+    stats: { nodeCount, edgeCount, dimensionCount: 0 },
     recentNodes,
     hubNodes
   };

@@ -5,8 +5,6 @@ import { chunkService } from '@/services/database/chunks';
 export async function GET() {
   try {
     const sqlite = getSQLiteClient();
-    const vectorCapability = sqlite.getVectorCapability();
-    
     // Test basic database connection
     const connectionTest = await sqlite.testConnection();
     if (!connectionTest) {
@@ -21,7 +19,7 @@ export async function GET() {
     const vectorExtensionTest = await sqlite.checkVectorExtension();
     let vectorStats = null;
     let chunkStats = null;
-    let vectorHealth = vectorCapability.available ? 'healthy' : 'unavailable';
+    let vectorHealth = vectorExtensionTest ? 'healthy' : 'unavailable';
 
     try {
       const totalChunks = await chunkService.getChunkCount();
@@ -32,7 +30,7 @@ export async function GET() {
         coverage_percentage: null,
       };
 
-      if (vectorCapability.available && vectorExtensionTest) {
+      if (vectorExtensionTest) {
         try {
           const chunksWithoutEmbeddings = await chunkService.getChunksWithoutEmbeddings();
           const vectorizedCount = totalChunks - chunksWithoutEmbeddings.length;
@@ -62,9 +60,8 @@ export async function GET() {
       } else {
         vectorHealth = 'unavailable';
         vectorStats = {
-          backend: vectorCapability.backend,
-          extension_path: vectorCapability.extensionPath,
-          reason: vectorCapability.available ? null : vectorCapability.reason,
+          extension_loaded: false,
+          reason: 'Vector extension unavailable in this environment.',
         };
       }
 
@@ -81,7 +78,10 @@ export async function GET() {
       data: {
         database_connected: connectionTest,
         vector_extension_loaded: vectorExtensionTest,
-        vector_capability: vectorCapability,
+        vector_capability: {
+          available: vectorExtensionTest,
+          backend: vectorExtensionTest ? 'sqlite-vec' : 'unavailable',
+        },
         vector_health: vectorHealth,
         chunk_stats: chunkStats,
         vector_stats: vectorStats,

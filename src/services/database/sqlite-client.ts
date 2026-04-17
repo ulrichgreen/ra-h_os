@@ -1,12 +1,7 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 import { DatabaseError } from '@/types/database';
-import {
-  ensureDatabaseDirectory,
-  getDatabasePath,
-  getVecExtensionPath,
-  loadVecExtension,
-  type VectorCapability,
-} from './sqlite-runtime';
 
 export interface SQLiteConfig {
   dbPath: string;
@@ -52,35 +47,28 @@ class SQLiteClient {
   private db: Database.Database;
   private config: SQLiteConfig;
   private readonly readOnly: boolean;
-  private readonly vectorCapability: VectorCapability;
   private integrityReport: DatabaseIntegrityReport | null = null;
-  private readonly ftsUsable: Record<FtsSurfaceName, boolean> = {
-    nodes: true,
-    chunks: true,
-  };
-  private readonly ftsDisabledReason: Record<FtsSurfaceName, string | null> = {
-    nodes: null,
-    chunks: null,
-  };
 
   private constructor() {
     this.config = this.getSQLiteConfig();
     this.readOnly = process.env.SQLITE_READONLY === 'true';
     
     // Initialize database connection
-    if (!this.readOnly) {
-      ensureDatabaseDirectory(this.config.dbPath);
+    const dbDirectory = path.dirname(this.config.dbPath);
+    if (!this.readOnly && !fs.existsSync(dbDirectory)) {
+      fs.mkdirSync(dbDirectory, { recursive: true });
     }
     this.db = this.readOnly
       ? new Database(this.config.dbPath, { readonly: true, fileMustExist: true })
       : new Database(this.config.dbPath);
     
     // Load sqlite-vec extension
-    this.vectorCapability = loadVecExtension(this.db, this.config.vecExtensionPath);
-    if (this.vectorCapability.available) {
+    try {
+      this.db.loadExtension(this.config.vecExtensionPath);
       console.log('SQLite vector extension loaded successfully');
-    } else {
-      console.warn(`Warning: ${this.vectorCapability.reason}`);
+    } catch (error) {
+      // Do not fail hard — allow the app to run without vector features
+      console.error('Warning: Failed to load vector extension:', error);
     }
 
     // Configure SQLite settings
@@ -98,20 +86,22 @@ class SQLiteClient {
       this.db.pragma('temp_store = memory');
       this.db.pragma('busy_timeout = 5000');
 
-      this.ensureCoreSchema();
-      // Ensure vector virtual tables are present and healthy
-      if (this.vectorCapability.available) {
+      this.withStartupWriteLock(() => {
+        this.ensureCoreSchema();
+        this.recoverInterruptedContextMigration();
+        // Ensure vector virtual tables are present and healthy
         this.ensureVectorTables();
         this.healVectorTablesIfCorrupt();
-      }
 
-      // Ensure logging schema (rename memory->logs if needed, create triggers/views)
-      this.ensureLoggingAndMemorySchema();
-      this.ensureContextsSchema();
+        // Ensure logging schema (rename memory->logs if needed, create triggers/views)
+        this.ensureLoggingAndMemorySchemaLocked();
+      });
       this.integrityReport = this.inspectIntegrity();
 
       if (this.integrityReport.state === 'healthy') {
-        this.ensureFtsTables();
+        this.withStartupWriteLock(() => {
+          this.ensureFtsTables();
+        });
         this.integrityReport = this.inspectIntegrity();
       } else {
         console.warn(
@@ -124,9 +114,17 @@ class SQLiteClient {
   }
 
   private getSQLiteConfig(): SQLiteConfig {
+    const dbPath = process.env.SQLITE_DB_PATH || path.join(
+      process.env.HOME || '~', 
+      'Library/Application Support/RA-H/db/rah.sqlite'
+    );
+    
+    const vecExtensionPath = process.env.SQLITE_VEC_EXTENSION_PATH || 
+      './vendor/sqlite-extensions/vec0.dylib';
+
     return {
-      dbPath: getDatabasePath(),
-      vecExtensionPath: getVecExtensionPath(),
+      dbPath,
+      vecExtensionPath
     };
   }
 
@@ -182,9 +180,7 @@ class SQLiteClient {
       } as DatabaseError;
     }
     // Proactively validate/repair vec vtables before any write transaction
-    if (this.vectorCapability.available) {
-      this.healVectorTablesIfCorrupt();
-    }
+    this.healVectorTablesIfCorrupt();
     const txn = this.db.transaction(callback);
     try {
       return txn();
@@ -205,19 +201,13 @@ class SQLiteClient {
   }
 
   public async checkVectorExtension(): Promise<boolean> {
-    return this.vectorCapability.available;
-  }
-
-  public getVectorCapability(): VectorCapability {
-    return this.vectorCapability;
-  }
-
-  public isNodesFtsUsable(): boolean {
-    return this.canUseFtsTable('nodes');
-  }
-
-  public disableNodesFts(reason: string, error?: unknown): void {
-    this.disableFtsTable('nodes', reason, error);
+    try {
+      const result = this.query('SELECT vec_version() as version');
+      return result.rows.length > 0;
+    } catch (error) {
+      console.error('Vector extension check failed:', error);
+      return false;
+    }
   }
 
   public async checkTables(): Promise<string[]> {
@@ -233,10 +223,6 @@ class SQLiteClient {
   }
 
   public ensureVectorExtensions(): void {
-    if (!this.vectorCapability.available) {
-      return;
-    }
-
     try {
       // Test for vec_nodes and vec_chunks; create them if missing
       const hasVecNodes = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get('vec_nodes');
@@ -265,31 +251,26 @@ class SQLiteClient {
     }
   }
 
-  public canUseFtsTable(tableName: FtsSurfaceName): boolean {
-    return this.ftsUsable[tableName] && this.getIntegrityReport().ftsTables[tableName];
-  }
-
-  public disableFtsTable(tableName: FtsSurfaceName, reason: string, error?: unknown): void {
-    this.ftsUsable[tableName] = false;
-    if (this.ftsDisabledReason[tableName] === reason) {
-      return;
-    }
-    this.ftsDisabledReason[tableName] = reason;
-
-    if (error && !this.isSqliteCorruptError(error)) {
-      console.warn(`[SQLite] ${tableName}_fts disabled: ${reason}`, error);
-      return;
-    }
-
-    console.warn(`[SQLite] ${tableName}_fts disabled: ${reason}. Falling back to non-FTS behavior for this database session.`);
-  }
-
   private ensureVectorTables(): void {
-    if (this.readOnly || !this.vectorCapability.available) {
+    if (this.readOnly) {
       return;
     }
     // Wrapper to keep existing public API stable
     this.ensureVectorExtensions();
+  }
+
+  private withStartupWriteLock<T>(callback: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = callback();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {}
+      throw error;
+    }
   }
 
   private ensureCoreSchema(): void {
@@ -311,22 +292,20 @@ class SQLiteClient {
         embedding BLOB,
         embedding_updated_at TEXT,
         embedding_text TEXT,
-        chunk_status TEXT DEFAULT 'not_chunked',
-        context_id INTEGER,
-        FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE SET NULL
+        chunk_status TEXT DEFAULT 'not_chunked'
       );
 
-      CREATE TABLE IF NOT EXISTS contexts (
+      CREATE TABLE IF NOT EXISTS edges (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        icon TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        from_node_id INTEGER NOT NULL,
+        to_node_id INTEGER NOT NULL,
+        source TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        context TEXT,
+        explanation TEXT,
+        FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+        FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
       );
-
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized
-        ON contexts(LOWER(TRIM(name)));
 
       CREATE TABLE IF NOT EXISTS chunks (
         id INTEGER PRIMARY KEY,
@@ -355,218 +334,138 @@ class SQLiteClient {
         FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_chunks_node_id ON chunks(node_id);
-    `);
-
-    this.ensureEdgesTableSchema();
-  }
-
-  private ensureEdgesTableSchema(): void {
-    const hasEdgesTable = this.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='edges'")
-      .get();
-
-    if (!hasEdgesTable) {
-      this.db.exec(`
-        CREATE TABLE edges (
-          id INTEGER PRIMARY KEY,
-          from_node_id INTEGER NOT NULL,
-          to_node_id INTEGER NOT NULL,
-          source TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          context TEXT,
-          explanation TEXT,
-          FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
-          FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
-        );
-      `);
-    } else {
-      const edgeCols = this.db.prepare('PRAGMA table_info(edges)').all() as Array<{ name: string }>;
-      const edgeColNames = new Set(edgeCols.map((col) => col.name));
-      const needsLegacyRewrite =
-        !edgeColNames.has('from_node_id') ||
-        !edgeColNames.has('to_node_id') ||
-        !edgeColNames.has('source') ||
-        !edgeColNames.has('created_at') ||
-        !edgeColNames.has('context') ||
-        edgeColNames.has('from_id') ||
-        edgeColNames.has('to_id') ||
-        edgeColNames.has('description') ||
-        edgeColNames.has('updated_at');
-
-      if (needsLegacyRewrite) {
-        this.rebuildLegacyEdgesTable(edgeColNames);
-      }
-    }
-
-    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node_id);
       CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node_id);
+      CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_chunks_node_id ON chunks(node_id);
+      CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);
     `);
   }
 
-  private rebuildLegacyEdgesTable(edgeColNames: Set<string>): void {
-    const fromExpr = edgeColNames.has('from_node_id')
-      ? 'from_node_id'
-      : edgeColNames.has('from_id')
-        ? 'from_id'
-        : 'NULL';
-    const toExpr = edgeColNames.has('to_node_id')
-      ? 'to_node_id'
-      : edgeColNames.has('to_id')
-        ? 'to_id'
-        : 'NULL';
-    const sourceExpr = edgeColNames.has('source') ? 'source' : "'legacy'";
-    const createdAtExpr = edgeColNames.has('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP';
-    const contextExpr = edgeColNames.has('context') ? 'context' : 'NULL';
-    const explanationExpr = edgeColNames.has('explanation')
-      ? 'explanation'
-      : edgeColNames.has('description')
-        ? 'description'
-        : edgeColNames.has('context')
-          ? "CASE WHEN json_valid(context) THEN json_extract(context, '$.explanation') ELSE NULL END"
-          : 'NULL';
+  private recoverInterruptedContextMigration(): void {
+    const hasTempNodes = this.db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes__without_context'"
+    ).get();
 
-    console.log('Migrating legacy edges table to canonical schema');
+    if (!hasTempNodes) {
+      return;
+    }
 
-    let flippedForeignKeys = false;
-    try {
-      this.db.exec('PRAGMA foreign_keys=OFF;');
-      flippedForeignKeys = true;
-    } catch {}
+    const tempNodeCount = Number(
+      this.db.prepare('SELECT COUNT(*) FROM nodes__without_context').pluck().get() ?? 0
+    );
+    const hasNodesTable = this.db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes'"
+    ).get();
 
-    try {
-      this.db.exec('BEGIN TRANSACTION;');
+    if (!hasNodesTable) {
       this.db.exec(`
-        DROP INDEX IF EXISTS idx_edges_from;
-        DROP INDEX IF EXISTS idx_edges_to;
-        ALTER TABLE edges RENAME TO edges_legacy_migration;
-        CREATE TABLE edges (
-          id INTEGER PRIMARY KEY,
-          from_node_id INTEGER NOT NULL,
-          to_node_id INTEGER NOT NULL,
-          source TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          context TEXT,
-          explanation TEXT,
-          FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE,
-          FOREIGN KEY (to_node_id) REFERENCES nodes(id) ON DELETE CASCADE
-        );
-        INSERT INTO edges (id, from_node_id, to_node_id, source, created_at, context, explanation)
-        SELECT
-          id,
-          ${fromExpr},
-          ${toExpr},
-          ${sourceExpr},
-          COALESCE(${createdAtExpr}, CURRENT_TIMESTAMP),
-          ${contextExpr},
-          ${explanationExpr}
-        FROM edges_legacy_migration
-        WHERE ${fromExpr} IS NOT NULL
-          AND ${toExpr} IS NOT NULL;
-        DROP TABLE edges_legacy_migration;
-        COMMIT;
+        ALTER TABLE nodes__without_context RENAME TO nodes;
+        CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
       `);
-    } catch (error) {
-      try {
-        this.db.exec('ROLLBACK;');
-      } catch {}
-      throw error;
-    } finally {
-      if (flippedForeignKeys) {
-        try {
-          this.db.exec('PRAGMA foreign_keys=ON;');
-        } catch {}
+      console.warn(
+        `[SQLiteMigration] Restored missing nodes table from nodes__without_context (${tempNodeCount} rows).`
+      );
+      return;
+    }
+
+    const nodeColumns = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
+    const hasContextId = nodeColumns.some((column) => column.name === 'context_id');
+    const liveNodeCount = Number(this.db.prepare('SELECT COUNT(*) FROM nodes').pluck().get() ?? 0);
+
+    if (!hasContextId && liveNodeCount === 0 && tempNodeCount > 0) {
+      this.db.exec(`
+        INSERT INTO nodes (
+          id, title, description, source, link, event_date, created_at, updated_at,
+          metadata, embedding, embedding_updated_at, embedding_text, chunk_status
+        )
+        SELECT
+          id, title, description, source, link, event_date, created_at, updated_at,
+          metadata, embedding, embedding_updated_at, embedding_text, chunk_status
+        FROM nodes__without_context;
+      `);
+
+      const restoredNodeCount = Number(this.db.prepare('SELECT COUNT(*) FROM nodes').pluck().get() ?? 0);
+      if (restoredNodeCount === tempNodeCount) {
+        this.db.exec('DROP TABLE nodes__without_context;');
       }
+
+      console.warn(
+        `[SQLiteMigration] Recovered ${restoredNodeCount} nodes from interrupted context-removal migration.`
+      );
     }
   }
 
-  private rebuildLegacyChatsTable(chatColNames: Set<string>): void {
-    const chatTypeExpr = chatColNames.has('chat_type') ? 'chat_type' : 'NULL';
-    const helperNameExpr = chatColNames.has('helper_name')
-      ? 'helper_name'
-      : chatColNames.has('title')
-        ? 'title'
-        : 'NULL';
-    const agentTypeExpr = chatColNames.has('agent_type')
-      ? "COALESCE(agent_type, 'orchestrator')"
-      : "'orchestrator'";
-    const delegationIdExpr = chatColNames.has('delegation_id') ? 'delegation_id' : 'NULL';
-    const userMessageExpr = chatColNames.has('user_message') ? 'user_message' : 'NULL';
-    const assistantMessageExpr = chatColNames.has('assistant_message') ? 'assistant_message' : 'NULL';
-    const threadIdExpr = chatColNames.has('thread_id') ? 'thread_id' : 'NULL';
-    const focusedNodeIdExpr = chatColNames.has('focused_node_id') ? 'focused_node_id' : 'NULL';
-    const createdAtExpr = chatColNames.has('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP';
-    const metadataExpr = chatColNames.has('metadata') ? 'metadata' : 'NULL';
+  private dropContextsSchema(): void {
+    const nodeColumns = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
+    const hasContextId = nodeColumns.some((column) => column.name === 'context_id');
 
-    console.log('Migrating legacy chats table to canonical schema');
+    this.db.exec('DROP INDEX IF EXISTS idx_nodes_context_id;');
+    this.db.exec('DROP INDEX IF EXISTS idx_contexts_name_normalized;');
 
-    let flippedForeignKeys = false;
-    try {
-      this.db.exec('PRAGMA foreign_keys=OFF;');
-      flippedForeignKeys = true;
-    } catch {}
-
-    try {
-      this.db.exec('BEGIN TRANSACTION;');
-      this.db.exec(`
-        DROP INDEX IF EXISTS idx_chats_thread;
-        ALTER TABLE chats RENAME TO chats_legacy_cleanup;
-        CREATE TABLE chats (
-          id INTEGER PRIMARY KEY,
-          chat_type TEXT,
-          helper_name TEXT,
-          agent_type TEXT DEFAULT 'orchestrator',
-          delegation_id INTEGER,
-          user_message TEXT,
-          assistant_message TEXT,
-          thread_id TEXT,
-          focused_node_id INTEGER,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          metadata TEXT,
-          FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
-        );
-        INSERT INTO chats (
-          id, chat_type, helper_name, agent_type, delegation_id,
-          user_message, assistant_message, thread_id, focused_node_id,
-          created_at, metadata
-        )
-        SELECT
-          id,
-          ${chatTypeExpr},
-          ${helperNameExpr},
-          ${agentTypeExpr},
-          ${delegationIdExpr},
-          ${userMessageExpr},
-          ${assistantMessageExpr},
-          ${threadIdExpr},
-          ${focusedNodeIdExpr},
-          COALESCE(${createdAtExpr}, CURRENT_TIMESTAMP),
-          ${metadataExpr}
-        FROM chats_legacy_cleanup;
-        DROP TABLE chats_legacy_cleanup;
-        COMMIT;
-      `);
-    } catch (error) {
+    if (hasContextId) {
       try {
-        this.db.exec('ROLLBACK;');
-      } catch {}
-      throw error;
-    } finally {
-      if (flippedForeignKeys) {
+        this.db.exec('DROP TABLE IF EXISTS nodes__without_context;');
+        this.db.exec('PRAGMA foreign_keys = OFF;');
+        this.db.exec(`
+          CREATE TABLE nodes__without_context (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            description TEXT,
+            source TEXT,
+            link TEXT,
+            event_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            metadata TEXT,
+            embedding BLOB,
+            embedding_updated_at TEXT,
+            embedding_text TEXT,
+            chunk_status TEXT DEFAULT 'not_chunked'
+          );
+
+          INSERT INTO nodes__without_context (
+            id, title, description, source, link, event_date, created_at, updated_at,
+            metadata, embedding, embedding_updated_at, embedding_text, chunk_status
+          )
+          SELECT
+            id, title, description, source, link, event_date, created_at, updated_at,
+            metadata, embedding, embedding_updated_at, embedding_text, chunk_status
+          FROM nodes;
+
+          DROP TABLE nodes;
+          ALTER TABLE nodes__without_context RENAME TO nodes;
+          CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
+        `);
+      } catch (error) {
         try {
-          this.db.exec('PRAGMA foreign_keys=ON;');
+          this.db.exec('PRAGMA foreign_keys = ON;');
         } catch {}
+
+        if (error instanceof Error && /SQLITE_LOCKED|database table is locked/i.test(error.message)) {
+          console.warn('[SQLiteMigration] Skipping context-column removal in this process because another startup process holds the schema lock.');
+          return;
+        }
+
+        throw error;
       }
+
+      this.db.exec('PRAGMA foreign_keys = ON;');
     }
+
+    this.db.exec('DROP TABLE IF EXISTS contexts;');
   }
 
   private ensureLoggingAndMemorySchema(): void {
     if (this.readOnly) {
       return;
     }
+    this.withStartupWriteLock(() => this.ensureLoggingAndMemorySchemaLocked());
+  }
+
+  private ensureLoggingAndMemorySchemaLocked(): void {
     try {
+      const hasChats = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chats'").get();
       // Existing installs may already have logs but still need the idempotent schema pass below.
       // Only skip the legacy memory rename step when logs already exists.
       const hasLogs = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='logs'").get();
@@ -581,16 +480,16 @@ class SQLiteClient {
       const hasLogsNow = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='logs'").get();
       if (!hasLogsNow) {
         this.db.exec(`
-          CREATE TABLE logs (
-            id INTEGER PRIMARY KEY,
-            ts TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-            table_name TEXT NOT NULL,
-            action TEXT NOT NULL,
-            row_id INTEGER NOT NULL,
-            summary TEXT,
-            snapshot_json TEXT
-          );
-        `);
+            CREATE TABLE logs (
+              id INTEGER PRIMARY KEY,
+              ts TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+              table_name TEXT NOT NULL,
+              action TEXT NOT NULL,
+              row_id INTEGER NOT NULL,
+              summary TEXT,
+              snapshot_json TEXT
+            );
+          `);
       }
 
       // Ensure nodes table has expected columns for memory nodes
@@ -615,222 +514,202 @@ class SQLiteClient {
         console.warn('Failed to ensure nodes columns:', nodeErr);
       }
 
-      // Ensure chats table tracks creation timestamp for ordering
-      try {
-        const chatCols = this.db.prepare('PRAGMA table_info(chats)').all() as Array<{ name: string }>;
-        if (chatCols.some(col => col.name === 'created_at')) {
-          // no-op, column exists
-        } else if (chatCols.length > 0) {
-          this.db.exec("ALTER TABLE chats ADD COLUMN created_at TEXT DEFAULT (CURRENT_TIMESTAMP);");
-        }
-      } catch (chatErr) {
-        console.warn('Failed to ensure chats.created_at column:', chatErr);
-      }
-
-      // Normalize legacy chats table before creating chat triggers or views that reference modern columns.
-      try {
-        const hasChatsTable = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chats'").get();
-        if (hasChatsTable) {
+        // Ensure chats table tracks creation timestamp for ordering
+        try {
           const chatCols = this.db.prepare('PRAGMA table_info(chats)').all() as Array<{ name: string }>;
-          const chatColNames = new Set(chatCols.map((col) => col.name));
-          const needsChatRewrite =
-            chatColNames.has('focused_memory_id') ||
-            ['chat_type', 'helper_name', 'agent_type', 'delegation_id', 'user_message', 'assistant_message', 'thread_id', 'focused_node_id', 'created_at', 'metadata']
-              .some((name) => !chatColNames.has(name));
-
-          if (needsChatRewrite) {
-            this.rebuildLegacyChatsTable(chatColNames);
+          if (chatCols.some(col => col.name === 'created_at')) {
+            // no-op, column exists
+          } else if (chatCols.length > 0) {
+            this.db.exec("ALTER TABLE chats ADD COLUMN created_at TEXT DEFAULT (CURRENT_TIMESTAMP);");
           }
+        } catch (chatErr) {
+          console.warn('Failed to ensure chats.created_at column:', chatErr);
         }
-      } catch (chatSchemaErr) {
-        console.warn('Failed to normalize chats schema before log setup:', chatSchemaErr);
-      }
 
-      // 3) Helpful indexes on logs (clean up old names first)
-      this.db.exec(`
-        DROP INDEX IF EXISTS idx_memory_ts;
-        DROP INDEX IF EXISTS idx_memory_table_ts;
-        DROP INDEX IF EXISTS idx_memory_table_row;
-        CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
-        CREATE INDEX IF NOT EXISTS idx_logs_table_ts ON logs(table_name, ts);
-        CREATE INDEX IF NOT EXISTS idx_logs_table_row ON logs(table_name, row_id);
-      `);
-
-      // 4) Recreate triggers to write to logs (use CREATE IF NOT EXISTS)
-      const hasChats = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chats'").get();
-      this.db.exec(`
-        DROP TRIGGER IF EXISTS trg_nodes_ai;
-        DROP TRIGGER IF EXISTS trg_nodes_au;
-        CREATE TRIGGER IF NOT EXISTS trg_nodes_ai AFTER INSERT ON nodes BEGIN
-          INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
-          VALUES('nodes', 'insert', NEW.id,
-                 printf('node created: %s', COALESCE(NEW.title,'')),
-                 json_object('id', NEW.id, 'title', NEW.title, 'link', NEW.link));
-        END;
-        CREATE TRIGGER IF NOT EXISTS trg_nodes_au AFTER UPDATE ON nodes BEGIN
-          INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
-          VALUES('nodes', 'update', NEW.id,
-                 printf('node updated: %s', COALESCE(NEW.title,'')),
-                 json_object('id', NEW.id, 'title', NEW.title, 'link', NEW.link));
-        END;
-
-        DROP TRIGGER IF EXISTS trg_edges_ai;
-        DROP TRIGGER IF EXISTS trg_edges_au;
-        CREATE TRIGGER IF NOT EXISTS trg_edges_ai AFTER INSERT ON edges BEGIN
-          INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
-          VALUES('edges', 'insert', NEW.id,
-                 printf('edge %d→%d (%s)', NEW.from_node_id, NEW.to_node_id, COALESCE(NEW.source,'')),
-                 json_object(
-                   'id', NEW.id,
-                   'from', NEW.from_node_id,
-                   'to', NEW.to_node_id,
-                   'source', NEW.source,
-                   'from_title', substr((SELECT title FROM nodes WHERE id = NEW.from_node_id), 1, 120),
-                   'to_title', substr((SELECT title FROM nodes WHERE id = NEW.to_node_id), 1, 120)
-                 ));
-        END;
-        CREATE TRIGGER IF NOT EXISTS trg_edges_au AFTER UPDATE ON edges BEGIN
-          INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
-          VALUES('edges', 'update', NEW.id,
-                 printf('edge updated %d→%d', NEW.from_node_id, NEW.to_node_id),
-                 json_object(
-                   'id', NEW.id,
-                   'from', NEW.from_node_id,
-                   'to', NEW.to_node_id,
-                   'source', NEW.source,
-                   'from_title', substr((SELECT title FROM nodes WHERE id = NEW.from_node_id), 1, 120),
-                   'to_title', substr((SELECT title FROM nodes WHERE id = NEW.to_node_id), 1, 120)
-                 ));
-        END;
-      `);
-
-      if (hasChats) {
+        // 3) Helpful indexes on logs (clean up old names first)
         this.db.exec(`
-          DROP TRIGGER IF EXISTS trg_chats_ai;
-          CREATE TRIGGER IF NOT EXISTS trg_chats_ai AFTER INSERT ON chats BEGIN
+          DROP INDEX IF EXISTS idx_memory_ts;
+          DROP INDEX IF EXISTS idx_memory_table_ts;
+          DROP INDEX IF EXISTS idx_memory_table_row;
+          CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
+          CREATE INDEX IF NOT EXISTS idx_logs_table_ts ON logs(table_name, ts);
+          CREATE INDEX IF NOT EXISTS idx_logs_table_row ON logs(table_name, row_id);
+        `);
+
+        // 4) Recreate triggers to write to logs (use CREATE IF NOT EXISTS)
+        this.db.exec(`
+          DROP TRIGGER IF EXISTS trg_nodes_ai;
+          DROP TRIGGER IF EXISTS trg_nodes_au;
+          CREATE TRIGGER IF NOT EXISTS trg_nodes_ai AFTER INSERT ON nodes BEGIN
             INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
-            VALUES('chats', 'insert', NEW.id,
-                   printf('chat: %s (%s)', COALESCE(NEW.helper_name,''), COALESCE(NEW.thread_id,'')),
+            VALUES('nodes', 'insert', NEW.id,
+                   printf('node created: %s', COALESCE(NEW.title,'')),
+                   json_object('id', NEW.id, 'title', NEW.title, 'link', NEW.link));
+          END;
+          CREATE TRIGGER IF NOT EXISTS trg_nodes_au AFTER UPDATE ON nodes BEGIN
+            INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
+            VALUES('nodes', 'update', NEW.id,
+                   printf('node updated: %s', COALESCE(NEW.title,'')),
+                   json_object('id', NEW.id, 'title', NEW.title, 'link', NEW.link));
+          END;
+
+          DROP TRIGGER IF EXISTS trg_edges_ai;
+          DROP TRIGGER IF EXISTS trg_edges_au;
+          CREATE TRIGGER IF NOT EXISTS trg_edges_ai AFTER INSERT ON edges BEGIN
+            INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
+            VALUES('edges', 'insert', NEW.id,
+                   printf('edge %d→%d (%s)', NEW.from_node_id, NEW.to_node_id, COALESCE(NEW.source,'')),
                    json_object(
                      'id', NEW.id,
-                     'helper', NEW.helper_name,
-                     'thread', NEW.thread_id,
-                     'user_message', COALESCE(NEW.user_message,''),
-                     'assistant_message', COALESCE(NEW.assistant_message,''),
-                     'user_preview', substr(COALESCE(NEW.user_message,''), 1, 120),
-                     'assistant_preview', substr(COALESCE(NEW.assistant_message,''), 1, 120),
-                     'system_message', COALESCE(json_extract(NEW.metadata, '$.system_message'), ''),
-                     'input_tokens', COALESCE(json_extract(NEW.metadata, '$.input_tokens'), 0),
-                     'output_tokens', COALESCE(json_extract(NEW.metadata, '$.output_tokens'), 0),
-                     'cost_usd', COALESCE(json_extract(NEW.metadata, '$.estimated_cost_usd'), 0.0),
-                     'cache_hit', COALESCE(json_extract(NEW.metadata, '$.cache_hit'), 0),
-                     'model', COALESCE(json_extract(NEW.metadata, '$.model_used'), ''),
-                     'tools_count', COALESCE(json_extract(NEW.metadata, '$.tool_calls_count'), 0),
-                     'tools_used', COALESCE(json_extract(NEW.metadata, '$.tools_used'), json('[]')),
-                     'latency_ms', COALESCE(json_extract(NEW.metadata, '$.latency_ms'), 0),
-                     'prompt_build_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.promptBuildMs'), 0),
-                     'tools_build_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.toolsBuildMs'), 0),
-                     'model_resolve_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.modelResolveMs'), 0),
-                     'message_assembly_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.messageAssemblyMs'), 0),
-                     'stream_setup_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.streamSetupMs'), 0),
-                     'tool_loop_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.toolLoopMs'), 0),
-                     'first_token_latency_ms', COALESCE(json_extract(NEW.metadata, '$.first_token_latency_ms'), 0),
-                     'first_chunk_latency_ms', COALESCE(json_extract(NEW.metadata, '$.first_chunk_latency_ms'), 0),
-                     'tool_timings', COALESCE(json_extract(NEW.metadata, '$.tool_timings'), json('[]')),
-                     'trace_id', COALESCE(json_extract(NEW.metadata, '$.trace_id'), ''),
-                     'voice_tts_chars', COALESCE(json_extract(NEW.metadata, '$.voice_tts_chars'), 0),
-                     'voice_tts_cost_usd', COALESCE(json_extract(NEW.metadata, '$.voice_tts_cost_usd'), 0),
-                     'voice_tts_chars_total', COALESCE(json_extract(NEW.metadata, '$.voice_tts_chars_total'), 0),
-                     'voice_tts_cost_usd_total', COALESCE(json_extract(NEW.metadata, '$.voice_tts_cost_usd_total'), 0),
-                     'voice_request_id', COALESCE(json_extract(NEW.metadata, '$.voice_request_id'), ''),
-                     'voice_tts_request_count', COALESCE(json_extract(NEW.metadata, '$.voice_tts_request_count'), 0)
+                     'from', NEW.from_node_id,
+                     'to', NEW.to_node_id,
+                     'source', NEW.source,
+                     'from_title', substr((SELECT title FROM nodes WHERE id = NEW.from_node_id), 1, 120),
+                     'to_title', substr((SELECT title FROM nodes WHERE id = NEW.to_node_id), 1, 120)
+                   ));
+          END;
+          CREATE TRIGGER IF NOT EXISTS trg_edges_au AFTER UPDATE ON edges BEGIN
+            INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
+            VALUES('edges', 'update', NEW.id,
+                   printf('edge updated %d→%d', NEW.from_node_id, NEW.to_node_id),
+                   json_object(
+                     'id', NEW.id,
+                     'from', NEW.from_node_id,
+                     'to', NEW.to_node_id,
+                     'source', NEW.source,
+                     'from_title', substr((SELECT title FROM nodes WHERE id = NEW.from_node_id), 1, 120),
+                     'to_title', substr((SELECT title FROM nodes WHERE id = NEW.to_node_id), 1, 120)
                    ));
           END;
         `);
-      }
 
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS voice_usage (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          chat_id INTEGER,
-          session_id TEXT,
-          helper_name TEXT,
-          request_id TEXT,
-          message_id TEXT,
-          voice TEXT,
-          model TEXT,
-          chars INTEGER,
-          cost_usd REAL,
-          duration_ms INTEGER,
-          text_preview TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE SET NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_voice_usage_session ON voice_usage(session_id, created_at);
-        CREATE INDEX IF NOT EXISTS idx_voice_usage_chat ON voice_usage(chat_id);
-      `);
-
-      // 5) Views: logs_v (drop any legacy memory_v alias)
-      this.db.exec(`DROP VIEW IF EXISTS logs_v; DROP VIEW IF EXISTS memory_v;`);
-      try {
-        this.db.exec(`
-        CREATE VIEW logs_v AS
-        SELECT 
-          m.id,
-          m.ts,
-          m.table_name,
-          m.action,
-          m.row_id,
-          m.summary,
-          m.enriched_summary,
-          m.snapshot_json,
-          CASE WHEN m.table_name='nodes' THEN n.title END AS node_title,
-          CASE WHEN m.table_name='edges' THEN nf.title END AS edge_from_title,
-          CASE WHEN m.table_name='edges' THEN nt.title END AS edge_to_title,
-          CASE WHEN m.table_name='chats' THEN c.helper_name END AS chat_helper,
-          CASE WHEN m.table_name='chats' THEN substr(c.user_message,1,120) END AS chat_user_preview,
-          CASE WHEN m.table_name='chats' THEN substr(c.assistant_message,1,120) END AS chat_assistant_preview,
-          CASE WHEN m.table_name='chats' THEN c.user_message END AS chat_user_full,
-          CASE WHEN m.table_name='chats' THEN c.assistant_message END AS chat_assistant_full
-        FROM logs m
-        LEFT JOIN nodes n ON (m.table_name='nodes' AND m.row_id = n.id)
-        LEFT JOIN edges e ON (m.table_name='edges' AND m.row_id = e.id)
-        LEFT JOIN nodes nf ON e.from_node_id = nf.id
-        LEFT JOIN nodes nt ON e.to_node_id = nt.id
-        LEFT JOIN chats c ON (m.table_name='chats' AND m.row_id = c.id);
-      `);
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          !/already exists/i.test(error.message || '')
-        ) {
-          throw error;
+        if (hasChats) {
+          this.db.exec(`
+            DROP TRIGGER IF EXISTS trg_chats_ai;
+            CREATE TRIGGER IF NOT EXISTS trg_chats_ai AFTER INSERT ON chats BEGIN
+              INSERT INTO logs(table_name, action, row_id, summary, snapshot_json)
+              VALUES('chats', 'insert', NEW.id,
+                     printf('chat: %s (%s)', COALESCE(NEW.helper_name,''), COALESCE(NEW.thread_id,'')),
+                     json_object(
+                       'id', NEW.id,
+                       'helper', NEW.helper_name,
+                       'thread', NEW.thread_id,
+                       'user_message', COALESCE(NEW.user_message,''),
+                       'assistant_message', COALESCE(NEW.assistant_message,''),
+                       'user_preview', substr(COALESCE(NEW.user_message,''), 1, 120),
+                       'assistant_preview', substr(COALESCE(NEW.assistant_message,''), 1, 120),
+                       'system_message', COALESCE(json_extract(NEW.metadata, '$.system_message'), ''),
+                       'input_tokens', COALESCE(json_extract(NEW.metadata, '$.input_tokens'), 0),
+                       'output_tokens', COALESCE(json_extract(NEW.metadata, '$.output_tokens'), 0),
+                       'cost_usd', COALESCE(json_extract(NEW.metadata, '$.estimated_cost_usd'), 0.0),
+                       'cache_hit', COALESCE(json_extract(NEW.metadata, '$.cache_hit'), 0),
+                       'model', COALESCE(json_extract(NEW.metadata, '$.model_used'), ''),
+                       'tools_count', COALESCE(json_extract(NEW.metadata, '$.tool_calls_count'), 0),
+                       'tools_used', COALESCE(json_extract(NEW.metadata, '$.tools_used'), json('[]')),
+                       'latency_ms', COALESCE(json_extract(NEW.metadata, '$.latency_ms'), 0),
+                       'prompt_build_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.promptBuildMs'), 0),
+                       'tools_build_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.toolsBuildMs'), 0),
+                       'model_resolve_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.modelResolveMs'), 0),
+                       'message_assembly_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.messageAssemblyMs'), 0),
+                       'stream_setup_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.streamSetupMs'), 0),
+                       'tool_loop_ms', COALESCE(json_extract(NEW.metadata, '$.timing_breakdown.toolLoopMs'), 0),
+                       'first_token_latency_ms', COALESCE(json_extract(NEW.metadata, '$.first_token_latency_ms'), 0),
+                       'first_chunk_latency_ms', COALESCE(json_extract(NEW.metadata, '$.first_chunk_latency_ms'), 0),
+                       'tool_timings', COALESCE(json_extract(NEW.metadata, '$.tool_timings'), json('[]')),
+                       'trace_id', COALESCE(json_extract(NEW.metadata, '$.trace_id'), ''),
+                       'voice_tts_chars', COALESCE(json_extract(NEW.metadata, '$.voice_tts_chars'), 0),
+                       'voice_tts_cost_usd', COALESCE(json_extract(NEW.metadata, '$.voice_tts_cost_usd'), 0),
+                       'voice_tts_chars_total', COALESCE(json_extract(NEW.metadata, '$.voice_tts_chars_total'), 0),
+                       'voice_tts_cost_usd_total', COALESCE(json_extract(NEW.metadata, '$.voice_tts_cost_usd_total'), 0),
+                       'voice_request_id', COALESCE(json_extract(NEW.metadata, '$.voice_request_id'), ''),
+                       'voice_tts_request_count', COALESCE(json_extract(NEW.metadata, '$.voice_tts_request_count'), 0)
+                     ));
+            END;
+          `);
         }
-      }
-      // Do not recreate memory_v; alias has been removed.
 
-      // 6) Clean up removed chat_memory_state table
-      try {
-        this.db.exec(`DROP TABLE IF EXISTS chat_memory_state;`);
-      } catch (e) {
-        // Ignore if table doesn't exist
-      }
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS voice_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            session_id TEXT,
+            helper_name TEXT,
+            request_id TEXT,
+            message_id TEXT,
+            voice TEXT,
+            model TEXT,
+            chars INTEGER,
+            cost_usd REAL,
+            duration_ms INTEGER,
+            text_preview TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE SET NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_voice_usage_session ON voice_usage(session_id, created_at);
+          CREATE INDEX IF NOT EXISTS idx_voice_usage_chat ON voice_usage(chat_id);
+        `);
 
-      // Clean up removed agent_delegations table
-      try {
-        this.db.exec(`DROP TABLE IF EXISTS agent_delegations;`);
-      } catch (e) {
-        console.warn('Failed to drop agent_delegations table:', e);
-      }
+        // 5) Views: logs_v (drop any legacy memory_v alias)
+        this.db.exec(`DROP VIEW IF EXISTS logs_v; DROP VIEW IF EXISTS memory_v;`);
+        try {
+          this.db.exec(`
+          CREATE VIEW logs_v AS
+          SELECT 
+            m.id,
+            m.ts,
+            m.table_name,
+            m.action,
+            m.row_id,
+            m.summary,
+            m.enriched_summary,
+            m.snapshot_json,
+            CASE WHEN m.table_name='nodes' THEN n.title END AS node_title,
+            CASE WHEN m.table_name='edges' THEN nf.title END AS edge_from_title,
+            CASE WHEN m.table_name='edges' THEN nt.title END AS edge_to_title,
+            CASE WHEN m.table_name='chats' THEN c.helper_name END AS chat_helper,
+            CASE WHEN m.table_name='chats' THEN substr(c.user_message,1,120) END AS chat_user_preview,
+            CASE WHEN m.table_name='chats' THEN substr(c.assistant_message,1,120) END AS chat_assistant_preview,
+            CASE WHEN m.table_name='chats' THEN c.user_message END AS chat_user_full,
+            CASE WHEN m.table_name='chats' THEN c.assistant_message END AS chat_assistant_full
+          FROM logs m
+          LEFT JOIN nodes n ON (m.table_name='nodes' AND m.row_id = n.id)
+          LEFT JOIN edges e ON (m.table_name='edges' AND m.row_id = e.id)
+          LEFT JOIN nodes nf ON e.from_node_id = nf.id
+          LEFT JOIN nodes nt ON e.to_node_id = nt.id
+          LEFT JOIN chats c ON (m.table_name='chats' AND m.row_id = c.id);
+        `);
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            !/already exists/i.test(error.message || '')
+          ) {
+            throw error;
+          }
+        }
+        // Do not recreate memory_v; alias has been removed.
 
-      // 8) Logs retention trigger (~10k most recent rows)
+        // 6) Clean up removed chat_memory_state table
+        try {
+          this.db.exec(`DROP TABLE IF EXISTS chat_memory_state;`);
+        } catch (e) {
+          // Ignore if table doesn't exist
+        }
+
+        // Clean up removed agent_delegations table
+        try {
+          this.db.exec(`DROP TABLE IF EXISTS agent_delegations;`);
+        } catch (e) {
+          console.warn('Failed to drop agent_delegations table:', e);
+        }
+
+        // 8) Logs retention trigger (~10k most recent rows)
       try {
         this.db.exec(`
-          DROP TRIGGER IF EXISTS trg_logs_prune;
-          CREATE TRIGGER IF NOT EXISTS trg_logs_prune AFTER INSERT ON logs BEGIN
-            DELETE FROM logs WHERE id < NEW.id - 10000;
-          END;
-        `);
+            DROP TRIGGER IF EXISTS trg_logs_prune;
+            CREATE TRIGGER IF NOT EXISTS trg_logs_prune AFTER INSERT ON logs BEGIN
+              DELETE FROM logs WHERE id < NEW.id - 10000;
+            END;
+          `);
       } catch {}
 
       // 7) Ensure agents table schema (backward compatibility)
@@ -861,20 +740,55 @@ class SQLiteClient {
       if (hasChats) {
         try {
           let chatCols = this.db.prepare('PRAGMA table_info(chats)').all() as any[];
-          const chatColNames = new Set(chatCols.map((c: any) => c.name));
-          const needsChatRewrite =
-            chatColNames.has('focused_memory_id') ||
-            ['chat_type', 'helper_name', 'agent_type', 'delegation_id', 'user_message', 'assistant_message', 'thread_id', 'focused_node_id', 'created_at', 'metadata']
-              .some((name) => !chatColNames.has(name));
-
-          if (needsChatRewrite) {
-            this.rebuildLegacyChatsTable(chatColNames);
+          const hasFocusedMemoryId = chatCols.some((c: any) => c.name === 'focused_memory_id');
+          if (hasFocusedMemoryId) {
+            console.log('Removing legacy chats.focused_memory_id column');
+            let flippedForeignKeys = false;
+            try {
+              this.db.exec('PRAGMA foreign_keys=OFF;');
+              flippedForeignKeys = true;
+              this.db.exec(`
+                BEGIN TRANSACTION;
+                ALTER TABLE chats RENAME TO chats_legacy_cleanup;
+                CREATE TABLE chats (
+                  id INTEGER PRIMARY KEY,
+                  chat_type TEXT,
+                  helper_name TEXT,
+                  agent_type TEXT DEFAULT 'orchestrator',
+                  delegation_id INTEGER,
+                  user_message TEXT,
+                  assistant_message TEXT,
+                  thread_id TEXT,
+                  focused_node_id INTEGER,
+                  created_at TEXT DEFAULT (CURRENT_TIMESTAMP),
+                  metadata TEXT,
+                  FOREIGN KEY (focused_node_id) REFERENCES nodes(id) ON DELETE SET NULL
+                );
+                INSERT INTO chats (
+                  id, chat_type, helper_name, agent_type, delegation_id,
+                  user_message, assistant_message, thread_id, focused_node_id,
+                  created_at, metadata
+                )
+                SELECT id, chat_type, helper_name, agent_type, delegation_id,
+                       user_message, assistant_message, thread_id, focused_node_id,
+                       created_at, metadata
+                  FROM chats_legacy_cleanup;
+                DROP TABLE chats_legacy_cleanup;
+                CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);
+                COMMIT;
+              `);
+            } catch (migrationErr) {
+              console.warn('Failed to migrate chats table (focused_memory_id removal):', migrationErr);
+              try { this.db.exec('ROLLBACK;'); } catch {}
+            } finally {
+              if (flippedForeignKeys) {
+                try { this.db.exec('PRAGMA foreign_keys=ON;'); } catch {}
+              }
+            }
             chatCols = this.db.prepare('PRAGMA table_info(chats)').all() as any[];
           }
 
-          if (chatCols.some((c: any) => c.name === 'thread_id')) {
-            this.db.exec("CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);");
-          }
+          this.db.exec("CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);");
 
           const ensureCol = (name: string, ddl: string) => {
             if (!chatCols.some((c: any) => c.name === name)) {
@@ -910,7 +824,7 @@ class SQLiteClient {
         console.warn('Failed to drop legacy memory pipeline tables:', dropLegacyErr);
       }
 
-      // 9) Final schema pass migrations (source-first backfill, event_date, soft contexts, drop dimensions)
+      // 9) Final schema pass migrations (source-first backfill, event_date, legacy category cleanup, drop dimensions)
       try {
         let nodeCols2 = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
         let nodeColNames = nodeCols2.map(c => c.name);
@@ -1002,46 +916,7 @@ class SQLiteClient {
           } catch {}
         }
 
-        if (!nodeColNames.includes('context_id')) {
-          this.db.exec('ALTER TABLE nodes ADD COLUMN context_id INTEGER REFERENCES contexts(id) ON DELETE SET NULL;');
-        }
-
-        const hasContexts = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='contexts'").get();
-        if (!hasContexts) {
-          this.db.exec(`
-            CREATE TABLE contexts (
-              id INTEGER PRIMARY KEY,
-              name TEXT NOT NULL,
-              description TEXT NOT NULL,
-              icon TEXT,
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-          `);
-        }
-
-        const contextCols = this.db.prepare('PRAGMA table_info(contexts)').all() as Array<{ name: string }>;
-        const ensureContextCol = (name: string, ddl: string) => {
-          if (!contextCols.some(col => col.name === name)) {
-            this.db.exec(ddl);
-          }
-        };
-        ensureContextCol('description', "ALTER TABLE contexts ADD COLUMN description TEXT NOT NULL DEFAULT '';");
-        ensureContextCol('icon', 'ALTER TABLE contexts ADD COLUMN icon TEXT;');
-        ensureContextCol('created_at', "ALTER TABLE contexts ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-        ensureContextCol('updated_at', "ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-
-        this.db.exec(`
-          UPDATE contexts
-          SET description = COALESCE(NULLIF(TRIM(description), ''), name)
-          WHERE description IS NULL OR LENGTH(TRIM(description)) = 0;
-        `);
-
-        this.db.exec(`
-          CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized
-            ON contexts(LOWER(TRIM(name)));
-          CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);
-        `);
+        this.dropContextsSchema();
 
         const hasLegacyDimensions = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dimensions'").get();
         const hasLegacyNodeDimensions = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='node_dimensions'").get();
@@ -1138,60 +1013,8 @@ class SQLiteClient {
     }
   }
 
-  private ensureContextsSchema(): void {
-    if (this.readOnly) {
-      return;
-    }
-
-    try {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS contexts (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          description TEXT NOT NULL DEFAULT '',
-          icon TEXT,
-          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-
-      const nodeCols = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
-      const nodeColNames = nodeCols.map((column) => column.name);
-      if (!nodeColNames.includes('context_id')) {
-        this.db.exec('ALTER TABLE nodes ADD COLUMN context_id INTEGER REFERENCES contexts(id) ON DELETE SET NULL;');
-      }
-
-      const contextCols = this.db.prepare('PRAGMA table_info(contexts)').all() as Array<{ name: string }>;
-      const contextColNames = contextCols.map((column) => column.name);
-      if (!contextColNames.includes('description')) {
-        this.db.exec("ALTER TABLE contexts ADD COLUMN description TEXT NOT NULL DEFAULT '';");
-      }
-      if (!contextColNames.includes('icon')) {
-        this.db.exec('ALTER TABLE contexts ADD COLUMN icon TEXT;');
-      }
-      if (!contextColNames.includes('created_at')) {
-        this.db.exec("ALTER TABLE contexts ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-      }
-      if (!contextColNames.includes('updated_at')) {
-        this.db.exec("ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;");
-      }
-
-      this.db.exec(`
-        UPDATE contexts
-        SET description = COALESCE(NULLIF(TRIM(description), ''), name)
-        WHERE description IS NULL OR LENGTH(TRIM(description)) = 0;
-
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_name_normalized
-          ON contexts(LOWER(TRIM(name)));
-        CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);
-      `);
-    } catch (error) {
-      console.warn('Failed to ensure contexts schema:', error);
-    }
-  }
-
   private healVectorTablesIfCorrupt(): void {
-    if (this.readOnly || !this.vectorCapability.available) {
+    if (this.readOnly) {
       return;
     }
     // Attempt lightweight reads to detect CORRUPT_VTAB; if detected, drop/recreate vtables
@@ -1344,7 +1167,20 @@ class SQLiteClient {
   }
 
   private refreshIntegrityReportForCorruptionError(error: unknown): void {
-    if (this.isSqliteCorruptError(error)) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      typeof (error as { code?: unknown }).code === 'string'
+        ? String((error as { code: string }).code)
+        : '';
+
+    if (
+      code.includes('CORRUPT') ||
+      message.includes('database disk image is malformed') ||
+      message.includes('SQLITE_CORRUPT')
+    ) {
       this.getIntegrityReport(true);
     }
   }
@@ -1476,6 +1312,10 @@ class SQLiteClient {
     return this.integrityReport;
   }
 
+  public canUseFtsTable(tableName: FtsSurfaceName): boolean {
+    return this.getIntegrityReport().ftsTables[tableName];
+  }
+
   private handleError(error: any): DatabaseError {
     return {
       message: error.message || 'SQLite operation failed',
@@ -1486,18 +1326,6 @@ class SQLiteClient {
 
   public close(): void {
     this.db.close();
-  }
-
-  private isSqliteCorruptError(error: unknown): boolean {
-    if (!(error instanceof Error)) {
-      return false;
-    }
-
-    const sqliteError = error as Error & { code?: string };
-    return (
-      sqliteError.code?.includes('CORRUPT') === true ||
-      /database disk image is malformed/i.test(sqliteError.message || '')
-    );
   }
 }
 

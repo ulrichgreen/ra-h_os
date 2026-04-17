@@ -1,78 +1,71 @@
-# RA-H OS Overview
+# RA-H Overview
 
-## What is RA-OS?
+## What is RA-H?
 
-RA-H OS is the open-source local graph surface of RA-H. It gives you the graph, UI, and MCP path without the private Mac-app-only packaging and subscription surfaces.
+RA-H is a local-first knowledge graph for durable thinking. It captures sources, ideas, people, decisions, and conversations into one graph on your machine, then lets you retrieve and extend that graph through the app and MCP.
 
+**Website:** [ra-h.app](https://ra-h.app)
 **Open Source:** [github.com/bradwmorris/ra-h_os](https://github.com/bradwmorris/ra-h_os)
+
+**New here?** Open chat and say `let's get started` to run the onboarding skill.
 
 ## Design Philosophy
 
-**Local-first** — Your knowledge network belongs to you. Everything runs locally in a SQLite database you control.
+RA-H is built on the idea that capture quality matters more than taxonomy.
 
-**External-agent friendly** — The open-source path is designed to work well with external MCP clients. The graph contract should not depend on prompt hacks or old taxonomy assumptions.
+**Non-prescriptive** — RA-H does not require folders or dimensions. It pushes clearer nodes and clearer edges instead of category maintenance.
 
-**Simple & focused** — The open-source surface keeps the graph, UI, and MCP contract. It does not try to mirror every private-app surface.
+**Everything is connected** — Every piece of knowledge can potentially connect to any other. Connections aren't just links — they carry context, explanation, and meaning.
+
+**Local-first** — Your knowledge network belongs to you, not a platform. Your thinking, research, and connections all belong to you in a portable format you control.
+
+**Human + AI** — You guide, AI assists. Skills and graph quality shape behavior; the graph is not supposed to silently self-organize into truth without you.
 
 ## Tech Stack
 
 - **Frontend:** Next.js 15, TypeScript, Tailwind CSS
 - **Database:** SQLite + sqlite-vec (vector search)
-- **Embeddings:** OpenAI (BYO API key)
+- **AI Models:** Anthropic Claude + OpenAI GPT via Vercel AI SDK
+- **Desktop:** Tauri (Mac app)
 - **MCP Server:** Local connector for Claude Code and external agents
 
-## What's Included
+## Current Status
 
-- Multi-pane UI for feed, contexts, map, table, node focus, and skills
-- Node/Edge CRUD with optional contexts
-- Full-text and semantic search
-- MCP server with graph and skill tools
-- Skills system (shared instructions for internal + external agents)
-- PDF extraction
-- Graph visualization (Map view)
-- BYO API keys
+- **Version:** current internal product contract as of April 2026
+- **Platforms:**
+  - Mac app (download at [ra-h.app/download](https://ra-h.app/download))
+  - Open source self-hosted (BYO API keys)
+- **License:** MIT (open source version)
 
-## What's NOT Included
+## Two Ways to Use RA-H
 
-- Private-app-only built-in assistant experience
-- Voice features
-- Auth/subscription system
-- Desktop packaging
+| Version | Best For | Get It |
+|---------|----------|--------|
+| **Mac App** | Most users. One-click install, auto-updates, optional subscription features | [ra-h.app/download](https://ra-h.app/download) |
+| **Open Source** | Developers, self-hosters, contributors. BYO API keys, full control | [GitHub](https://github.com/bradwmorris/ra-h_os) |
 
-## Current Doctrine
+Both versions follow the same core graph contract. The Mac app adds packaging, auth, voice, and subscription surfaces. `ra-h_os` keeps the local graph, UI, and MCP path.
 
-- no runtime `dimensions`
-- optional `contexts`
-- node quality driven by `title`, `description`, `source`, `metadata`, and `edges`
-- direct lookup first, broader retrieval when useful
-- app-owned chunking and embeddings from `nodes.source`
+## Key Features
 
-## MCP Integration
-
-RA-OS is designed to be the knowledge backend for your AI workflows:
-
-```json
-{
-  "mcpServers": {
-    "ra-h": {
-      "command": "npx",
-      "args": ["--yes", "ra-h-mcp-server@2.1.2"]
-    }
-  }
-}
-```
-
-Add this to `~/.claude.json` and restart Claude. Run RA-H once first so the database exists. The standalone MCP server can write nodes without the app running, but the app owns chunking and embedding from node source. If you publish a newer MCP release and need clients to pick it up immediately, bump the pinned version here and restart the client.
-
-Core tools include: `queryNodes`, `retrieveQueryContext`, `createNode`, `writeContext`, `updateNode`, `getNodesById`, `createEdge`, `updateEdge`, `queryEdge`, `queryContexts`, `listSkills`, `readSkill`
+- **Source-first graph:** node quality comes from title, description, source, metadata, and edges
+- **Graph-first capture:** durable structure comes from nodes and edges, not category maintenance
+- **Flexible pane system:** explicit `1 / 2 / 3` pane workspace with right-edge chat
+- **Single assistant:** one built-in RA-H runtime grounded in your graph and skills
+- **Retrieval split:** direct lookup for specific nodes, broader retrieval when the turn actually needs graph context
+- **MCP server:** connect Claude Code and other external agents to the same graph
+- **Skills:** markdown procedures that shape graph work and agent behavior
+- **Extraction tools:** website, YouTube, and PDF ingestion paths
 
 ## Documentation
 
 | Doc | Description |
 |-----|-------------|
+| [Architecture](./1_architecture.md) | Single-agent runtime, tools, and system design |
 | [Schema](./2_schema.md) | Database schema, node/edge structure |
-| [Tools & Skills](./4_tools-and-guides.md) | Available MCP tools, skill system |
+| [Context](./3_context.md) | How context flows through the system |
+| [Tools & Skills](./4_tools-and-guides.md) | Available tools, skill system |
 | [UI](./6_ui.md) | Component structure, panels, views |
+| [Voice](./7_voice.md) | Voice interface (STT/TTS) |
 | [MCP](./8_mcp.md) | External agent connector setup |
-| [Full Local](./10_full-local.md) | Supported local path and community patterns |
-| [Troubleshooting](./TROUBLESHOOTING.md) | Common issues and fixes |
+| [Open Source](./9_open-source.md) | Contributor and sync guide |

@@ -1,5 +1,4 @@
 import { chunkService } from '@/services/database/chunks';
-import { contextService } from '@/services/database/contextService';
 import { edgeService } from '@/services/database/edges';
 import { nodeService } from '@/services/database/nodes';
 import { countHighSignalQueryTermMatches, scoreNodeSearchMatch } from '@/services/database/searchRanking';
@@ -33,7 +32,6 @@ export interface QueryContextResult {
   mode: 'skip' | 'focused' | 'query';
   reason: string;
   focused_node_id: number | null;
-  active_context_id: number | null;
   nodes: RetrievedContextNode[];
   chunks: RetrievedContextChunk[];
 }
@@ -41,7 +39,6 @@ export interface QueryContextResult {
 export interface RetrieveQueryContextInput {
   query: string;
   focused_node_id?: number | null;
-  active_context_id?: number | null;
   limit?: number;
 }
 
@@ -104,7 +101,7 @@ function truncateText(value: string | null | undefined, maxLength = 180): string
 function queryTermCount(query: string): number {
   return normalizeWhitespace(query)
     .split(' ')
-    .map((term) => term.trim())
+    .map(term => term.trim())
     .filter(Boolean)
     .length;
 }
@@ -161,7 +158,7 @@ function extractHighSignalTerms(query: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9\s]+/g, ' ')
     .split(/\s+/)
-    .map((term) => singularizeTerm(term.trim()))
+    .map(term => singularizeTerm(term.trim()))
     .filter(Boolean);
 
   const seen = new Set<string>();
@@ -184,8 +181,7 @@ function isLikelyUserNoteRecallQuery(query: string): boolean {
 
   const explicitRecall = USER_RECALL_PATTERN.test(normalized);
   const firstPersonRecall = FIRST_PERSON_PATTERN.test(normalized) && /\bwhat\b/i.test(normalized);
-  const explicitLookup = LOOKUP_PATTERN.test(normalized)
-    && (FIRST_PERSON_PATTERN.test(normalized) || /\b(created|saved|wrote|added)\b/i.test(normalized));
+  const explicitLookup = LOOKUP_PATTERN.test(normalized) && (FIRST_PERSON_PATTERN.test(normalized) || /\b(created|saved|wrote|added)\b/i.test(normalized));
   const firstPersonShareRecall = FIRST_PERSON_SHARE_PATTERN.test(normalized);
   const noteHint = NOTE_HINT_PATTERN.test(normalized);
   const recentHint = RECENT_REFERENCE_PATTERN.test(normalized);
@@ -211,8 +207,8 @@ function buildRecallSearchVariants(query: string): string[] {
   const terms = extractHighSignalTerms(query);
   if (terms.length === 0) return [];
 
-  const topicalTerms = terms.filter((term) => !NOTE_TERMS.has(term));
-  const noteTerms = terms.filter((term) => NOTE_TERMS.has(term));
+  const topicalTerms = terms.filter(term => !NOTE_TERMS.has(term));
+  const noteTerms = terms.filter(term => NOTE_TERMS.has(term));
   const phraseVariants = extractRecallPhraseVariants(query);
 
   const variants: string[] = [];
@@ -281,8 +277,8 @@ function scoreRecallMatch(node: Node, query: string): number {
     if (normalizedSource.includes(normalizedPhrase)) score += 900;
   }
 
-  const titleTermMatches = terms.filter((term) => normalizedTitle.includes(term)).length;
-  const totalTermMatches = terms.filter((term) => combined.includes(term)).length;
+  const titleTermMatches = terms.filter(term => normalizedTitle.includes(term)).length;
+  const totalTermMatches = terms.filter(term => combined.includes(term)).length;
 
   score += titleTermMatches * 250;
   score += totalTermMatches * 120;
@@ -298,7 +294,7 @@ function scoreRecallMatch(node: Node, query: string): number {
 }
 
 function hasStrongRecallMatch(nodes: Node[], query: string): boolean {
-  return nodes.some((node) => scoreRecallMatch(node, query) >= 1800);
+  return nodes.some(node => scoreRecallMatch(node, query) >= 1800);
 }
 
 function isLikelyUserAuthoredNote(node: Node): boolean {
@@ -345,7 +341,7 @@ export function isFocusedSourceRequest(query: string): boolean {
 export function shouldRetrieveForQuery(query: string): boolean {
   const trimmed = normalizeWhitespace(query);
   if (!trimmed) return false;
-  if (LOW_SIGNAL_PATTERNS.some((pattern) => pattern.test(trimmed))) return false;
+  if (LOW_SIGNAL_PATTERNS.some(pattern => pattern.test(trimmed))) return false;
 
   if (isFocusedSourceRequest(trimmed)) return true;
   if (SOURCE_DETAIL_PATTERN.test(trimmed)) return true;
@@ -413,7 +409,6 @@ function rankRetrievedNodes(nodes: RetrievedContextNode[]): RetrievedContextNode
 export async function retrieveQueryContext(input: RetrieveQueryContextInput): Promise<QueryContextResult> {
   const query = normalizeWhitespace(input.query || '');
   const focusedNodeId = input.focused_node_id ?? null;
-  const requestedActiveContextId = input.active_context_id ?? null;
   const limit = Math.min(Math.max(input.limit ?? 6, 1), 12);
   const shouldRetrieve = shouldRetrieveForQuery(query);
 
@@ -424,15 +419,10 @@ export async function retrieveQueryContext(input: RetrieveQueryContextInput): Pr
       mode: 'skip',
       reason: 'Query is too lightweight or conversational to justify retrieval.',
       focused_node_id: focusedNodeId,
-      active_context_id: requestedActiveContextId,
       nodes: [],
       chunks: [],
     };
   }
-
-  const activeContextId = requestedActiveContextId
-    ? (await contextService.getContextById(requestedActiveContextId))?.id ?? null
-    : null;
 
   const focusedRequest = isFocusedSourceRequest(query);
   const nodesById = new Map<number, RetrievedContextNode>();
@@ -470,19 +460,6 @@ export async function retrieveQueryContext(input: RetrieveQueryContextInput): Pr
     });
   });
 
-  if (activeContextId && !strongRecallMatch) {
-    const contextMatches = query
-      ? await nodeService.getNodes({ search: query, contextId: activeContextId, limit: Math.max(limit, 4) })
-      : [];
-    contextMatches.forEach((node, index) => {
-      addNodeWithReason(nodesById, node, {
-        kind: 'context_hint',
-        reason: 'Also matched inside the active context.',
-        searchRank: directQueryMatches.length + index,
-      });
-    });
-  }
-
   if (!strongRecallMatch) {
     const rankedSeedNodes = rankRetrievedNodes(Array.from(nodesById.values())).slice(0, Math.max(3, limit));
     for (const seed of rankedSeedNodes.slice(0, 3)) {
@@ -518,7 +495,6 @@ export async function retrieveQueryContext(input: RetrieveQueryContextInput): Pr
         ? 'Direct node retrieval query: search the graph directly first and broaden only if needed.'
         : 'Substantive query: search the graph directly, then pull additional supporting context if helpful.',
     focused_node_id: focusedNodeId,
-    active_context_id: activeContextId,
     nodes: finalNodes,
     chunks: chunks.map((chunk) => {
       const owner = finalNodes.find((node) => node.id === chunk.node_id) || directQueryMatches.find((node) => node.id === chunk.node_id);

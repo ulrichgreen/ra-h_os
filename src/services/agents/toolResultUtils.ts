@@ -123,13 +123,6 @@ export function summarizeToolExecution(toolName: string, args: any, result: any)
     return 'No edges found.';
   }
 
-  if (toolName === 'writeContext') {
-    const formatted = ensureString(result.data?.formatted_display);
-    if (formatted) {
-      return `Saved context as ${formatted}.`;
-    }
-  }
-
   if (result.data?.formatted_display) {
     return ensureString(result.data.formatted_display) || fallback;
   }

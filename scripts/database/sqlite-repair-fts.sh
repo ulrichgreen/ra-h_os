@@ -113,15 +113,6 @@ CREATE TABLE agents (
   prompts TEXT
 );
 
-CREATE TABLE contexts (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT NOT NULL,
-  icon TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE nodes (
   id INTEGER PRIMARY KEY,
   title TEXT,
@@ -135,9 +126,7 @@ CREATE TABLE nodes (
   embedding BLOB,
   embedding_updated_at TEXT,
   embedding_text TEXT,
-  chunk_status TEXT DEFAULT 'not_chunked',
-  context_id INTEGER,
-  FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE SET NULL
+  chunk_status TEXT DEFAULT 'not_chunked'
 );
 
 CREATE TABLE edges (
@@ -157,8 +146,7 @@ CREATE TABLE chunks (
   node_id INTEGER NOT NULL,
   chunk_idx INTEGER,
   text TEXT NOT NULL,
-  embedding BLOB,
-  embedding_type TEXT DEFAULT 'openai',
+  embedding_type TEXT DEFAULT 'text-embedding-3-small',
   metadata TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
@@ -217,20 +205,17 @@ CREATE TABLE dimension_migration_snapshots (
 
 INSERT INTO schema_version SELECT version, applied_at, description FROM source.schema_version;
 INSERT INTO agents SELECT id, key, display_name, role, system_prompt, available_tools, model, description, enabled, created_at, updated_at, memory, prompts FROM source.agents;
-INSERT INTO contexts SELECT id, name, description, icon, created_at, updated_at FROM source.contexts;
-INSERT INTO nodes SELECT id, title, description, source, link, event_date, created_at, updated_at, metadata, embedding, embedding_updated_at, embedding_text, chunk_status, context_id FROM source.nodes;
+INSERT INTO nodes SELECT id, title, description, source, link, event_date, created_at, updated_at, metadata, embedding, embedding_updated_at, embedding_text, chunk_status FROM source.nodes;
 INSERT INTO edges SELECT id, from_node_id, to_node_id, source, created_at, context, explanation FROM source.edges;
-INSERT INTO chunks SELECT id, node_id, chunk_idx, text, embedding, embedding_type, metadata, created_at FROM source.chunks;
+INSERT INTO chunks SELECT id, node_id, chunk_idx, text, embedding_type, metadata, created_at FROM source.chunks;
 INSERT INTO chats SELECT id, chat_type, helper_name, agent_type, delegation_id, user_message, assistant_message, thread_id, focused_node_id, created_at, metadata FROM source.chats;
 INSERT INTO logs SELECT id, ts, table_name, action, row_id, summary, snapshot_json, enriched_summary FROM source.logs;
 INSERT INTO voice_usage SELECT id, chat_id, session_id, helper_name, request_id, message_id, voice, model, chars, cost_usd, duration_ms, text_preview, created_at FROM source.voice_usage;
 INSERT INTO dimension_migration_snapshots SELECT id, migrated_at, dimension_count, assignment_count, payload FROM source.dimension_migration_snapshots;
 
-CREATE UNIQUE INDEX idx_contexts_name_normalized ON contexts(LOWER(TRIM(name)));
 CREATE INDEX idx_edges_from ON edges(from_node_id);
 CREATE INDEX idx_edges_to ON edges(to_node_id);
 CREATE INDEX idx_nodes_updated_at ON nodes(updated_at DESC);
-CREATE INDEX idx_nodes_context_id ON nodes(context_id);
 CREATE INDEX idx_chunks_node_id ON chunks(node_id);
 CREATE INDEX idx_chunks_by_node ON chunks(node_id);
 CREATE INDEX idx_chunks_by_node_idx ON chunks(node_id, chunk_idx);

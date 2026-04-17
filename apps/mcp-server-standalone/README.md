@@ -80,12 +80,10 @@ Do not create contradictory instruction files. Prefer one short reinforcement li
 
 | Tool | Description |
 |------|-------------|
-| `getContext` | Get graph overview - stats, contexts, recent activity |
+| `getContext` | Get graph overview - stats, hub nodes, recent activity |
 | `retrieveQueryContext` | Pull relevant graph context for a broader current-turn task |
 | `createNode` | Create a new node |
-| `writeContext` | Save one confirmed durable context node after explicit user approval |
 | `queryNodes` | Search nodes by keyword |
-| `queryContexts` | List or inspect contexts |
 | `getNodesById` | Load nodes by ID |
 | `updateNode` | Update an existing node |
 | `createEdge` | Create a confirmed connection between nodes |
@@ -121,19 +119,11 @@ Rules:
 - use `captured_by = "human"` for direct user creation and user-requested agent capture
 - reserve `captured_by = "agent"` for autonomous/background creation only
 
-## Context Rule
-
-- creating a node never requires context
-- normal node lookup and update flows should omit context unless the user explicitly asks for it
-- if context is intentionally provided, prefer `context_name`
-- numeric `context_id` is treated as an internal implementation detail rather than a normal agent-facing field
-
 ## Writeback Rule
 
 - do not ask to save every moderately useful point from the conversation
 - only suggest a save when the context is unusually durable and valuable
 - keep the ask terse and concrete, for example: `Add "X" as a node?`
-- never call `writeContext` unless the user has explicitly said yes
 
 ## Edge Rule
 

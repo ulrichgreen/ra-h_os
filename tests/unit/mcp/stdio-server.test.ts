@@ -5,20 +5,12 @@ import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-type ContextRecord = {
-  id: number;
-  name: string;
-  description: string | null;
-  icon: string | null;
-};
-
 type NodeRecord = {
   id: number;
   title: string;
   description: string | null;
   source: string | null;
   link: string | null;
-  context_id: number | null;
   metadata: Record<string, unknown>;
   updated_at: string;
   created_at: string;
@@ -30,11 +22,6 @@ type RequestLogEntry = {
   pathname: string;
   body: Record<string, unknown> | null;
 };
-
-const contexts: ContextRecord[] = [
-  { id: 1, name: 'Work', description: 'Work projects and execution context.', icon: 'Briefcase' },
-  { id: 2, name: 'Personal', description: 'Personal life and planning context.', icon: 'Heart' },
-];
 
 let server: http.Server;
 let baseUrl = '';
@@ -83,19 +70,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   requestLog.push({ method, pathname, body });
 
   if (method === 'POST' && pathname === '/api/nodes') {
-    const contextId = typeof body?.context_id === 'number' ? body.context_id : null;
-    const contextName = typeof body?.context_name === 'string' ? body.context_name.trim() : '';
-    const resolvedContextId = contextId
-      ?? (contextName ? contexts.find((context) => context.name.toLowerCase() === contextName.toLowerCase())?.id ?? null : null);
-
-    if (contextId && !contexts.some((context) => context.id === contextId)) {
-      return sendJson(res, 400, { success: false, error: 'Context not found.' });
-    }
-
-    if (contextName && resolvedContextId === null) {
-      return sendJson(res, 400, { success: false, error: 'Context not found.' });
-    }
-
     const timestamp = nowIso();
     const node: NodeRecord = {
       id: nextNodeId++,
@@ -103,7 +77,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       description: typeof body?.description === 'string' ? body.description : null,
       source: typeof body?.source === 'string' ? body.source : null,
       link: typeof body?.link === 'string' ? body.link : null,
-      context_id: resolvedContextId,
       metadata: typeof body?.metadata === 'object' && body.metadata ? body.metadata as Record<string, unknown> : {},
       updated_at: timestamp,
       created_at: timestamp,
@@ -116,20 +89,20 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   if (method === 'GET' && pathname === '/api/nodes') {
     const search = url.searchParams.get('search')?.trim() || '';
     const limit = Number(url.searchParams.get('limit') || '10');
-    const contextIdParam = url.searchParams.get('contextId');
-    const contextId = contextIdParam ? Number(contextIdParam) : undefined;
+    const sortBy = url.searchParams.get('sortBy');
 
     let filtered = nodes.slice();
     if (search) {
       filtered = filtered.filter((node) => matchesNode(node, search));
     }
-    if (contextId !== undefined) {
-      filtered = filtered.filter((node) => node.context_id === contextId);
+    if (sortBy === 'edges') {
+      filtered.sort((a, b) => b.edge_count - a.edge_count || b.updated_at.localeCompare(a.updated_at));
     }
 
     return sendJson(res, 200, {
       success: true,
       total: filtered.length,
+      count: filtered.length,
       data: filtered.slice(0, Number.isFinite(limit) ? limit : 10),
     });
   }
@@ -143,46 +116,55 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return sendJson(res, 200, { success: true, node });
   }
 
-  if (method === 'GET' && pathname === '/api/contexts') {
-    return sendJson(res, 200, {
-      success: true,
-      data: contexts.map((context) => ({
-        ...context,
-        count: nodes.filter((node) => node.context_id === context.id).length,
-      })),
-    });
-  }
-
-  if (method === 'GET' && /^\/api\/contexts\/\d+$/.test(pathname)) {
-    const id = Number(pathname.split('/').pop());
-    const context = contexts.find((entry) => entry.id === id);
-    if (!context) {
-      return sendJson(res, 404, { success: false, error: 'Context not found.' });
-    }
+  if (method === 'POST' && pathname === '/api/nodes/direct-search') {
+    const query = typeof body?.query === 'string' ? body.query : '';
+    const limit = typeof body?.limit === 'number' ? body.limit : 10;
+    const filtered = nodes.filter((node) => matchesNode(node, query)).slice(0, limit);
     return sendJson(res, 200, {
       success: true,
       data: {
-        ...context,
-        count: nodes.filter((node) => node.context_id === context.id).length,
+        count: filtered.length,
+        nodes: filtered,
+        filters_applied: {
+          search: query,
+          limit,
+          createdAfter: body?.createdAfter ?? undefined,
+          createdBefore: body?.createdBefore ?? undefined,
+          eventAfter: body?.eventAfter ?? undefined,
+          eventBefore: body?.eventBefore ?? undefined,
+        },
       },
     });
   }
 
-  if (method === 'GET' && /^\/api\/contexts\/\d+\/nodes$/.test(pathname)) {
-    const parts = pathname.split('/');
-    const id = Number(parts[parts.length - 2]);
+  if (method === 'POST' && pathname === '/api/retrieval/query-context') {
     return sendJson(res, 200, {
       success: true,
-      data: nodes
-        .filter((node) => node.context_id === id)
-        .map((node) => ({
+      data: {
+        query: typeof body?.query === 'string' ? body.query : '',
+        shouldRetrieve: true,
+        mode: 'query',
+        reason: 'Retrieved graph context.',
+        focused_node_id: typeof body?.focused_node_id === 'number' ? body.focused_node_id : null,
+        nodes: nodes.slice(0, 1).map((node) => ({
           id: node.id,
           title: node.title,
           description: node.description,
           link: node.link,
-          context_id: node.context_id,
           updated_at: node.updated_at,
+          kind: 'query_match',
+          reason: 'Matched the query through direct graph search.',
         })),
+        chunks: [],
+      },
+    });
+  }
+
+  if (method === 'GET' && pathname === '/api/edges') {
+    return sendJson(res, 200, {
+      success: true,
+      count: 3,
+      data: [],
     });
   }
 
@@ -246,34 +228,35 @@ describe('stdio MCP server contract', () => {
     resetState();
   });
 
-  it('does not expose dimension tools or dimension fields in the MCP registry', async () => {
+  it('does not expose removed context tools or fields in the MCP registry', async () => {
     await withMcpClient(async (client) => {
       const result = await client.listTools();
       const toolNames = result.tools.map((tool) => tool.name);
 
       expect(toolNames).not.toEqual(expect.arrayContaining([
-        'rah_query_dimensions',
-        'rah_create_dimension',
-        'rah_update_dimension',
-        'rah_delete_dimension',
-        'rah_get_dimension',
+        'rah_query_contexts',
+        'rah_write_context',
       ]));
 
       const addNodeTool = result.tools.find((tool) => tool.name === 'rah_add_node');
       expect(addNodeTool).toBeDefined();
-      expect(addNodeTool?.inputSchema).toBeTruthy();
-      expect(JSON.stringify(addNodeTool?.inputSchema)).not.toContain('dimensions');
+      expect(JSON.stringify(addNodeTool?.inputSchema)).not.toContain('context_name');
+      expect(JSON.stringify(addNodeTool?.inputSchema)).not.toContain('context_id');
+
+      const retrieveTool = result.tools.find((tool) => tool.name === 'rah_retrieve_query_context');
+      expect(retrieveTool).toBeDefined();
+      expect(JSON.stringify(retrieveTool?.inputSchema)).not.toContain('active_context_id');
     });
   });
 
-  it('creates nodes through MCP without context and without legacy taxonomy payloads', async () => {
+  it('creates and searches nodes through MCP without context-era payloads', async () => {
     await withMcpClient(async (client) => {
       const result = await client.callTool({
         name: 'rah_add_node',
         arguments: {
           title: 'MCP Contract Test Node',
-          description: 'Node created through MCP to verify the post-dimensions write contract.',
-          source: 'Concrete source text proving rah_add_node works without dimensions or automatic context assignment.',
+          description: 'Node created through MCP to verify the no-context write contract.',
+          source: 'Concrete source text proving rah_add_node works without context fields.',
           metadata: { source: 'mcp-contract-test' },
         },
       });
@@ -285,19 +268,19 @@ describe('stdio MCP server contract', () => {
       const createRequest = requestLog.find((entry) => entry.method === 'POST' && entry.pathname === '/api/nodes');
       expect(createRequest?.body).toMatchObject({
         title: 'MCP Contract Test Node',
-        description: 'Node created through MCP to verify the post-dimensions write contract.',
-        source: 'Concrete source text proving rah_add_node works without dimensions or automatic context assignment.',
+        description: 'Node created through MCP to verify the no-context write contract.',
+        source: 'Concrete source text proving rah_add_node works without context fields.',
         metadata: { source: 'mcp-contract-test' },
       });
-      expect(createRequest?.body).not.toHaveProperty('dimensions');
+      expect(createRequest?.body).not.toHaveProperty('context_name');
       expect(createRequest?.body).not.toHaveProperty('context_id');
-      expect(nodes[0]?.context_id).toBeNull();
 
       const searchResult = await client.callTool({
         name: 'rah_search_nodes',
         arguments: {
           query: 'contract test node',
           limit: 5,
+          createdAfter: '2026-01-01',
         },
       });
 
@@ -307,36 +290,25 @@ describe('stdio MCP server contract', () => {
         id: structured.nodeId,
         title: 'MCP Contract Test Node',
       });
-      expect(searchStructured.nodes[0]).not.toHaveProperty('dimensions');
-    });
-  });
 
-  it('surfaces invalid explicit contexts instead of inferring a fallback context', async () => {
-    await withMcpClient(async (client) => {
-      const result = await client.callTool({
-        name: 'rah_add_node',
-        arguments: {
-          title: 'Bad Context Node',
-          description: 'This should fail because the context does not exist.',
-          source: 'Source text for invalid context test.',
-          context_id: 999,
-        },
+      const searchRequest = requestLog.find((entry) => entry.method === 'POST' && entry.pathname === '/api/nodes/direct-search');
+      expect(searchRequest?.body).toMatchObject({
+        query: 'contract test node',
+        limit: 5,
+        createdAfter: '2026-01-01',
       });
-
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain('Context not found');
-      expect(nodes).toHaveLength(0);
+      expect(searchRequest?.body).not.toHaveProperty('context_name');
+      expect(searchStructured.nodes[0]).not.toHaveProperty('context_id');
     });
   });
 
-  it('returns soft-context orientation data without dimension state', async () => {
+  it('returns orientation data without contexts and retrieval payloads without active context ids', async () => {
     nodes.push({
       id: nextNodeId++,
       title: 'Work Hub Node',
       description: 'High-signal work hub used to verify MCP context orientation.',
       source: 'Hub node source',
       link: null,
-      context_id: 1,
       metadata: {},
       updated_at: nowIso(),
       created_at: nowIso(),
@@ -344,28 +316,24 @@ describe('stdio MCP server contract', () => {
     });
 
     await withMcpClient(async (client) => {
-      const contextsResult = await client.callTool({
-        name: 'rah_query_contexts',
+      const retrievalResult = await client.callTool({
+        name: 'rah_retrieve_query_context',
         arguments: {
-          contextId: 1,
-          includeNodes: true,
+          query: 'help me think about work hub priorities',
+          focused_node_id: 1,
         },
       });
 
-      const contextsStructured = getStructured<{
-        count: number;
-        contexts: Array<{ id: number; name: string; nodes?: Array<Record<string, unknown>> }>;
-      }>(contextsResult);
-      expect(contextsStructured.count).toBe(1);
-      expect(contextsStructured.contexts[0]).toMatchObject({
-        id: 1,
-        name: 'Work',
+      const retrievalRequest = requestLog.find((entry) => entry.method === 'POST' && entry.pathname === '/api/retrieval/query-context');
+      expect(retrievalRequest?.body).toMatchObject({
+        query: 'help me think about work hub priorities',
+        focused_node_id: 1,
       });
-      expect(contextsStructured.contexts[0].nodes?.[0]).toMatchObject({
-        title: 'Work Hub Node',
-        context_id: 1,
-      });
-      expect(contextsStructured.contexts[0].nodes?.[0]).not.toHaveProperty('dimensions');
+      expect(retrievalRequest?.body).not.toHaveProperty('active_context_id');
+
+      const retrievalStructured = getStructured<{ focused_node_id: number | null; nodes: Array<{ title: string }> }>(retrievalResult);
+      expect(retrievalStructured.focused_node_id).toBe(1);
+      expect(retrievalStructured.nodes[0]?.title).toBe('Work Hub Node');
 
       const graphContextResult = await client.callTool({
         name: 'rah_get_context',
@@ -373,24 +341,18 @@ describe('stdio MCP server contract', () => {
       });
 
       const graphStructured = getStructured<{
-        stats: { contextCount: number };
-        contexts: Array<{ id: number; name: string }>;
+        stats: { nodeCount: number; edgeCount: number };
         hubNodes: Array<{ title: string }>;
         guides: string[];
       }>(graphContextResult);
 
-      expect(graphStructured.stats.contextCount).toBe(contexts.length);
-      expect(graphStructured.contexts).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ id: 1, name: 'Work' }),
-          expect.objectContaining({ id: 2, name: 'Personal' }),
-        ])
-      );
+      expect(graphStructured.stats).toEqual({ nodeCount: 1, edgeCount: 3 });
       expect(graphStructured.hubNodes).toEqual(
         expect.arrayContaining([expect.objectContaining({ title: 'Work Hub Node' })])
       );
       expect(graphStructured.guides).toEqual(expect.arrayContaining(['schema', 'creating-nodes']));
-      expect(JSON.stringify(graphStructured)).not.toContain('dimensions');
+      expect(graphStructured).not.toHaveProperty('contexts');
+      expect(graphStructured.stats).not.toHaveProperty('contextCount');
     });
   });
 });

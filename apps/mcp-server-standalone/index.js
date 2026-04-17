@@ -32,7 +32,6 @@ const packageJson = require('./package.json');
 const { initDatabase, getDatabasePath, closeDatabase, getDb, query } = require('./services/sqlite-client');
 const nodeService = require('./services/nodeService');
 const edgeService = require('./services/edgeService');
-const contextService = require('./services/contextService');
 const skillService = require('./services/skillService');
 const retrievalService = require('./services/retrievalService');
 const { directNodeLookup } = require('./services/directNodeLookupService');
@@ -68,17 +67,10 @@ function buildInstructions() {
 5. For simple tasks, tool descriptions have everything you need.
 6. For complex tasks, call readSkill("db-operations").
 
-## Context field rule
-Context is optional on writes.
-Do not include any context field unless the user explicitly wants one.
-If context is intentionally provided, prefer \`context_name\`. Treat numeric \`context_id\` as an internal implementation detail.
-Omitting context is the normal default and does not block create or update operations.
-
 ## Knowledge capture
-Only suggest saving context when it seems unusually durable and valuable.
+Only suggest saving durable knowledge when it seems unusually durable and valuable.
 Keep the ask brief: Add "X" as a node?
 Do not pester. Do not keep re-asking if the user says no, ignores it, or moves on.
-Never write via writeContext unless the user has explicitly confirmed yes.
 Do not create edges autonomously. Surface likely edge candidates briefly, then call edge-write tools only after the user explicitly confirms.
 Always search or retrieve before creating to avoid duplicates.
 
@@ -96,7 +88,6 @@ const addNodeInputSchema = {
   source: z.string().max(50000).optional().describe('Canonical source content for embedding'),
   link: z.string().url().optional().describe('Source URL'),
   description: z.string().optional().describe('Strongly recommended. Write the description as natural prose, not labels or a checklist. It should make clear what the artifact is and any surrounding context available. RA-H will accept whatever description is provided and will not block the write.'),
-  context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants this node assigned to a known context.'),
   metadata: z.record(z.any()).optional().describe('Optional metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.'),
   chunk: z.string().max(50000).optional().describe('Legacy alias for source text')
 };
@@ -104,7 +95,6 @@ const addNodeInputSchema = {
 const searchNodesInputSchema = {
   query: z.string().min(1).max(400).describe('Search query'),
   limit: z.number().min(1).max(50).optional().describe('Max results (default 10)'),
-  context_name: z.string().optional().describe('Optional primary context name filter. Use only when the user explicitly wants a context-specific lookup.'),
   created_after: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes created on or after this date.'),
   created_before: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes created before this date.'),
   event_after: z.string().optional().describe('ISO date (YYYY-MM-DD). Only return nodes with event_date on or after this date.'),
@@ -114,17 +104,7 @@ const searchNodesInputSchema = {
 const retrieveQueryContextInputSchema = {
   query: z.string().min(1).max(800).describe('The raw user query for this turn'),
   focused_node_id: z.number().int().positive().nullable().optional().describe('Optional currently focused node ID'),
-  active_context_id: z.number().int().positive().nullable().optional().describe('Optional active context ID as a soft hint'),
   limit: z.number().min(1).max(12).optional().describe('Maximum number of nodes to return')
-};
-
-const writeContextInputSchema = {
-  title: z.string().min(1).max(160).describe('Clear proposed node title'),
-  description: z.string().min(1).max(500).describe('Natural description of what this context is and why it matters'),
-  source: z.string().max(50000).optional().describe('Optional source or verbatim user wording to preserve'),
-  context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants this saved under a known context.'),
-  metadata: z.record(z.any()).optional().describe('Optional metadata patch'),
-  confirmed_by_user: z.boolean().describe('Must be true before the write is allowed')
 };
 
 const getNodesInputSchema = {
@@ -139,8 +119,6 @@ const updateNodeInputSchema = {
     content: z.string().optional().describe('Legacy alias for source'),
     source: z.string().optional().describe('Canonical source content for embedding'),
     link: z.string().optional().describe('New link'),
-    context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants to assign this node to a known context.'),
-    clear_context: z.boolean().optional().describe('Set true only when the user explicitly wants to remove the node context.'),
     metadata: z.record(z.any()).optional().describe('Metadata patch. It now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
   }).describe('Fields to update')
 };
@@ -161,14 +139,6 @@ const updateEdgeInputSchema = {
 const queryEdgesInputSchema = {
   nodeId: z.number().int().positive().optional().describe('Find edges for this node'),
   limit: z.number().min(1).max(50).optional().describe('Max edges (default 25)')
-};
-
-const queryContextsInputSchema = {
-  contextId: z.number().int().positive().optional().describe('Exact context ID lookup'),
-  name: z.string().optional().describe('Exact context name lookup'),
-  search: z.string().optional().describe('Case-insensitive search across context names and descriptions'),
-  limit: z.number().min(1).max(100).optional().describe('Maximum number of contexts to return'),
-  includeNodes: z.boolean().optional().describe('Include nodes for an exact single-context lookup')
 };
 
 const readSkillInputSchema = {
@@ -276,7 +246,7 @@ async function main() {
     'getContext',
     {
       title: 'Get RA-H context',
-      description: 'Get knowledge graph overview: stats, contexts, hub nodes (secondary diagnostics), recent activity, and available skills. Use this for orientation only, not as the default retrieval path for substantive requests. For deeper operating policy, follow up with readSkill("db-operations").',
+      description: 'Get knowledge graph overview: stats, hub nodes, recent activity, and available skills. Use this for orientation only, not as the default retrieval path for substantive requests. For deeper operating policy, follow up with readSkill("db-operations").',
       inputSchema: {}
     },
     async () => {
@@ -288,16 +258,16 @@ async function main() {
       // First-run welcome message
       if (context.stats.nodeCount === 0) {
         return {
-          content: [{ type: 'text', text: 'Empty knowledge graph. This is a fresh start. Ask what matters right now and help create the first useful node. Contexts are optional and can wait until one is obviously helpful.' }],
+          content: [{ type: 'text', text: 'Empty knowledge graph. This is a fresh start. Ask what matters right now and help create the first useful node.' }],
           structuredContent: {
             ...context,
             welcome: true,
-            suggestion: 'Ask what matters right now, create the first useful node, and leave contexts empty unless one is an obvious fit.'
+            suggestion: 'Ask what matters right now and create the first useful node.'
           }
         };
       }
 
-      const summary = `Graph: ${context.stats.contextCount || 0} contexts, ${context.stats.nodeCount} nodes, ${context.stats.edgeCount} edges, ${skills.length} skills.`;
+      const summary = `Graph: ${context.stats.nodeCount} nodes, ${context.stats.edgeCount} edges, ${skills.length} skills.`;
       return {
         content: [{ type: 'text', text: summary }],
         structuredContent: context
@@ -314,11 +284,10 @@ async function main() {
       description: 'Given the raw user query plus optional focused node state, retrieve the most relevant graph context for the current turn. It starts with direct graph search and broadens only if useful. Use this when graph context could help answer or complete a broader task. For explicit node lookup, use queryNodes.',
       inputSchema: retrieveQueryContextInputSchema
     },
-    async ({ query: rawQuery, focused_node_id, active_context_id, limit = 6 }) => {
+    async ({ query: rawQuery, focused_node_id, limit = 6 }) => {
       const result = retrievalService.retrieveQueryContext({
         query: rawQuery,
         focused_node_id: focused_node_id ?? null,
-        active_context_id: active_context_id ?? null,
         limit,
       });
 
@@ -337,26 +306,18 @@ async function main() {
     'createNode',
     {
       title: 'Add RA-H node',
-      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. If the user explicitly wants context, use `context_name` rather than a numeric ID. Title: max 160 chars, clear and descriptive. Description is strongly recommended and should explicitly describe what the thing is and any surrounding context available, but the write will never be blocked over description quality. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content stored on the node. The RA-H app owns chunking and embedding from source. Legacy "content" and "chunk" are mapped to source for compatibility.',
+      description: 'Create a new node. Always search first (queryNodes) to avoid duplicates. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Title: max 160 chars, clear and descriptive. Description is strongly recommended and should explicitly describe what the thing is and any surrounding context available, but the write will never be blocked over description quality. Use "link" ONLY for external content (URL, video, article) — omit for synthesis/ideas derived from existing nodes. "source" = verbatim or canonical content stored on the node. The RA-H app owns chunking and embedding from source. Legacy "content" and "chunk" are mapped to source for compatibility.',
       inputSchema: addNodeInputSchema
     },
-    async ({ title, content, source, link, description, context_name, metadata, chunk }) => {
+    async ({ title, content, source, link, description, metadata, chunk }) => {
       const sourceText = source?.trim() || content?.trim() || chunk?.trim();
       const normalizedDescription = typeof description === 'string' ? description.trim() : description;
-
-      let resolvedContextId;
-      try {
-        resolvedContextId = contextService.resolveContextId({ context_name });
-      } catch (error) {
-        throw new Error(error.message);
-      }
 
       const node = nodeService.createNode({
         title: title.trim(),
         source: sourceText,
         link: link?.trim(),
         description: normalizedDescription,
-        context_id: resolvedContextId,
         metadata: metadata || {}
       });
 
@@ -377,15 +338,14 @@ async function main() {
     'queryNodes',
     {
       title: 'Search RA-H nodes',
-      description: 'Search nodes by keyword across title, description, and source fields using the same safe direct-lookup behavior as the app. Use this for direct node lookup or duplicate checks. Leave context blank by default. If the user explicitly wants a context-specific lookup, use context_name rather than a numeric ID. For full current-turn grounding of a substantive query, prefer retrieveQueryContext. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
+      description: 'Search nodes by keyword across title, description, and source fields using the same safe direct-lookup behavior as the app. Use this for direct node lookup or duplicate checks. For full current-turn grounding of a substantive query, prefer retrieveQueryContext. NOT for searching source documents (transcripts, articles) — use searchContentEmbeddings for that.',
       inputSchema: searchNodesInputSchema
     },
-    async ({ query: searchQuery, limit = 10, context_name, created_after, created_before, event_after, event_before }) => {
+    async ({ query: searchQuery, limit = 10, created_after, created_before, event_after, event_before }) => {
       const safeLimit = Math.min(Math.max(limit, 1), 50);
       const result = directNodeLookup({
         search: searchQuery.trim(),
         limit: safeLimit,
-        context_name,
         createdAfter: created_after,
         createdBefore: created_before,
         eventAfter: event_after,
@@ -411,50 +371,6 @@ async function main() {
             updated_at: node.updated_at,
             event_date: node.event_date ?? null,
           }))
-        }
-      };
-    }
-  );
-
-  registerToolWithAliases(
-    'writeContext',
-    {
-      title: 'Write RA-H context node',
-      description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this for agent-suggested capture after you already proposed the node briefly and got a clear yes. Prefer ordinary create/update flows for explicit user-directed capture.',
-      inputSchema: writeContextInputSchema
-    },
-    async ({ title, description, source, context_name, metadata, confirmed_by_user }) => {
-      if (!confirmed_by_user) {
-        throw new Error('writeContext requires explicit user confirmation before writing to the graph.');
-      }
-
-      let resolvedContextId;
-      try {
-        resolvedContextId = contextService.resolveContextId({ context_name });
-      } catch (error) {
-        throw new Error(error.message);
-      }
-
-      const node = nodeService.createNode({
-        title: title.trim(),
-        description: description.trim(),
-        source: source?.trim(),
-        context_id: resolvedContextId,
-        metadata: {
-          captured_by: 'human',
-          captured_method: 'write_context',
-          ...(metadata || {})
-        }
-      });
-
-      const summary = `Saved context as node #${node.id}: ${node.title}`;
-      return {
-        content: [{ type: 'text', text: summary }],
-        structuredContent: {
-          success: true,
-          nodeId: node.id,
-          title: node.title,
-          message: summary
         }
       };
     }
@@ -512,7 +428,7 @@ async function main() {
     'updateNode',
     {
       title: 'Update RA-H node',
-      description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Context is preserved by default. If the user explicitly wants to change context, use `context_name`. Use `clear_context` only when the user explicitly wants the context removed. Description updates should explicitly state what this thing is and any surrounding context available, but the write will never be blocked over description quality. Source content lives in "source". The RA-H app owns chunking and embedding from source. Legacy "content" is mapped to source for compatibility. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
+      description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Description updates should explicitly state what this thing is and any surrounding context available, but the write will never be blocked over description quality. Source content lives in "source". The RA-H app owns chunking and embedding from source. Legacy "content" is mapped to source for compatibility. Title, description, and link are overwritten. Call getNodesById first to verify current state before updating.',
       inputSchema: updateNodeInputSchema
     },
     async ({ id, updates }) => {
@@ -536,19 +452,6 @@ async function main() {
           ? mappedUpdates.description.trim()
           : mappedUpdates.description;
       }
-
-      if (mappedUpdates.context_name && mappedUpdates.clear_context) {
-        throw new Error('context_name cannot be combined with clear_context: true.');
-      }
-
-      if (mappedUpdates.context_name || mappedUpdates.clear_context || Object.prototype.hasOwnProperty.call(mappedUpdates, 'context_id')) {
-        mappedUpdates.context_id = contextService.resolveContextId({
-          context_id: mappedUpdates.clear_context ? null : mappedUpdates.context_id,
-          context_name: mappedUpdates.context_name,
-        });
-      }
-      delete mappedUpdates.context_name;
-      delete mappedUpdates.clear_context;
 
       const node = nodeService.updateNode(id, mappedUpdates);
       const message = `Updated node #${id}`;
@@ -651,73 +554,6 @@ async function main() {
   );
 
   // ========== DIMENSION TOOLS ==========
-
-  registerToolWithAliases(
-    'queryContexts',
-    {
-      title: 'List RA-H contexts',
-      description: 'List or inspect optional contexts. Use this only when a context is already obviously relevant or the user asks for it.',
-      inputSchema: queryContextsInputSchema
-    },
-    async ({ contextId, name, search, limit = 50, includeNodes = false }) => {
-      const normalizedName = typeof name === 'string' ? name.trim() : '';
-      const normalizedSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
-
-      let contexts = [];
-
-      if (contextId) {
-        const context = contextService.getContextById(contextId);
-        contexts = context ? [context] : [];
-      } else {
-        contexts = contextService.listContexts();
-      }
-
-      if (normalizedName) {
-        contexts = contexts.filter((context) => context.name.toLowerCase() === normalizedName.toLowerCase());
-      }
-
-      if (normalizedSearch) {
-        contexts = contexts.filter((context) =>
-          context.name.toLowerCase().includes(normalizedSearch) ||
-          (context.description || '').toLowerCase().includes(normalizedSearch)
-        );
-      }
-
-      contexts = contexts.slice(0, Math.min(Math.max(limit, 1), 100));
-
-      const includeContextNodes = includeNodes && contexts.length === 1 && (contextId || normalizedName);
-      const structuredContexts = contexts.map((context) => {
-        if (!includeContextNodes) {
-          return context;
-        }
-
-        const nodes = nodeService.getNodes({ contextId: context.id, limit: 500 });
-        return {
-          ...context,
-          nodes: nodes.map((node) => ({
-            id: node.id,
-            title: node.title,
-            description: node.description ?? null,
-            link: node.link ?? null,
-            context_id: node.context_id ?? null,
-            updated_at: node.updated_at,
-          })),
-        };
-      });
-
-      const summary = structuredContexts.length === 0
-        ? 'No contexts found.'
-        : `Found ${structuredContexts.length} context(s).`;
-
-      return {
-        content: [{ type: 'text', text: summary }],
-        structuredContent: {
-          count: structuredContexts.length,
-          contexts: structuredContexts,
-        },
-      };
-    }
-  );
 
   // ========== SKILL TOOLS ==========
 
@@ -934,7 +770,7 @@ async function main() {
     'sqliteQuery',
     {
       title: 'Execute read-only SQL',
-      description: 'Execute read-only SQL queries against the knowledge graph database. Tables: nodes, contexts, edges, chunks, and migration snapshots. Use PRAGMA table_info(tablename) for schema. Only SELECT/WITH/PRAGMA allowed. Use when structured tools are insufficient — e.g., complex JOINs, aggregations, or custom filtering. Read readSkill("schema") for table definitions and query patterns.',
+      description: 'Execute read-only SQL queries against the knowledge graph database. Tables: nodes, edges, chunks, chats, voice_usage, logs, and migration snapshots. Use PRAGMA table_info(tablename) for schema. Only SELECT/WITH/PRAGMA allowed. Use when structured tools are insufficient — e.g., complex JOINs, aggregations, or custom filtering. Read readSkill("schema") for table definitions and query patterns.',
       inputSchema: sqliteQueryInputSchema
     },
     async ({ sql: userSql, format = 'json' }) => {

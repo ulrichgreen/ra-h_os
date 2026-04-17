@@ -3,7 +3,6 @@
 const { getDb, query } = require('./sqlite-client');
 const nodeService = require('./nodeService');
 const edgeService = require('./edgeService');
-const contextService = require('./contextService');
 
 const LOW_SIGNAL_PATTERNS = [
   /^(yes|yeah|yep|no|nope|nah|ok|okay|cool|great|nice|thanks|thank you|sure|sounds good|go ahead|do it)[.!]?$/i,
@@ -475,7 +474,6 @@ function searchChunks(queryText, nodeIds, limit) {
 function retrieveQueryContext(input = {}) {
   const queryText = normalizeWhitespace(input.query || '');
   const focusedNodeId = input.focused_node_id ?? null;
-  const requestedActiveContextId = input.active_context_id ?? null;
   const limit = Math.min(Math.max(input.limit || 6, 1), 12);
   const shouldRetrieve = shouldRetrieveForQuery(queryText);
 
@@ -486,14 +484,11 @@ function retrieveQueryContext(input = {}) {
       mode: 'skip',
       reason: 'Query is too lightweight or conversational to justify retrieval.',
       focused_node_id: focusedNodeId,
-      active_context_id: requestedActiveContextId,
       nodes: [],
       chunks: [],
     };
   }
 
-  const activeContext = requestedActiveContextId ? contextService.getContextById(requestedActiveContextId) : null;
-  const activeContextId = activeContext ? activeContext.id : null;
   const focusedRequest = isFocusedSourceRequest(queryText);
   const directNodeRetrieval = isDirectNodeRetrievalQuery(queryText);
   const nodesById = new Map();
@@ -526,19 +521,6 @@ function retrieveQueryContext(input = {}) {
       searchRank: index,
     });
   });
-
-  if (activeContextId && !strongRecallMatch) {
-    const contextMatches = queryText
-      ? nodeService.getNodes({ search: queryText, contextId: activeContextId, limit: Math.max(limit, 4) })
-      : [];
-    contextMatches.forEach((node, index) => {
-      addNodeWithReason(nodesById, node, {
-        kind: 'context_hint',
-        reason: 'Also matched inside the active context.',
-        searchRank: directQueryMatches.length + index,
-      });
-    });
-  }
 
   if (!strongRecallMatch) {
     const rankedSeedNodes = rankRetrievedNodes(Array.from(nodesById.values())).slice(0, Math.max(3, limit));
@@ -583,7 +565,6 @@ function retrieveQueryContext(input = {}) {
         ? 'Direct node retrieval query: search the graph directly first and broaden only if needed.'
         : 'Substantive query: search the graph directly, then pull additional supporting context if helpful.',
     focused_node_id: focusedNodeId,
-    active_context_id: activeContextId,
     nodes: finalNodes,
     chunks,
   };

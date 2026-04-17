@@ -7,15 +7,13 @@ export const retrieveQueryContextTool = tool({
   inputSchema: z.object({
     query: z.string().min(1).describe('The raw user query for this turn.'),
     focused_node_id: z.number().int().positive().nullable().optional().describe('Optional currently focused node ID.'),
-    active_context_id: z.number().int().positive().nullable().optional().describe('Optional active context ID as a soft hint.'),
     limit: z.number().int().min(1).max(12).optional().describe('Maximum number of nodes to return.'),
   }),
-  execute: async ({ query, focused_node_id, active_context_id, limit }) => {
+  execute: async ({ query, focused_node_id, limit }) => {
     try {
       const result = await retrieveQueryContext({
         query,
         focused_node_id: focused_node_id ?? null,
-        active_context_id: active_context_id ?? null,
         limit,
       });
 

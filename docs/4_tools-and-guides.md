@@ -1,56 +1,65 @@
 # Tools & Skills
 
-MCP tools are the graph contract. Skills are the reusable procedural layer that teaches agents how to use that contract well.
+What actions agents can take, and how skills provide procedural guidance.
 
-## Live MCP Tools
+## Tool Groups
+
+| Group | Purpose | Examples |
+|-------|---------|----------|
+| Read | Find, inspect, and ground graph context | `queryNodes`, `retrieveQueryContext`, `getNodesById` |
+| Write | Create or update graph structure | `createNode`, `updateNode`, `createEdge` |
+| Extraction | Ingest external content into the graph | `websiteExtract`, `youtubeExtract`, `paperExtract` |
+| Utility | Deep inspection or external support | `sqliteQuery`, `webSearch`, `think` |
+| Skills | Procedural guidance | `listSkills`, `readSkill`, `writeSkill`, `deleteSkill` |
+
+## Live Tool Surface
 
 ### Read
-
-| Tool | Description |
-|------|-------------|
-| `getContext` | Graph overview for orientation |
-| `queryNodes` | Direct node lookup by title, description, or source |
-| `retrieveQueryContext` | Broader current-turn retrieval when graph grounding helps |
-| `getNodesById` | Fetch full nodes by ID |
-| `queryEdge` | Inspect existing edges |
-| `queryContexts` | List/search contexts |
-| `searchContentEmbeddings` | Search source chunks/transcripts |
-| `sqliteQuery` | Read-only SQL (`SELECT`, `WITH`, `PRAGMA`) |
+- `getContext`
+- `queryNodes`
+- `retrieveQueryContext`
+- `getNodesById`
+- `queryEdge`
+- `searchContentEmbeddings`
+- `sqliteQuery`
+- `webSearch`
+- `think`
 
 ### Write
-
-| Tool | Description |
-|------|-------------|
-| `createNode` | Create a node after duplicate/update checks |
-| `updateNode` | Update a node while preserving context by default |
-| `writeContext` | Save one confirmed durable context node |
-| `createEdge` | Create a confirmed edge |
-| `updateEdge` | Correct an edge after explicit confirmation |
+- `createNode`
+- `updateNode`
+- `deleteNode`
+- `createEdge`
+- `updateEdge`
 
 ### Skills
+- `listSkills`
+- `readSkill`
+- `writeSkill`
+- `deleteSkill`
 
-| Tool | Description |
-|------|-------------|
-| `listSkills` | List available skills |
-| `readSkill` | Read one skill |
-| `writeSkill` | Create or update a skill |
-| `deleteSkill` | Delete a skill |
+### Extraction
+- `websiteExtract`
+- `youtubeExtract`
+- `paperExtract`
 
-## Behavior Rules
+## Important Behavior Rules
 
-- search before creating
-- use `queryNodes` first for specific-node intent
-- use `retrieveQueryContext` only when broader grounding would help
-- leave context blank by default
-- if context is intentionally provided, prefer `context_name`
-- `writeContext`, `createEdge`, and `updateEdge` are confirmation-gated
-- judge graph quality by node quality and explicit edges, not taxonomy completeness
+- Search before creating.
+- Use `queryNodes` first when the user is clearly looking for a specific existing node.
+- Use `retrieveQueryContext` when the current turn would benefit from broader graph grounding.
+- `createEdge` and `updateEdge` are confirmation-gated.
+- node creation quality should come from `title`, `description`, `source`, `metadata`, and explicit edges, not taxonomy.
 
-## Skills
+Metadata note for `createNode` / `updateNode`:
+- prefer canonical keys: `type`, `state`, `captured_method`, `captured_by`, `source_metadata`
+- `updateNode.metadata` merges into the existing object rather than replacing the whole blob
 
-Skills are markdown instructions stored locally and shared across internal and external agents.
+## Skills System
 
-Default seeded skills:
+Skills are markdown instruction documents shared by internal and external agents.
+
+Seeded defaults:
 - `db-operations`
 - `create-skill`
 - `audit`
@@ -64,21 +73,21 @@ Storage:
 - live skills: `~/Library/Application Support/RA-H/skills/`
 - bundled defaults: `src/config/skills/`
 
-## API Routes
+## API Surfaces
 
 | Route | Method | Purpose |
 |-------|--------|---------|
 | `/api/skills` | GET | List skills |
 | `/api/skills/[name]` | GET/PUT/DELETE | Skill CRUD |
-| `/api/guides` | GET | Compatibility alias to skills |
-| `/api/guides/[name]` | GET/PUT/DELETE | Compatibility alias to skills |
+| `/api/guides` | GET | Legacy compatibility alias to skills |
+| `/api/guides/[name]` | GET/PUT/DELETE | Legacy compatibility alias to skills |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `apps/mcp-server-standalone/` | Standalone MCP server |
 | `src/tools/infrastructure/registry.ts` | Live tool registry |
-| `src/services/skills/skillService.ts` | Skills runtime service |
+| `src/services/skills/skillService.ts` | App skill service |
+| `apps/mcp-server-standalone/services/skillService.js` | Standalone MCP skill service |
 | `src/config/skills/*.md` | Bundled default skills |
-| `src/components/panes/SkillsPane.tsx` | Skills pane UI |
+| `apps/mcp-server-standalone/skills/*.md` | MCP bundled default skills |

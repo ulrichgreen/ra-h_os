@@ -11,15 +11,13 @@ const packageJson = require('../../package.json');
 
 const instructions = [
   'RA-H is a personal knowledge graph — local-first, vendor-neutral.',
-  'Core concepts: contexts (optional soft scopes, max 10), nodes (knowledge units), and edges (connections with explanations).',
+  'Core concepts: nodes (knowledge units) and edges (connections with explanations).',
   'If the user is trying to find a specific existing node, use rah_search_nodes first.',
   'If graph context would help with a broader task, use rah_retrieve_query_context.',
   'Use rah_get_context only when high-level graph orientation would actually help.',
   'Do not keep re-running retrieval if you already have enough relevant graph context in play.',
-  'Use contexts only when one obvious existing context is explicitly helpful. If unsure or if none exist, leave context empty.',
   'Search before creating: use rah_search_nodes to check if content already exists.',
-  'Only suggest saving context when it is unusually durable and valuable. Keep the ask brief, for example: Add "X" as a node?',
-  'Never write via rah_write_context unless the user has explicitly confirmed yes.',
+  'Only suggest saving durable knowledge when it is unusually valuable. Keep the ask brief, for example: Add "X" as a node?',
   'Do not create edges autonomously. Surface likely edge candidates briefly, then call edge-write tools only after the user explicitly confirms.',
   'Every edge needs an explanation: why does this connection exist?',
   'All data stays local on this device; nothing leaves 127.0.0.1.',
@@ -45,7 +43,6 @@ const addNodeInputSchema = {
   source: z.string().max(50000).optional(),
   link: z.string().url().optional(),
   description: z.string().max(500).optional().describe('Description of the node. Write it as natural prose, not labels or a checklist. It must still make clear what the artifact is, why it is in the graph (infer from conversation context; ask the user if needed), and its current workflow status. Max 500 characters. If the reason is unclear, say that naturally instead of inventing it. Never use filler phrases like "insightful for understanding" or "relevant to the user\'s work".'),
-  context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants this node assigned to a known context.'),
   metadata: z.record(z.any()).optional().describe('Optional metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.'),
   chunk: z.string().max(50000).optional()
 };
@@ -59,7 +56,10 @@ const addNodeOutputSchema = {
 const searchNodesInputSchema = {
   query: z.string().min(1).max(400),
   limit: z.number().min(1).max(50).optional(),
-  context_name: z.string().optional()
+  createdAfter: z.string().optional(),
+  createdBefore: z.string().optional(),
+  eventAfter: z.string().optional(),
+  eventBefore: z.string().optional()
 };
 
 const searchNodesOutputSchema = {
@@ -79,7 +79,6 @@ const searchNodesOutputSchema = {
 const retrieveQueryContextInputSchema = {
   query: z.string().min(1).max(800),
   focused_node_id: z.number().int().positive().nullable().optional(),
-  active_context_id: z.number().int().positive().nullable().optional(),
   limit: z.number().min(1).max(12).optional()
 };
 
@@ -89,14 +88,13 @@ const retrieveQueryContextOutputSchema = {
   mode: z.enum(['skip', 'focused', 'query']),
   reason: z.string(),
   focused_node_id: z.number().nullable(),
-  active_context_id: z.number().nullable(),
   nodes: z.array(z.object({
     id: z.number(),
     title: z.string(),
     description: z.string().nullable(),
     link: z.string().nullable(),
     updated_at: z.string(),
-    kind: z.enum(['focused', 'query_match', 'context_hint', 'neighbor']),
+    kind: z.enum(['focused', 'query_match', 'neighbor']),
     reason: z.string(),
     seed_node_id: z.number().optional()
   })),
@@ -109,53 +107,6 @@ const retrieveQueryContextOutputSchema = {
   }))
 };
 
-const writeContextInputSchema = {
-  title: z.string().min(1).max(160),
-  description: z.string().min(1).max(500),
-  source: z.string().max(50000).optional(),
-  context_name: z.string().optional(),
-  metadata: z.record(z.any()).optional(),
-  confirmed_by_user: z.boolean()
-};
-
-const writeContextOutputSchema = {
-  success: z.boolean(),
-  nodeId: z.number(),
-  title: z.string(),
-  message: z.string()
-};
-
-const queryContextsInputSchema = {
-  contextId: z.number().int().positive().optional(),
-  name: z.string().optional(),
-  search: z.string().optional(),
-  limit: z.number().min(1).max(100).optional(),
-  includeNodes: z.boolean().optional()
-};
-
-const queryContextsOutputSchema = {
-  count: z.number(),
-  contexts: z.array(
-    z.object({
-      id: z.number(),
-      name: z.string(),
-      description: z.string().nullable(),
-      icon: z.string().nullable(),
-      count: z.number(),
-      nodes: z.array(
-        z.object({
-          id: z.number(),
-          title: z.string(),
-          description: z.string().nullable(),
-          link: z.string().nullable(),
-          context_id: z.number().nullable().optional(),
-          updated_at: z.string()
-        })
-      ).optional()
-    })
-  )
-};
-
 // rah_update_node schemas
 const updateNodeInputSchema = {
   id: z.number().int().positive().describe('The ID of the node to update'),
@@ -165,8 +116,6 @@ const updateNodeInputSchema = {
     content: z.string().optional().describe('Legacy alias for source. Mapped to source for backward compatibility.'),
     source: z.string().optional().describe('Canonical source text for embedding.'),
     link: z.string().optional().describe('New link'),
-    context_name: z.string().optional().describe('Optional primary context name. Use only when the user explicitly wants to assign this node to a known context.'),
-    clear_context: z.boolean().optional().describe('Set true only when the user explicitly wants to remove the node context.'),
     metadata: z.record(z.any()).optional().describe('Metadata patch. This now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
   }).describe('Fields to update')
 };
@@ -323,7 +272,7 @@ async function resolveBaseUrl() {
     if (!candidate) return false;
     const normalized = String(candidate).replace(/\/+$/, '');
     try {
-      const response = await fetch(`${normalized}/api/contexts`, {
+      const response = await fetch(`${normalized}/api/nodes?limit=1`, {
         method: 'GET',
         signal: AbortSignal.timeout(1500)
       });
@@ -373,17 +322,16 @@ server.registerTool(
   'rah_add_node',
   {
     title: 'Add RA-H node',
-    description: 'Create a new node in the local RA-H knowledge base after you have already decided a net-new write is correct. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation. Leave context blank by default. If the user explicitly wants context, use `context_name` rather than a numeric ID.',
+    description: 'Create a new node in the local RA-H knowledge base after you have already decided a net-new write is correct. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation.',
     inputSchema: addNodeInputSchema,
     outputSchema: addNodeOutputSchema
   },
-  async ({ title, content, source, link, description, context_name, metadata, chunk }) => {
+  async ({ title, content, source, link, description, metadata, chunk }) => {
     const payload = {
       title: title.trim(),
       source: source?.trim() || content?.trim() || chunk?.trim() || undefined,
       link: link?.trim() || undefined,
       description: description?.trim() || undefined,
-      context_name: context_name?.trim() || undefined,
       metadata: metadata || {}
     };
 
@@ -410,17 +358,20 @@ server.registerTool(
   'rah_search_nodes',
   {
     title: 'Search RA-H nodes',
-    description: 'Find existing RA-H entries that mention a topic before adding new ones. Leave context blank by default. If the user explicitly wants a context-specific lookup, use `context_name` rather than a numeric ID. For full current-turn grounding of a substantive request, prefer rah_retrieve_query_context.',
+    description: 'Find existing RA-H entries that mention a topic before adding new ones. Use this first when the user is trying to locate a specific node they already created. For full current-turn grounding of a substantive request, prefer rah_retrieve_query_context.',
     inputSchema: searchNodesInputSchema,
     outputSchema: searchNodesOutputSchema
   },
-  async ({ query, limit = 10, context_name }) => {
+  async ({ query, limit = 10, createdAfter, createdBefore, eventAfter, eventBefore }) => {
     const result = await callRaHApi('/api/nodes/direct-search', {
       method: 'POST',
       body: JSON.stringify({
         query: query.trim(),
         limit: Math.min(Math.max(limit, 1), 50),
-        context_name: typeof context_name === 'string' ? context_name.trim() : undefined,
+        createdAfter,
+        createdBefore,
+        eventAfter,
+        eventBefore,
       })
     });
 
@@ -455,13 +406,12 @@ server.registerTool(
     inputSchema: retrieveQueryContextInputSchema,
     outputSchema: retrieveQueryContextOutputSchema
   },
-  async ({ query, focused_node_id, active_context_id, limit = 6 }) => {
+  async ({ query, focused_node_id, limit = 6 }) => {
     const result = await callRaHApi('/api/retrieval/query-context', {
       method: 'POST',
       body: JSON.stringify({
         query,
         focused_node_id: focused_node_id ?? null,
-        active_context_id: active_context_id ?? null,
         limit
       })
     });
@@ -474,94 +424,10 @@ server.registerTool(
 );
 
 server.registerTool(
-  'rah_query_contexts',
-  {
-    title: 'Query RA-H contexts',
-    description: 'List or inspect optional contexts. Use this only when a context is already obviously relevant or the user asks for it.',
-    inputSchema: queryContextsInputSchema,
-    outputSchema: queryContextsOutputSchema
-  },
-  async ({ contextId, name, search, limit = 50, includeNodes = false }) => {
-    const normalizedName = typeof name === 'string' ? name.trim() : '';
-    const normalizedSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
-
-    let contexts = [];
-
-    if (contextId) {
-      const result = await callRaHApi(`/api/contexts/${contextId}`, { method: 'GET' });
-      contexts = result.data ? [result.data] : [];
-    } else {
-      const result = await callRaHApi('/api/contexts', { method: 'GET' });
-      contexts = Array.isArray(result.data) ? result.data : [];
-    }
-
-    if (normalizedName) {
-      contexts = contexts.filter((context) => context.name.toLowerCase() === normalizedName.toLowerCase());
-    }
-
-    if (normalizedSearch) {
-      contexts = contexts.filter((context) =>
-        context.name.toLowerCase().includes(normalizedSearch) ||
-        (context.description || '').toLowerCase().includes(normalizedSearch)
-      );
-    }
-
-    contexts = contexts.slice(0, Math.min(Math.max(limit, 1), 100));
-
-    const includeContextNodes = includeNodes && contexts.length === 1 && (contextId || normalizedName);
-    const structuredContexts = await Promise.all(
-      contexts.map(async (context) => {
-        if (!includeContextNodes) {
-          return {
-            id: context.id,
-            name: context.name,
-            description: context.description ?? null,
-            icon: context.icon ?? null,
-            count: context.count ?? 0
-          };
-        }
-
-        const nodesResult = await callRaHApi(`/api/contexts/${context.id}/nodes`, { method: 'GET' });
-        const nodes = Array.isArray(nodesResult.data) ? nodesResult.data : [];
-
-        return {
-          id: context.id,
-          name: context.name,
-          description: context.description ?? null,
-          icon: context.icon ?? null,
-          count: context.count ?? nodes.length,
-          nodes: nodes.map((node) => ({
-            id: node.id,
-            title: node.title,
-            description: node.description ?? null,
-            link: node.link ?? null,
-            context_id: node.context_id ?? null,
-            updated_at: node.updated_at
-          }))
-        };
-      })
-    );
-
-    const summary =
-      structuredContexts.length === 0
-        ? 'No contexts found.'
-        : `Found ${structuredContexts.length} context(s).`;
-
-    return {
-      content: [{ type: 'text', text: summary }],
-      structuredContent: {
-        count: structuredContexts.length,
-        contexts: structuredContexts
-      }
-    };
-  }
-);
-
-server.registerTool(
   'rah_update_node',
   {
     title: 'Update RA-H node',
-    description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear. Context is preserved by default. If the user explicitly wants to change context, use `context_name`. Use `clear_context` only when the user explicitly wants to remove the node context.',
+    description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear.',
     inputSchema: updateNodeInputSchema,
     outputSchema: updateNodeOutputSchema
   },
@@ -580,10 +446,6 @@ server.registerTool(
       delete mappedUpdates.content;
     }
     delete mappedUpdates.chunk;
-
-    if (mappedUpdates.context_name && mappedUpdates.clear_context) {
-      throw new Error('context_name cannot be combined with clear_context: true.');
-    }
 
     const result = await callRaHApi(`/api/nodes/${id}`, {
       method: 'PUT',
@@ -867,8 +729,7 @@ server.registerTool(
 const getContextOutputSchema = {
   stats: z.object({
     nodeCount: z.number(),
-    edgeCount: z.number(),
-    contextCount: z.number().optional()
+    edgeCount: z.number()
   }),
   hubNodes: z.array(z.object({
     id: z.number(),
@@ -876,13 +737,6 @@ const getContextOutputSchema = {
     description: z.string().nullable(),
     edgeCount: z.number()
   })),
-  contexts: z.array(z.object({
-    id: z.number(),
-    name: z.string(),
-    description: z.string().nullable(),
-    icon: z.string().nullable().optional(),
-    count: z.number()
-  })).optional(),
   guides: z.array(z.string())
 };
 
@@ -890,13 +744,12 @@ server.registerTool(
   'rah_get_context',
   {
     title: 'Get RA-H context',
-    description: 'Get orientation context: high-level graph state, optional contexts, hub nodes, stats, and available guides. Use this for orientation only, not as the default retrieval path for substantive requests.',
+    description: 'Get orientation context: high-level graph state, hub nodes, stats, and available guides. Use this for orientation only, not as the default retrieval path for substantive requests.',
     inputSchema: {},
     outputSchema: getContextOutputSchema
   },
   async () => {
-    // Fetch hub nodes (top 5 most-connected)
-    const hubResult = await callRaHApi('/api/nodes?sortBy=edges&limit=5', { method: 'GET' });
+    const hubResult = await callRaHApi('/api/nodes?sortBy=edges&limit=10', { method: 'GET' });
     const hubNodes = Array.isArray(hubResult.data) ? hubResult.data.map(n => ({
       id: n.id,
       title: n.title,
@@ -904,28 +757,15 @@ server.registerTool(
       edgeCount: n.edge_count ?? 0
     })) : [];
 
-    const contextResult = await callRaHApi('/api/contexts', { method: 'GET' });
-    const contexts = Array.isArray(contextResult.data) ? contextResult.data.map(c => ({
-      id: c.id,
-      name: c.name,
-      description: c.description ?? null,
-      icon: c.icon ?? null,
-      count: c.count ?? 0
-    })) : [];
-
     // Fetch guides
     const guideResult = await callRaHApi('/api/guides', { method: 'GET' });
     const guides = Array.isArray(guideResult.data) ? guideResult.data.map(g => g.name) : [];
 
-    // Get counts
-    const nodeCount = hubNodes.length > 0 ? undefined : 0;
     const stats = {
-      nodeCount: nodeCount ?? hubNodes.reduce((_, n) => 0, 0),
-      edgeCount: 0,
-      contextCount: contexts.length
+      nodeCount: 0,
+      edgeCount: 0
     };
 
-    // Try to get actual counts from a stats endpoint or compute
     try {
       const countResult = await callRaHApi('/api/nodes?limit=1', { method: 'GET' });
       if (countResult.total !== undefined) {
@@ -933,57 +773,21 @@ server.registerTool(
       }
     } catch { /* use defaults */ }
 
-    const summary = `Knowledge graph: ${stats.contextCount} contexts, ${hubNodes.length} hub nodes for graph grounding, ${guides.length} guides available.`;
+    try {
+      const edgeResult = await callRaHApi('/api/edges', { method: 'GET' });
+      if (typeof edgeResult.count === 'number') {
+        stats.edgeCount = edgeResult.count;
+      }
+    } catch { /* use defaults */ }
+
+    const summary = `Knowledge graph: ${stats.nodeCount} nodes, ${stats.edgeCount} edges, ${hubNodes.length} hub nodes, ${guides.length} guides available.`;
 
     return {
       content: [{ type: 'text', text: summary }],
       structuredContent: {
         stats,
         hubNodes,
-        contexts,
         guides
-      }
-    };
-  }
-);
-
-server.registerTool(
-  'rah_write_context',
-  {
-    title: 'Write RA-H context node',
-    description: 'Write one atomic durable context node to the graph only after the user has explicitly approved the save. Use this for agent-suggested capture after you already proposed the node briefly and got a clear yes. Prefer ordinary create/update flows for explicit user-directed capture.',
-    inputSchema: writeContextInputSchema,
-    outputSchema: writeContextOutputSchema
-  },
-  async ({ title, description, source, context_name, metadata, confirmed_by_user }) => {
-    if (!confirmed_by_user) {
-      throw new Error('rah_write_context requires explicit user confirmation before writing to the graph.');
-    }
-
-    const result = await callRaHApi('/api/nodes', {
-      method: 'POST',
-      body: JSON.stringify({
-        title: title.trim(),
-        description: description.trim(),
-        source: source?.trim() || undefined,
-        context_name: context_name?.trim() || undefined,
-        metadata: {
-          captured_by: 'human',
-          captured_method: 'write_context',
-          ...(metadata || {})
-        }
-      })
-    });
-
-    const node = result.data;
-    const message = result.message || `Saved context as node #${node.id}: ${node.title}`;
-    return {
-      content: [{ type: 'text', text: message }],
-      structuredContent: {
-        success: true,
-        nodeId: node.id,
-        title: node.title,
-        message
       }
     };
   }

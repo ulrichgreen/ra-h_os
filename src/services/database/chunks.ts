@@ -463,7 +463,6 @@ export class ChunkService {
 
       return result.rows;
     } catch (error) {
-      sqlite.disableFtsTable('chunks', 'chunks_fts query failed during chunk search', error);
       console.warn('[ChunkSearch] FTS chunk search failed, falling back to LIKE:', error);
       return [];
     }

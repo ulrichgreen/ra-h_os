@@ -10,23 +10,6 @@ export interface CanonicalNodeMetadata {
   [key: string]: unknown;
 }
 
-export interface Context {
-  id: number;
-  name: string;
-  description: string | null;
-  icon: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ContextSummary {
-  id: number;
-  name: string;
-  description: string | null;
-  icon: string | null;
-  count: number;
-}
-
 // New Node-based type system replacing rigid Item categorization
 export interface Node {
   id: number;
@@ -42,8 +25,6 @@ export interface Node {
   created_at: string;
   updated_at: string;
   edge_count?: number;       // Derived count of edges, included in some queries
-  context_id?: number | null;
-  context?: Pick<Context, 'id' | 'name' | 'description' | 'icon'> | null;
 
   // Optional embedding fields
   embedding_updated_at?: string;
@@ -96,7 +77,6 @@ export interface EdgeContext {
 
 // New NodeFilters interface replacing rigid ItemFilters
 export interface NodeFilters {
-  contextId?: number;
   search?: string;           // Text search in title/content
   searchMode?: 'standard' | 'hybrid'; // standard = FTS/LIKE, hybrid = add node-vector retrieval
   chunkStatus?: 'not_chunked' | 'chunking' | 'chunked' | 'error';
@@ -147,4 +127,12 @@ export interface DatabaseError {
   message: string;
   code?: string;
   details?: any;
+}
+
+export interface Dimension {
+  name: string;
+  description?: string | null;
+  icon?: string | null;
+  is_priority: boolean;
+  updated_at: string;
 }

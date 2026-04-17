@@ -4,7 +4,7 @@ import type { FocusedSkill } from '@/types/skills';
 export type SlotId = 'A' | 'B' | 'C';
 
 // The pane types
-export type PaneType = 'node' | 'contexts' | 'map' | 'views' | 'table' | 'skills';
+export type PaneType = 'node' | 'map' | 'views' | 'table' | 'skills';
 
 // A single tab within a slot
 export interface SlotTab {
@@ -32,7 +32,6 @@ export function getActiveTab(state: SlotState): SlotTab | undefined {
 // Actions panes can emit to the layout
 export type PaneAction =
   | { type: 'open-node'; nodeId: number; targetSlot?: SlotId }
-  | { type: 'open-context'; contextId: number | null; contextName?: string | null; targetSlot?: SlotId }
   | { type: 'switch-pane-type'; paneType: PaneType }
   | { type: 'close-pane' };
 
@@ -69,13 +68,13 @@ export interface HighlightedPassage {
 
 export interface ChatPanelProps {
   isOpen: boolean;
+  isSoloPane?: boolean;
+  slot?: SlotId;
   onClose: () => void;
   onOpen: () => void;
+  onSwapPanes?: (source: SlotId, target: SlotId) => void;
   openTabsData: Node[];
   activeTabId: number | null;
-  activeContextId?: number | null;
-  activeContextName?: string | null;
-  onClearContext?: () => void;
   focusedSkill?: FocusedSkill | null;
   onClearFocusedSkill?: () => void;
   onNodeClick?: (nodeId: number) => void;
@@ -99,14 +98,6 @@ export interface ViewsPaneProps extends BasePaneProps {
   onNodeClick: (nodeId: number) => void;
   onNodeOpenInOtherPane?: (nodeId: number) => void;
   refreshToken?: number;
-  externalContextFilterId?: number | null;
-  onContextFilterSelect?: (contextId: number | null, contextName?: string | null) => void;
-  onClearExternalContextFilter?: () => void;
-}
-
-export interface ContextsPaneProps extends BasePaneProps {
-  onNodeOpen: (nodeId: number) => void;
-  onContextSelect?: (contextId: number | null, contextName?: string | null) => void;
 }
 
 // TablePane specific props
@@ -128,7 +119,6 @@ export interface PaneHeaderProps {
 // Labels for pane types
 export const PANE_LABELS: Record<PaneType, string> = {
   node: 'Nodes',
-  contexts: 'Contexts',
   map: 'Map',
   views: 'Feed',
   table: 'Table',
