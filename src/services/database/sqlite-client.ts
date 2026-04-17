@@ -88,7 +88,6 @@ class SQLiteClient {
 
       this.withStartupWriteLock(() => {
         this.ensureCoreSchema();
-        this.recoverInterruptedContextMigration();
         // Ensure vector virtual tables are present and healthy
         this.ensureVectorTables();
         this.healVectorTablesIfCorrupt();
@@ -340,120 +339,6 @@ class SQLiteClient {
       CREATE INDEX IF NOT EXISTS idx_chunks_node_id ON chunks(node_id);
       CREATE INDEX IF NOT EXISTS idx_chats_thread ON chats(thread_id);
     `);
-  }
-
-  private recoverInterruptedContextMigration(): void {
-    const hasTempNodes = this.db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes__without_context'"
-    ).get();
-
-    if (!hasTempNodes) {
-      return;
-    }
-
-    const tempNodeCount = Number(
-      this.db.prepare('SELECT COUNT(*) FROM nodes__without_context').pluck().get() ?? 0
-    );
-    const hasNodesTable = this.db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes'"
-    ).get();
-
-    if (!hasNodesTable) {
-      this.db.exec(`
-        ALTER TABLE nodes__without_context RENAME TO nodes;
-        CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
-      `);
-      console.warn(
-        `[SQLiteMigration] Restored missing nodes table from nodes__without_context (${tempNodeCount} rows).`
-      );
-      return;
-    }
-
-    const nodeColumns = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
-    const hasContextId = nodeColumns.some((column) => column.name === 'context_id');
-    const liveNodeCount = Number(this.db.prepare('SELECT COUNT(*) FROM nodes').pluck().get() ?? 0);
-
-    if (!hasContextId && liveNodeCount === 0 && tempNodeCount > 0) {
-      this.db.exec(`
-        INSERT INTO nodes (
-          id, title, description, source, link, event_date, created_at, updated_at,
-          metadata, embedding, embedding_updated_at, embedding_text, chunk_status
-        )
-        SELECT
-          id, title, description, source, link, event_date, created_at, updated_at,
-          metadata, embedding, embedding_updated_at, embedding_text, chunk_status
-        FROM nodes__without_context;
-      `);
-
-      const restoredNodeCount = Number(this.db.prepare('SELECT COUNT(*) FROM nodes').pluck().get() ?? 0);
-      if (restoredNodeCount === tempNodeCount) {
-        this.db.exec('DROP TABLE nodes__without_context;');
-      }
-
-      console.warn(
-        `[SQLiteMigration] Recovered ${restoredNodeCount} nodes from interrupted context-removal migration.`
-      );
-    }
-  }
-
-  private dropContextsSchema(): void {
-    const nodeColumns = this.db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name: string }>;
-    const hasContextId = nodeColumns.some((column) => column.name === 'context_id');
-
-    this.db.exec('DROP INDEX IF EXISTS idx_nodes_context_id;');
-    this.db.exec('DROP INDEX IF EXISTS idx_contexts_name_normalized;');
-
-    if (hasContextId) {
-      try {
-        this.db.exec('DROP TABLE IF EXISTS nodes__without_context;');
-        this.db.exec('PRAGMA foreign_keys = OFF;');
-        this.db.exec(`
-          CREATE TABLE nodes__without_context (
-            id INTEGER PRIMARY KEY,
-            title TEXT,
-            description TEXT,
-            source TEXT,
-            link TEXT,
-            event_date TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            metadata TEXT,
-            embedding BLOB,
-            embedding_updated_at TEXT,
-            embedding_text TEXT,
-            chunk_status TEXT DEFAULT 'not_chunked'
-          );
-
-          INSERT INTO nodes__without_context (
-            id, title, description, source, link, event_date, created_at, updated_at,
-            metadata, embedding, embedding_updated_at, embedding_text, chunk_status
-          )
-          SELECT
-            id, title, description, source, link, event_date, created_at, updated_at,
-            metadata, embedding, embedding_updated_at, embedding_text, chunk_status
-          FROM nodes;
-
-          DROP TABLE nodes;
-          ALTER TABLE nodes__without_context RENAME TO nodes;
-          CREATE INDEX IF NOT EXISTS idx_nodes_updated_at ON nodes(updated_at DESC);
-        `);
-      } catch (error) {
-        try {
-          this.db.exec('PRAGMA foreign_keys = ON;');
-        } catch {}
-
-        if (error instanceof Error && /SQLITE_LOCKED|database table is locked/i.test(error.message)) {
-          console.warn('[SQLiteMigration] Skipping context-column removal in this process because another startup process holds the schema lock.');
-          return;
-        }
-
-        throw error;
-      }
-
-      this.db.exec('PRAGMA foreign_keys = ON;');
-    }
-
-    this.db.exec('DROP TABLE IF EXISTS contexts;');
   }
 
   private ensureLoggingAndMemorySchema(): void {
@@ -915,8 +800,6 @@ class SQLiteClient {
             `);
           } catch {}
         }
-
-        this.dropContextsSchema();
 
         const hasLegacyDimensions = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dimensions'").get();
         const hasLegacyNodeDimensions = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='node_dimensions'").get();
