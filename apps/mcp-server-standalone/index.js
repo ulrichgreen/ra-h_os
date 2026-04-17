@@ -44,7 +44,11 @@ const serverInfo = {
 
 function buildInstructions() {
   const now = new Date().toISOString().split('T')[0];
-  let skillIndex = '- db-operations: Core graph read/write operating policy.';
+  let skillIndex = [
+    '- onboarding: Bootstrap a useful starter graph quickly and with low friction.',
+    '- create-skill: Create or rewrite a reusable skill when a workflow is repeatable.',
+    '- refine: Clean up or sharpen one node or a small set of nodes before writing changes.'
+  ].join('\n');
 
   try {
     const skills = skillService.listSkills();
@@ -61,11 +65,12 @@ function buildInstructions() {
 
 ## Quick start
 1. If the user is trying to find a specific existing node, call queryNodes first.
-2. If graph context would help with a broader task, call retrieveQueryContext.
+2. If graph context would help with a broader task, call retrieveQueryContext before answering.
 3. Call getContext only when orientation about the overall graph would actually help.
 4. Do not keep re-running retrieval if you already have enough relevant graph context in play.
-5. For simple tasks, tool descriptions have everything you need.
-6. For complex tasks, call readSkill("db-operations").
+5. Search before creating, and prefer updateNode when the artifact is clearly the same thing.
+6. For simple tasks, tool descriptions should be enough.
+7. For non-trivial workflows or policy detail, call readSkill on the matching skill.
 
 ## Knowledge capture
 Only suggest saving durable knowledge when it seems unusually durable and valuable.
@@ -142,7 +147,7 @@ const queryEdgesInputSchema = {
 };
 
 const readSkillInputSchema = {
-  name: z.string().min(1).describe('Skill name (e.g. "db-operations", "onboarding", "persona")')
+  name: z.string().min(1).describe('Skill name (e.g. "onboarding", "create-skill", "refine")')
 };
 
 const writeSkillInputSchema = {
@@ -246,14 +251,13 @@ async function main() {
     'getContext',
     {
       title: 'Get RA-H context',
-      description: 'Get knowledge graph overview: stats, hub nodes, recent activity, and available skills. Use this for orientation only, not as the default retrieval path for substantive requests. For deeper operating policy, follow up with readSkill("db-operations").',
+      description: 'Get knowledge graph overview: stats, hub nodes, recent activity, and available skills. Use this for orientation only, not as the default retrieval path for substantive requests.',
       inputSchema: {}
     },
     async () => {
       const context = nodeService.getContext();
       const skills = skillService.listSkills();
       context.skills = skills.map(s => ({ name: s.name, description: s.description, immutable: s.immutable }));
-      context.guides = context.skills;
 
       // First-run welcome message
       if (context.stats.nodeCount === 0) {
@@ -267,7 +271,7 @@ async function main() {
         };
       }
 
-      const summary = `Graph: ${context.stats.nodeCount} nodes, ${context.stats.edgeCount} edges, ${skills.length} skills.`;
+      const summary = `Graph: ${context.stats.nodeCount} nodes, ${context.stats.edgeCount} edges, ${context.hubNodes.length} hub nodes, ${skills.length} skills.`;
       return {
         content: [{ type: 'text', text: summary }],
         structuredContent: context
@@ -553,15 +557,13 @@ async function main() {
     }
   );
 
-  // ========== DIMENSION TOOLS ==========
-
   // ========== SKILL TOOLS ==========
 
   registerToolWithAliases(
     'listSkills',
     {
       title: 'List RA-H skills',
-      description: 'List all skills available in this workspace. Read "db-operations" first for core graph operating policy.',
+      description: 'List the shared skills available to internal and external RA-H agents. Use this to see the current operating doctrine before reading or editing a specific skill.',
       inputSchema: {}
     },
     async () => {
@@ -571,8 +573,7 @@ async function main() {
         content: [{ type: 'text', text: `Found ${skills.length} skill(s).` }],
         structuredContent: {
           count: skills.length,
-          skills,
-          guides: skills
+          skills
         }
       };
     }
@@ -582,7 +583,7 @@ async function main() {
     'readSkill',
     {
       title: 'Read RA-H skill',
-      description: 'Read a skill by name. Returns full markdown with procedural instructions. Read "db-operations" for core policy. Call listSkills to see all available skills.',
+      description: 'Read one shared RA-H skill by name. Use this before executing a non-trivial workflow that matches the skill trigger.',
       inputSchema: readSkillInputSchema
     },
     async ({ name }) => {
@@ -603,7 +604,7 @@ async function main() {
     'writeSkill',
     {
       title: 'Write RA-H skill',
-      description: 'Create or update a skill. Content should be markdown with YAML frontmatter (name, description).',
+      description: 'Create or update a shared RA-H skill when the user explicitly wants to change the doctrine surface. Content should be the full markdown body for that skill.',
       inputSchema: writeSkillInputSchema
     },
     async ({ name, content }) => {
@@ -628,7 +629,7 @@ async function main() {
     'deleteSkill',
     {
       title: 'Delete RA-H skill',
-      description: 'Delete a skill.',
+      description: 'Delete a shared RA-H skill when the user explicitly wants it removed from the shared skill set.',
       inputSchema: deleteSkillInputSchema
     },
     async ({ name }) => {
@@ -770,7 +771,7 @@ async function main() {
     'sqliteQuery',
     {
       title: 'Execute read-only SQL',
-      description: 'Execute read-only SQL queries against the knowledge graph database. Tables: nodes, edges, chunks, chats, voice_usage, logs, and migration snapshots. Use PRAGMA table_info(tablename) for schema. Only SELECT/WITH/PRAGMA allowed. Use when structured tools are insufficient — e.g., complex JOINs, aggregations, or custom filtering. Read readSkill("schema") for table definitions and query patterns.',
+      description: 'Execute read-only SQL queries against the knowledge graph database. Tables include nodes, edges, chunks, and migration snapshots. Use PRAGMA table_info(tablename) for schema. Only SELECT/WITH/PRAGMA allowed. Use when structured tools are insufficient — e.g., complex JOINs, aggregations, or custom filtering. Read readSkill("schema") for table definitions and query patterns.',
       inputSchema: sqliteQueryInputSchema
     },
     async ({ sql: userSql, format = 'json' }) => {

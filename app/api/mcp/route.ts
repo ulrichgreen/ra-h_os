@@ -13,11 +13,15 @@ const SERVER_INFO = {
 
 const instructions = [
   'RA-H is a personal knowledge graph — local-first, vendor-neutral.',
-  'Core concepts: nodes (knowledge units) and edges (connections with explanations).',
+  'The graph is the default working memory for substantive turns.',
+  'Core concepts: nodes (knowledge units), edges (connections with explanations), and shared editable skills.',
   'If the user is trying to find a specific existing node, use rah_search_nodes first.',
-  'If the user is asking a broader question or request that would benefit from graph context, use rah_retrieve_query_context.',
+  'If graph context would help with a broader task, use rah_retrieve_query_context before answering.',
   'Use rah_get_context only for orientation when high-level graph state would actually help.',
-  'Search before creating: use rah_search_nodes to check if content already exists.',
+  'Do not keep re-running retrieval if you already have enough relevant graph context in play.',
+  'Search before creating, and prefer rah_update_node when the artifact is clearly the same thing.',
+  'Use rah_list_skills and rah_read_skill for non-trivial workflows that need operating doctrine. Use rah_write_skill and rah_delete_skill when the user explicitly wants to change that shared skill set.',
+  'Only suggest saving durable knowledge when it is unusually valuable. Keep the ask brief, for example: Add "X" as a node?',
   'Every edge needs an explanation: why does this connection exist?',
   'Never create or update an edge unless the user has explicitly confirmed the relationship.',
 ].join(' ');
@@ -182,9 +186,10 @@ function createServer(request: NextRequest): McpServer {
           link: z.string().optional(),
           metadata: z.record(z.any()).optional(),
         }),
+        source_update_basis: z.string().optional(),
       },
     },
-    async ({ id, updates }) => {
+    async ({ id, updates, source_update_basis }) => {
       if (!updates || Object.keys(updates).length === 0) {
         throw new Error('At least one field must be provided in updates.');
       }
@@ -201,7 +206,7 @@ function createServer(request: NextRequest): McpServer {
 
       const payload = await callRaHApi(request, `/api/nodes/${id}`, {
         method: 'PUT',
-        body: JSON.stringify(mappedUpdates),
+        body: JSON.stringify({ ...mappedUpdates, source_update_basis }),
       });
 
       return {
@@ -365,6 +370,97 @@ function createServer(request: NextRequest): McpServer {
   );
 
   server.registerTool(
+    'rah_list_skills',
+    {
+      title: 'List RA-H skills',
+      description: 'List the shared skills available to internal and external RA-H agents. Use this to see the current operating doctrine before reading or editing a specific skill.',
+      inputSchema: {},
+    },
+    async () => {
+      const result = await callRaHApi(request, '/api/skills', { method: 'GET' });
+      const skills = Array.isArray(result.data) ? result.data : [];
+
+      return {
+        content: [{ type: 'text', text: `Found ${skills.length} skill(s).` }],
+        structuredContent: {
+          count: skills.length,
+          skills,
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'rah_read_skill',
+    {
+      title: 'Read RA-H skill',
+      description: 'Read one shared RA-H skill by name. Use this before executing a non-trivial workflow that matches the skill trigger.',
+      inputSchema: {
+        name: z.string().min(1),
+      },
+    },
+    async ({ name }) => {
+      const result = await callRaHApi(request, `/api/skills/${encodeURIComponent(name)}`, { method: 'GET' });
+      return {
+        content: [{ type: 'text', text: result.data.content }],
+        structuredContent: result.data,
+      };
+    }
+  );
+
+  server.registerTool(
+    'rah_write_skill',
+    {
+      title: 'Write RA-H skill',
+      description: 'Create or update a shared RA-H skill when the user explicitly wants to change the doctrine surface. Content should be the full markdown body for that skill.',
+      inputSchema: {
+        name: z.string().min(1),
+        content: z.string().min(1),
+      },
+    },
+    async ({ name, content }) => {
+      const result = await callRaHApi(request, '/api/skills', {
+        method: 'POST',
+        body: JSON.stringify({ name, content }),
+      });
+
+      return {
+        content: [{ type: 'text', text: `Skill "${name}" saved.` }],
+        structuredContent: {
+          success: true,
+          name,
+          message: result.message || `Skill "${name}" saved.`,
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'rah_delete_skill',
+    {
+      title: 'Delete RA-H skill',
+      description: 'Delete a shared RA-H skill when the user explicitly wants it removed from the shared skill set.',
+      inputSchema: {
+        name: z.string().min(1),
+      },
+    },
+    async ({ name }) => {
+      const result = await callRaHApi(request, `/api/skills/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      });
+
+      return {
+        content: [{ type: 'text', text: `Skill "${name}" deleted.` }],
+        structuredContent: {
+          success: true,
+          name,
+          message: result.message || `Skill "${name}" deleted.`,
+        },
+      };
+    }
+  );
+
+  server.registerTool(
     'rah_search_embeddings',
     {
       title: 'Semantic search RA-H',
@@ -483,13 +579,13 @@ function createServer(request: NextRequest): McpServer {
     'rah_get_context',
     {
       title: 'Get RA-H context',
-      description: 'Get orientation context: high-level graph state, hub nodes, stats, and available guides.',
+      description: 'Get orientation context: high-level graph state, hub nodes, stats, and available skills. Use this for orientation only, not as the default retrieval path for substantive requests.',
       inputSchema: {},
     },
     async () => {
-      const [hubPayload, guidesPayload, countPayload, edgesPayload] = await Promise.all([
+      const [hubPayload, skillsPayload, countPayload, edgesPayload] = await Promise.all([
         callRaHApi(request, '/api/nodes?sortBy=edges&limit=10'),
-        callRaHApi(request, '/api/guides').catch(() => ({ data: [] })),
+        callRaHApi(request, '/api/skills').catch(() => ({ data: [] })),
         callRaHApi(request, '/api/nodes?limit=1').catch(() => ({ total: 0, count: 0 })),
         callRaHApi(request, '/api/edges?limit=1').catch(() => ({ count: 0, total: 0 })),
       ]);
@@ -501,19 +597,19 @@ function createServer(request: NextRequest): McpServer {
         edgeCount: node.edge_count ?? 0,
       })) : [];
 
-      const guides = Array.isArray(guidesPayload.data) ? guidesPayload.data.map((guide: any) => guide.name) : [];
+      const skills = Array.isArray(skillsPayload.data) ? skillsPayload.data : [];
       const nodeCount = countPayload.total ?? countPayload.count ?? 0;
       const edgeCount = edgesPayload.total ?? edgesPayload.count ?? 0;
 
       return {
-        content: [{ type: 'text', text: `Knowledge graph: ${nodeCount} nodes, ${edgeCount} edges, ${guides.length} guides available.` }],
+        content: [{ type: 'text', text: `Knowledge graph: ${nodeCount} nodes, ${edgeCount} edges, ${skills.length} skills available.` }],
         structuredContent: {
           stats: {
             nodeCount,
             edgeCount,
           },
           hubNodes,
-          guides,
+          skills,
         },
       };
     }

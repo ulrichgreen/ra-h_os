@@ -25,7 +25,7 @@ npm run dev
 ## Key Paths
 - `src/services/database/` - data layer
 - `src/tools/` - MCP tool implementations
-- `src/config/guides/` - built-in guide content
+- `src/config/skills/` - built-in skill content
 - `app/api/` - API routes
 
 ## Docs
@@ -34,4 +34,4 @@ npm run dev
 - `docs/2_schema.md`
 - `docs/4_tools-and-guides.md`
 - `docs/6_ui.md`
-- `docs/8_mcp.md`
+- `docs/8_mcp.md` - includes MCP setup plus recommended memory-file guidance

@@ -7,7 +7,7 @@ import { validateEdgeExplanation } from '@/services/database/quality';
 
 export const createEdgeTool = tool({
   description:
-    'Create a relationship between two nodes only after the user has explicitly confirmed the proposed connection. Use this as the execution step after you surfaced candidate edges in plain language and got a clear yes. Provide an explanation and the system will infer the type and direction.\n\n' +
+    'Create a relationship between two nodes only after the user has explicitly confirmed the proposed connection. Check for an existing relationship first, then use this as the execution step after you surfaced candidate edges in plain language and got a clear yes. Provide an explanation and the system will infer the type and direction.\n\n' +
     'Examples of explanations:\n' +
     '- "Written by" (book → author)\n' +
     '- "Episode of this podcast" (episode → podcast)\n' +

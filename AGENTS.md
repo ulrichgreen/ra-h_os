@@ -37,9 +37,9 @@ npm run build
 
 - `README.md` - product overview + quick start
 - `docs/README.md` - docs index
-- `docs/4_tools-and-guides.md` - MCP tools + guides
+- `docs/4_tools-and-guides.md` - MCP tools + skills surface
 - `docs/6_ui.md` - UI behavior
-- `docs/8_mcp.md` - MCP setup and troubleshooting
+- `docs/8_mcp.md` - MCP setup, troubleshooting, and memory-file guidance
 - `docs/development/process.md` - contributor process
 - `docs/development/docs-process.md` - docs maintenance process
 
@@ -48,4 +48,3 @@ npm run build
 - `ra-h_os` accepts direct contributions.
 - Maintainers may sync relevant changes between public and private repos.
 - Public contributions should remain attributable and not be overwritten.
-

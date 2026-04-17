@@ -15,7 +15,6 @@ export interface DatabaseEvent {
     | 'AGENT_UPDATED'
     | 'AGENT_DELEGATION_CREATED'
     | 'AGENT_DELEGATION_UPDATED'
-    | 'GUIDE_UPDATED'
     | 'SKILL_UPDATED'
     | 'QUICK_ADD_COMPLETED'
     | 'QUICK_ADD_FAILED'

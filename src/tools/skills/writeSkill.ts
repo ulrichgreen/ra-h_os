@@ -20,7 +20,7 @@ export const writeSkillTool = tool({
         };
       }
 
-      eventBroadcaster.broadcast({ type: 'GUIDE_UPDATED', data: { name } });
+      eventBroadcaster.broadcast({ type: 'SKILL_UPDATED', data: { name } });
 
       return {
         success: true,
@@ -28,6 +28,7 @@ export const writeSkillTool = tool({
         message: `Skill "${name}" saved`,
       };
     } catch (error) {
+      console.error('[writeSkill] error:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to write skill',

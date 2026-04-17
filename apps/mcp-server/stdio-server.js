@@ -11,12 +11,14 @@ const packageJson = require('../../package.json');
 
 const instructions = [
   'RA-H is a personal knowledge graph — local-first, vendor-neutral.',
-  'Core concepts: nodes (knowledge units) and edges (connections with explanations).',
+  'The graph is the default working memory for substantive turns.',
+  'Core concepts: nodes (knowledge units), edges (connections with explanations), and shared editable skills.',
   'If the user is trying to find a specific existing node, use rah_search_nodes first.',
-  'If graph context would help with a broader task, use rah_retrieve_query_context.',
+  'If graph context would help with a broader task, use rah_retrieve_query_context before answering.',
   'Use rah_get_context only when high-level graph orientation would actually help.',
   'Do not keep re-running retrieval if you already have enough relevant graph context in play.',
-  'Search before creating: use rah_search_nodes to check if content already exists.',
+  'Search before creating, and prefer rah_update_node when the artifact is clearly the same thing.',
+  'Use rah_list_skills and rah_read_skill for non-trivial workflows that need operating doctrine. Use rah_write_skill and rah_delete_skill when the user explicitly wants to change that shared skill set.',
   'Only suggest saving durable knowledge when it is unusually valuable. Keep the ask brief, for example: Add "X" as a node?',
   'Do not create edges autonomously. Surface likely edge candidates briefly, then call edge-write tools only after the user explicitly confirms.',
   'Every edge needs an explanation: why does this connection exist?',
@@ -117,7 +119,8 @@ const updateNodeInputSchema = {
     source: z.string().optional().describe('Canonical source text for embedding.'),
     link: z.string().optional().describe('New link'),
     metadata: z.record(z.any()).optional().describe('Metadata patch. This now merges with existing metadata. Prefer canonical keys: type, state, captured_method, captured_by, source_metadata.')
-  }).describe('Fields to update')
+  }).describe('Fields to update'),
+  source_update_basis: z.string().optional().describe('When rewriting source on a node that already has source text, include a short exact excerpt from the current source you inspected first.')
 };
 
 const updateNodeOutputSchema = {
@@ -138,10 +141,24 @@ const getNodesOutputSchema = {
       id: z.number(),
       title: z.string(),
       source: z.string().nullable(),
+      description: z.string().nullable(),
       link: z.string().nullable(),
       updated_at: z.string()
     })
   )
+};
+
+const readSkillInputSchema = {
+  name: z.string().min(1).describe('Skill name')
+};
+
+const writeSkillInputSchema = {
+  name: z.string().min(1).describe('Skill name to create or update'),
+  content: z.string().min(1).describe('Full markdown content, including frontmatter when needed')
+};
+
+const deleteSkillInputSchema = {
+  name: z.string().min(1).describe('Skill name to delete')
 };
 
 // rah_create_edge schemas
@@ -322,7 +339,7 @@ server.registerTool(
   'rah_add_node',
   {
     title: 'Add RA-H node',
-    description: 'Create a new node in the local RA-H knowledge base after you have already decided a net-new write is correct. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation.',
+    description: 'Create a new node after you have already decided a net-new write is correct. Search first with rah_search_nodes, and prefer rah_update_node if the artifact is clearly the same thing. If the user explicitly asked to save or import something and the target artifact is clear, write after duplicate/update checks. If you are only suggesting a save, propose the node first and wait for confirmation.',
     inputSchema: addNodeInputSchema,
     outputSchema: addNodeOutputSchema
   },
@@ -358,7 +375,7 @@ server.registerTool(
   'rah_search_nodes',
   {
     title: 'Search RA-H nodes',
-    description: 'Find existing RA-H entries that mention a topic before adding new ones. Use this first when the user is trying to locate a specific node they already created. For full current-turn grounding of a substantive request, prefer rah_retrieve_query_context.',
+    description: 'Find existing RA-H entries that mention a topic before adding new ones. Use this first for direct lookup, duplicate checks, or when the user seems to be referring to an existing node. For broader current-turn grounding, prefer rah_retrieve_query_context.',
     inputSchema: searchNodesInputSchema,
     outputSchema: searchNodesOutputSchema
   },
@@ -402,7 +419,7 @@ server.registerTool(
   'rah_retrieve_query_context',
   {
     title: 'Retrieve RA-H query context',
-    description: 'Given the raw user query plus optional focused node state, retrieve the most relevant graph context for the current turn. It starts with direct graph search and broadens only if useful. Use this when graph context could help answer or complete a broader task. For explicit node lookup, use rah_search_nodes.',
+    description: 'Given the raw user query plus optional focused node state, retrieve the most relevant graph context for the current turn. Use this when graph context could help answer, plan, or complete a broader task. For explicit node lookup or duplicate checks, use rah_search_nodes first.',
     inputSchema: retrieveQueryContextInputSchema,
     outputSchema: retrieveQueryContextOutputSchema
   },
@@ -427,11 +444,11 @@ server.registerTool(
   'rah_update_node',
   {
     title: 'Update RA-H node',
-    description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Explicit user-directed updates can proceed once the target node is clear.',
+    description: 'Update an existing node when it is clearly the same artifact and a net-new node would be redundant. Inspect current state with rah_get_nodes first when accuracy matters. When rewriting source on a node that already has source text, inspect that source first and include source_update_basis as a short exact excerpt you actually read.',
     inputSchema: updateNodeInputSchema,
     outputSchema: updateNodeOutputSchema
   },
-  async ({ id, updates }) => {
+  async ({ id, updates, source_update_basis }) => {
     if (!updates || Object.keys(updates).length === 0) {
       throw new Error('At least one field must be provided in updates.');
     }
@@ -449,7 +466,7 @@ server.registerTool(
 
     const result = await callRaHApi(`/api/nodes/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(mappedUpdates)
+      body: JSON.stringify({ ...mappedUpdates, source_update_basis })
     });
 
     const node = result.node || result.data;
@@ -468,7 +485,7 @@ server.registerTool(
   'rah_get_nodes',
   {
     title: 'Get RA-H nodes by ID',
-    description: 'Load full node records by their IDs.',
+    description: 'Load node records by ID, including current source text and description. Use this before rewriting source or when a focused-node excerpt is not enough.',
     inputSchema: getNodesInputSchema,
     outputSchema: getNodesOutputSchema
   },
@@ -487,6 +504,7 @@ server.registerTool(
             id: result.node.id,
             title: result.node.title,
             source: result.node.source ?? null,
+            description: result.node.description ?? null,
             link: result.node.link ?? null,
             updated_at: result.node.updated_at
           });
@@ -510,7 +528,7 @@ server.registerTool(
   'rah_create_edge',
   {
     title: 'Create RA-H edge',
-    description: 'Create a connection between two nodes only after the user has explicitly confirmed the proposed relationship.',
+    description: 'Create a connection between two nodes only after the user has explicitly confirmed the proposed relationship. Check existing edges first when you are not already sure the relationship is new.',
     inputSchema: createEdgeInputSchema,
     outputSchema: createEdgeOutputSchema
   },
@@ -583,7 +601,7 @@ server.registerTool(
   'rah_update_edge',
   {
     title: 'Update RA-H edge',
-    description: 'Update an existing edge connection only after the user explicitly confirmed the corrected relationship.',
+    description: 'Update an existing edge connection only after the user explicitly confirmed the corrected relationship. Use this when the connection already exists and only the explanation needs correction.',
     inputSchema: updateEdgeInputSchema,
     outputSchema: updateEdgeOutputSchema
   },
@@ -605,6 +623,90 @@ server.registerTool(
       structuredContent: {
         success: true,
         message: result.message || `Updated edge #${id}`
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'rah_list_skills',
+  {
+    title: 'List RA-H skills',
+    description: 'List the shared skills available to internal and external RA-H agents. Use this to see the current operating doctrine before reading or editing a specific skill.',
+    inputSchema: {}
+  },
+  async () => {
+    const result = await callRaHApi('/api/skills', { method: 'GET' });
+    const skills = Array.isArray(result.data) ? result.data : [];
+
+    return {
+      content: [{ type: 'text', text: `Found ${skills.length} skill(s).` }],
+      structuredContent: {
+        count: skills.length,
+        skills
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'rah_read_skill',
+  {
+    title: 'Read RA-H skill',
+    description: 'Read one shared RA-H skill by name. Use this before executing a non-trivial workflow that matches the skill trigger.',
+    inputSchema: readSkillInputSchema
+  },
+  async ({ name }) => {
+    const result = await callRaHApi(`/api/skills/${encodeURIComponent(name)}`, { method: 'GET' });
+    return {
+      content: [{ type: 'text', text: result.data.content }],
+      structuredContent: result.data
+    };
+  }
+);
+
+server.registerTool(
+  'rah_write_skill',
+  {
+    title: 'Write RA-H skill',
+    description: 'Create or update a shared RA-H skill when the user explicitly wants to change the doctrine surface. Content should be the full markdown body for that skill.',
+    inputSchema: writeSkillInputSchema
+  },
+  async ({ name, content }) => {
+    const result = await callRaHApi('/api/skills', {
+      method: 'POST',
+      body: JSON.stringify({ name, content })
+    });
+
+    return {
+      content: [{ type: 'text', text: `Skill "${name}" saved.` }],
+      structuredContent: {
+        success: true,
+        name,
+        message: result.message || `Skill "${name}" saved.`
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'rah_delete_skill',
+  {
+    title: 'Delete RA-H skill',
+    description: 'Delete a shared RA-H skill when the user explicitly wants it removed from the shared skill set.',
+    inputSchema: deleteSkillInputSchema
+  },
+  async ({ name }) => {
+    const result = await callRaHApi(`/api/skills/${encodeURIComponent(name)}`, {
+      method: 'DELETE'
+    });
+
+    return {
+      content: [{ type: 'text', text: `Skill "${name}" deleted.` }],
+      structuredContent: {
+        success: true,
+        name,
+        message: result.message || `Skill "${name}" deleted.`
       }
     };
   }
@@ -737,14 +839,18 @@ const getContextOutputSchema = {
     description: z.string().nullable(),
     edgeCount: z.number()
   })),
-  guides: z.array(z.string())
+  skills: z.array(z.object({
+    name: z.string(),
+    description: z.string(),
+    immutable: z.boolean().optional(),
+  }))
 };
 
 server.registerTool(
   'rah_get_context',
   {
     title: 'Get RA-H context',
-    description: 'Get orientation context: high-level graph state, hub nodes, stats, and available guides. Use this for orientation only, not as the default retrieval path for substantive requests.',
+    description: 'Get orientation context: high-level graph state, hub nodes, stats, and available skills. Use this for orientation only, not as the default retrieval path for substantive requests.',
     inputSchema: {},
     outputSchema: getContextOutputSchema
   },
@@ -757,9 +863,8 @@ server.registerTool(
       edgeCount: n.edge_count ?? 0
     })) : [];
 
-    // Fetch guides
-    const guideResult = await callRaHApi('/api/guides', { method: 'GET' });
-    const guides = Array.isArray(guideResult.data) ? guideResult.data.map(g => g.name) : [];
+    const skillResult = await callRaHApi('/api/skills', { method: 'GET' });
+    const skills = Array.isArray(skillResult.data) ? skillResult.data : [];
 
     const stats = {
       nodeCount: 0,
@@ -780,14 +885,14 @@ server.registerTool(
       }
     } catch { /* use defaults */ }
 
-    const summary = `Knowledge graph: ${stats.nodeCount} nodes, ${stats.edgeCount} edges, ${hubNodes.length} hub nodes, ${guides.length} guides available.`;
+    const summary = `Knowledge graph: ${stats.nodeCount} nodes, ${stats.edgeCount} edges, ${hubNodes.length} hub nodes, ${skills.length} skills available.`;
 
     return {
       content: [{ type: 'text', text: summary }],
       structuredContent: {
         stats,
         hubNodes,
-        guides
+        skills
       }
     };
   }

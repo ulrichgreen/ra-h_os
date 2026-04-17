@@ -19,7 +19,7 @@ export const deleteSkillTool = tool({
         };
       }
 
-      eventBroadcaster.broadcast({ type: 'GUIDE_UPDATED', data: { name } });
+      eventBroadcaster.broadcast({ type: 'SKILL_UPDATED', data: { name } });
 
       return {
         success: true,
@@ -27,6 +27,7 @@ export const deleteSkillTool = tool({
         message: `Skill "${name}" deleted`,
       };
     } catch (error) {
+      console.error('[deleteSkill] error:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to delete skill',

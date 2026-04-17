@@ -97,7 +97,7 @@ When the graph is empty or nearly empty, bias toward creating a small, clean sta
 
 ## Write Standards
 
-Before writing anything, call `readSkill('db-operations')` for full quality standards. Key points that matter most here:
+Before writing anything, rely on the direct graph tools and their descriptions. If the user shifts from onboarding into cleanup of an existing node or small node set, call `readSkill('refine')`. Key points that matter most here:
 
 - Search before creating — avoid duplicates from day one
 - Every description must be concrete: what it IS and why it matters to them, not what it "explores" or "discusses"

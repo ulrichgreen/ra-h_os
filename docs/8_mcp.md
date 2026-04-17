@@ -73,4 +73,22 @@ Optional assistant memory files can reinforce good behavior, but they are not su
 Current rule:
 - MCP tools, server instructions, skills, and docs should be enough for the base contract
 - optional reinforcement can still improve consistency
+- keep one canonical memory file when possible
 - avoid contradictory instruction files across `CLAUDE.md`, `AGENTS.md`, and other client-specific memory surfaces
+
+Recommended guidance:
+- keep the language short and simple
+- focus on graph behavior, not tool micromanagement
+- prefer one shared snippet over separate client-specific doctrines
+
+Suggested memory-file snippet:
+
+```md
+You are helping build a thoughtful graph of atomic units of context.
+
+- Use `queryNodes` for direct lookup of a specific existing node.
+- Use `retrieveQueryContext` when broader graph context would help with the current turn.
+- Search before creating. Prefer updating the same artifact when it is clearly the same thing.
+- `description` should state plainly what the thing is first, then why it belongs and current status.
+- Preserve the user's wording in `source` for user-authored ideas unless they explicitly want a rewrite.
+```

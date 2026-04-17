@@ -26,6 +26,7 @@ type RequestLogEntry = {
 let server: http.Server;
 let baseUrl = '';
 let nodes: NodeRecord[] = [];
+let skills: Array<{ name: string; description: string; immutable?: boolean; content?: string }> = [];
 let requestLog: RequestLogEntry[] = [];
 let nextNodeId = 1;
 
@@ -35,6 +36,11 @@ function nowIso(): string {
 
 function resetState() {
   nodes = [];
+  skills = [
+    { name: 'onboarding', description: 'Initial setup guidance.', immutable: false, content: '# onboarding\n' },
+    { name: 'create-skill', description: 'Create or rewrite a reusable skill.', immutable: false, content: '# create-skill\n' },
+    { name: 'refine', description: 'Refine a node or small set of nodes.', immutable: false, content: '# refine\n' },
+  ];
   requestLog = [];
   nextNodeId = 1;
 }
@@ -168,10 +174,53 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     });
   }
 
-  if (method === 'GET' && pathname === '/api/guides') {
+  if (method === 'GET' && pathname === '/api/skills') {
     return sendJson(res, 200, {
       success: true,
-      data: [{ name: 'schema' }, { name: 'creating-nodes' }],
+      data: skills.map(({ content, ...skill }) => skill),
+    });
+  }
+
+  if (method === 'POST' && pathname === '/api/skills') {
+    const name = typeof body?.name === 'string' ? body.name : '';
+    const content = typeof body?.content === 'string' ? body.content : '';
+    const existing = skills.find((skill) => skill.name === name);
+
+    if (existing) {
+      existing.content = content;
+    } else {
+      skills.push({ name, description: '', immutable: false, content });
+    }
+
+    return sendJson(res, 200, {
+      success: true,
+      message: `Skill "${name}" saved`,
+    });
+  }
+
+  if (method === 'GET' && pathname.startsWith('/api/skills/')) {
+    const name = decodeURIComponent(pathname.split('/').pop() || '');
+    const skill = skills.find((entry) => entry.name === name);
+    if (!skill) {
+      return sendJson(res, 404, { success: false, error: 'Skill not found.' });
+    }
+    return sendJson(res, 200, {
+      success: true,
+      data: {
+        name: skill.name,
+        description: skill.description,
+        immutable: !!skill.immutable,
+        content: skill.content || '',
+      },
+    });
+  }
+
+  if (method === 'DELETE' && pathname.startsWith('/api/skills/')) {
+    const name = decodeURIComponent(pathname.split('/').pop() || '');
+    skills = skills.filter((entry) => entry.name !== name);
+    return sendJson(res, 200, {
+      success: true,
+      message: `Skill "${name}" deleted`,
     });
   }
 
@@ -343,16 +392,74 @@ describe('stdio MCP server contract', () => {
       const graphStructured = getStructured<{
         stats: { nodeCount: number; edgeCount: number };
         hubNodes: Array<{ title: string }>;
-        guides: string[];
+        skills: Array<{ name: string }>;
       }>(graphContextResult);
 
       expect(graphStructured.stats).toEqual({ nodeCount: 1, edgeCount: 3 });
       expect(graphStructured.hubNodes).toEqual(
         expect.arrayContaining([expect.objectContaining({ title: 'Work Hub Node' })])
       );
-      expect(graphStructured.guides).toEqual(expect.arrayContaining(['schema', 'creating-nodes']));
+      expect(graphStructured.skills).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'onboarding' }),
+        expect.objectContaining({ name: 'create-skill' }),
+        expect.objectContaining({ name: 'refine' }),
+      ]));
       expect(graphStructured).not.toHaveProperty('contexts');
       expect(graphStructured.stats).not.toHaveProperty('contextCount');
+    });
+  });
+
+  it('lists, reads, writes, and deletes shared skills through packaged MCP', async () => {
+    await withMcpClient(async (client) => {
+      const listResult = await client.callTool({
+        name: 'rah_list_skills',
+        arguments: {},
+      });
+      const listed = getStructured<{ count: number; skills: Array<{ name: string }> }>(listResult);
+      expect(listed.count).toBe(3);
+      expect(listed.skills).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'onboarding' }),
+        expect.objectContaining({ name: 'create-skill' }),
+        expect.objectContaining({ name: 'refine' }),
+      ]));
+
+      const readResult = await client.callTool({
+        name: 'rah_read_skill',
+        arguments: { name: 'refine' },
+      });
+      const readStructured = getStructured<{ name: string; content: string }>(readResult);
+      expect(readStructured.name).toBe('refine');
+      expect(readStructured.content).toContain('# refine');
+
+      await client.callTool({
+        name: 'rah_write_skill',
+        arguments: {
+          name: 'capture',
+          content: '---\nname: capture\ndescription: Capture guidance\n---\n\nCapture skill body.',
+        },
+      });
+
+      const writeRequest = requestLog.find((entry) => entry.method === 'POST' && entry.pathname === '/api/skills');
+      expect(writeRequest?.body).toMatchObject({
+        name: 'capture',
+      });
+
+      const afterWrite = await client.callTool({
+        name: 'rah_list_skills',
+        arguments: {},
+      });
+      const afterWriteStructured = getStructured<{ skills: Array<{ name: string }> }>(afterWrite);
+      expect(afterWriteStructured.skills).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'capture' }),
+      ]));
+
+      await client.callTool({
+        name: 'rah_delete_skill',
+        arguments: { name: 'capture' },
+      });
+
+      const deleteRequest = requestLog.find((entry) => entry.method === 'DELETE' && entry.pathname === '/api/skills/capture');
+      expect(deleteRequest).toBeDefined();
     });
   });
 });

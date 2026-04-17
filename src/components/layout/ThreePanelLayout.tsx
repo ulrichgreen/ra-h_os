@@ -702,14 +702,6 @@ export default function ThreePanelLayout() {
             case 'SKILL_UPDATED':
               if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('skills:updated'));
-                window.dispatchEvent(new CustomEvent('guides:updated'));
-              }
-              break;
-
-            case 'GUIDE_UPDATED':
-              if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('skills:updated'));
-                window.dispatchEvent(new CustomEvent('guides:updated'));
               }
               break;
 

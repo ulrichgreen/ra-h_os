@@ -10,7 +10,7 @@
     "start": "node index.js",
     "validate:syntax": "node --check index.js && node --check services/*.js",
     "validate:publish": "npm run validate:syntax && npm pack --dry-run >/dev/null",
-    "prepublishOnly": "npm run validate:publish"
+    "prepublishOnly": "node ../../scripts/dev/sync-skills.mjs --check && npm run validate:publish"
   },
   "keywords": [
     "mcp",

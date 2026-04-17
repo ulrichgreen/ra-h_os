@@ -1,18 +1,14 @@
 "use client";
 
 import { Trash2 } from 'lucide-react';
-
-interface SkillMeta {
-  name: string;
-  description: string;
-  immutable: boolean;
-}
+import type { SkillMeta } from '@/types/skills';
 
 interface SkillCardProps {
   skill: SkillMeta;
   onSelect: (name: string) => void;
   onDelete?: (name: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   deleting?: string | null;
+  isActive?: boolean;
 }
 
 export default function SkillCard({
@@ -20,27 +16,33 @@ export default function SkillCard({
   onSelect,
   onDelete,
   deleting = null,
+  isActive = false,
 }: SkillCardProps) {
   const isDeleting = deleting === skill.name;
 
   return (
     <div
       onMouseEnter={(e) => {
-        e.currentTarget.style.background = 'var(--rah-bg-active)';
-        e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
+        if (!isActive) {
+          e.currentTarget.style.background = 'var(--rah-bg-hover)';
+          e.currentTarget.style.borderColor = 'var(--rah-border-stronger)';
+        }
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'var(--rah-bg-elevated)';
-        e.currentTarget.style.borderColor = 'var(--rah-border-strong)';
+        if (!isActive) {
+          e.currentTarget.style.background = 'var(--rah-bg-panel)';
+          e.currentTarget.style.borderColor = 'var(--rah-border)';
+        }
       }}
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: '10px',
         padding: '10px',
-        background: 'var(--rah-bg-elevated)',
-        border: '1px solid var(--rah-border-strong)',
+        background: isActive ? 'var(--rah-bg-active)' : 'var(--rah-bg-panel)',
+        border: `1px solid ${isActive ? 'var(--rah-accent-green)' : 'var(--rah-border)'}`,
         borderRadius: '8px',
+        transition: 'all 0.15s ease',
       }}
     >
       <button
@@ -56,7 +58,9 @@ export default function SkillCard({
           padding: 0,
         }}
       >
-        <span style={{ color: 'var(--rah-text-base)', fontSize: '13px', fontWeight: 500, display: 'block' }}>{skill.name}</span>
+        <span style={{ color: 'var(--rah-text-base)', fontSize: '13px', fontWeight: 500, display: 'block' }}>
+          {skill.name}
+        </span>
         <span
           style={{
             color: 'var(--rah-text-muted)',
@@ -81,7 +85,7 @@ export default function SkillCard({
           style={{
             background: 'transparent',
             border: 'none',
-            color: '#555',
+            color: 'var(--rah-text-muted)',
             cursor: isDeleting ? 'default' : 'pointer',
             padding: '4px',
             borderRadius: '4px',
@@ -91,6 +95,13 @@ export default function SkillCard({
             flexShrink: 0,
             opacity: isDeleting ? 0.3 : 1,
           }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#ef4444';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--rah-text-muted)';
+          }}
+          aria-label={`Delete ${skill.name}`}
         >
           <Trash2 size={14} />
         </button>

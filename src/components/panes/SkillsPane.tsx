@@ -1,22 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Brain } from 'lucide-react';
 import PaneHeader from './PaneHeader';
 import type { BasePaneProps } from './types';
+import type { FocusedSkill, Skill, SkillMeta } from '@/types/skills';
 import SkillCard from '@/components/skills/SkillCard';
 import SkillMarkdown from '@/components/skills/SkillMarkdown';
-import type { FocusedSkill } from '@/types/skills';
-
-interface SkillMeta {
-  name: string;
-  description: string;
-  immutable: boolean;
-}
-
-interface Skill extends SkillMeta {
-  content: string;
-}
 
 interface SkillsPaneProps extends BasePaneProps {
   focusedSkill?: FocusedSkill | null;
@@ -30,35 +20,19 @@ export default function SkillsPane({
   onCollapse,
   onSwapPanes,
   tabBar,
+  focusedSkill,
+  onFocusSkill,
+  autoOpenSkillName,
+  onAutoOpenHandled,
 }: SkillsPaneProps) {
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
   const detailScrollRef = useRef<HTMLDivElement>(null);
+  const isSelectedSkillFocused = !!selectedSkill && focusedSkill?.name === selectedSkill.name;
 
-  useEffect(() => {
-    void fetchSkills();
-
-    const handleSkillUpdated = () => {
-      void fetchSkills();
-    };
-    window.addEventListener('skills:updated', handleSkillUpdated);
-    window.addEventListener('guides:updated', handleSkillUpdated);
-
-    return () => {
-      window.removeEventListener('skills:updated', handleSkillUpdated);
-      window.removeEventListener('guides:updated', handleSkillUpdated);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (selectedSkill && detailScrollRef.current) {
-      detailScrollRef.current.scrollTo({ top: 0, behavior: 'auto' });
-    }
-  }, [selectedSkill?.name]);
-
-  const fetchSkills = async () => {
+  const fetchSkills = useCallback(async () => {
     try {
       const res = await fetch('/api/skills');
       const data = await res.json();
@@ -70,18 +44,54 @@ export default function SkillsPane({
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleSelectSkill = async (name: string) => {
+  const handleSelectSkill = useCallback(async (name: string) => {
     try {
       const res = await fetch(`/api/skills/${encodeURIComponent(name)}`);
       const data = await res.json();
       if (data.success) {
         setSelectedSkill(data.data);
+        onFocusSkill?.(data.data);
       }
     } catch (err) {
       console.error('[SkillsPane] Failed to fetch skill:', err);
     }
+  }, [onFocusSkill]);
+
+  useEffect(() => {
+    fetchSkills();
+
+    const handleSkillUpdated = () => {
+      void fetchSkills();
+    };
+    window.addEventListener('skills:updated', handleSkillUpdated);
+
+    return () => {
+      window.removeEventListener('skills:updated', handleSkillUpdated);
+    };
+  }, [fetchSkills]);
+
+  useEffect(() => {
+    if (selectedSkill && detailScrollRef.current) {
+      detailScrollRef.current.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }, [selectedSkill?.name]);
+
+  useEffect(() => {
+    if (!autoOpenSkillName || loading || selectedSkill) {
+      return;
+    }
+
+    void (async () => {
+      await handleSelectSkill(autoOpenSkillName);
+      onAutoOpenHandled?.();
+    })();
+  }, [autoOpenSkillName, handleSelectSkill, loading, onAutoOpenHandled, selectedSkill]);
+
+  const handleBack = () => {
+    setSelectedSkill(null);
+    onFocusSkill?.(null);
   };
 
   const handleDeleteSkill = async (name: string, e: React.MouseEvent<HTMLButtonElement>) => {
@@ -96,6 +106,9 @@ export default function SkillsPane({
         await fetchSkills();
         if (selectedSkill?.name === name) {
           setSelectedSkill(null);
+        }
+        if (focusedSkill?.name === name) {
+          onFocusSkill?.(null);
         }
       }
     } catch (err) {
@@ -120,16 +133,22 @@ export default function SkillsPane({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               type="button"
-              onClick={() => setSelectedSkill(null)}
+              onClick={handleBack}
               style={{
                 background: 'none',
                 border: 'none',
-                color: '#888',
+                color: 'var(--rah-text-soft)',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 padding: '4px',
                 borderRadius: '4px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--rah-text-secondary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--rah-text-soft)';
               }}
             >
               <ArrowLeft size={16} />
@@ -149,6 +168,26 @@ export default function SkillsPane({
             <div style={{ marginBottom: '12px' }}>
               <div style={{ color: 'var(--rah-text-active)', fontSize: '16px', fontWeight: 600 }}>{selectedSkill.name}</div>
               <div style={{ color: 'var(--rah-text-soft)', fontSize: '13px', lineHeight: 1.4, marginTop: '6px' }}>{selectedSkill.description}</div>
+              {isSelectedSkillFocused && (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '10px',
+                    padding: '4px 8px',
+                    borderRadius: '999px',
+                    background: 'var(--rah-accent-green-soft)',
+                    border: '1px solid var(--rah-accent-green-soft-strong)',
+                    color: 'var(--rah-accent-green)',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                  }}
+                >
+                  <Brain size={12} />
+                  Active chat context
+                </div>
+              )}
             </div>
             <div style={{ borderTop: '1px solid var(--rah-border)', margin: '12px 0' }} />
             <SkillMarkdown content={selectedSkill.content} />
@@ -167,6 +206,7 @@ export default function SkillsPane({
                   onSelect={handleSelectSkill}
                   onDelete={handleDeleteSkill}
                   deleting={deleting}
+                  isActive={focusedSkill?.name === skill.name}
                 />
               ))
             )}

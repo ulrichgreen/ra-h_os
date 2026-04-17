@@ -2,6 +2,108 @@
 
 const { query, transaction, getDb } = require('./sqlite-client');
 
+function sanitizeFtsQuery(input) {
+  return String(input || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(word => word.length > 0 && !/^(AND|OR|NOT|NEAR)$/i.test(word))
+    .join(' ');
+}
+
+function extractRelaxedSearchTerms(queryText) {
+  const stopWords = new Set([
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'find',
+    'for', 'from', 'hello', 'i', 'in', 'is', 'it', 'me', 'my', 'of', 'on',
+    'or', 'recent', 'stuff', 'term', 'that', 'the', 'this', 'to', 'with', 'you'
+  ]);
+
+  const rawTerms = String(queryText || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .map(term => term.trim())
+    .filter(Boolean);
+
+  const expanded = new Set();
+
+  for (const term of rawTerms) {
+    if (!stopWords.has(term) && term.length >= 3) {
+      expanded.add(term);
+    }
+
+    const alphaParts = term.replace(/\d+/g, ' ').split(/\s+/).filter(Boolean);
+    for (const part of alphaParts) {
+      if (!stopWords.has(part) && part.length >= 3) {
+        expanded.add(part);
+      }
+    }
+  }
+
+  return Array.from(expanded).slice(0, 8);
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getQueryTerms(queryText) {
+  return normalizeSearchText(queryText).split(' ').filter(term => term.length > 0);
+}
+
+function countOccurrences(text, term) {
+  if (!text || !term) return 0;
+  const matches = text.match(new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'));
+  return matches ? matches.length : 0;
+}
+
+function orderedTermMatches(text, terms) {
+  let position = 0;
+  for (const term of terms) {
+    const index = text.indexOf(term, position);
+    if (index === -1) return false;
+    position = index + term.length;
+  }
+  return terms.length > 0;
+}
+
+function scoreNodeSearchMatch(node, queryText) {
+  const normalizedQuery = normalizeSearchText(queryText);
+  const normalizedTitle = normalizeSearchText(node.title || '');
+  const normalizedDescription = normalizeSearchText(node.description || '');
+  const normalizedSource = normalizeSearchText(node.source || '');
+  const terms = getQueryTerms(queryText);
+
+  let score = 0;
+
+  if (normalizedTitle === normalizedQuery) score += 2000;
+  if (normalizedTitle.startsWith(normalizedQuery)) score += 1200;
+  if (normalizedTitle.includes(normalizedQuery)) score += 700;
+  if (orderedTermMatches(normalizedTitle, terms)) score += 500;
+  if (terms.length > 0 && terms.every(term => normalizedTitle.includes(term))) score += 350;
+
+  if (normalizedDescription.includes(normalizedQuery)) score += 180;
+  if (orderedTermMatches(normalizedDescription, terms)) score += 120;
+  if (normalizedSource.includes(normalizedQuery)) score += 90;
+
+  for (const term of terms) {
+    score += countOccurrences(normalizedTitle, term) * 40;
+    score += countOccurrences(normalizedDescription, term) * 8;
+    score += countOccurrences(normalizedSource, term) * 3;
+  }
+
+  if (node.updated_at) {
+    score += new Date(node.updated_at).getTime() / 1e13;
+  }
+
+  return score;
+}
+
 function parseMetadata(metadata) {
   if (!metadata) return {};
   if (typeof metadata === 'string') {
@@ -56,6 +158,165 @@ function mapNodeRow(row) {
   };
 }
 
+function buildNodeFilterClauses(filters = {}, alias = 'n') {
+  const clauses = [];
+  const params = [];
+
+  if (filters.createdAfter) {
+    clauses.push(`${alias}.created_at >= ?`);
+    params.push(filters.createdAfter);
+  }
+  if (filters.createdBefore) {
+    clauses.push(`${alias}.created_at < ?`);
+    params.push(filters.createdBefore);
+  }
+  if (filters.eventAfter) {
+    clauses.push(`${alias}.event_date >= ?`);
+    params.push(filters.eventAfter);
+  }
+  if (filters.eventBefore) {
+    clauses.push(`${alias}.event_date < ?`);
+    params.push(filters.eventBefore);
+  }
+
+  return { clauses, params };
+}
+
+function searchNodes(filters = {}) {
+  const search = normalizeString(filters.search);
+  const limit = Math.min(Math.max(filters.limit || 25, 1), 100);
+  if (!search) return [];
+
+  const rowsById = new Map();
+  for (const row of searchNodesFts(search, filters, Math.max(limit * 2, 25))) {
+    rowsById.set(row.id, row);
+  }
+  for (const row of searchNodesLike(search, filters, Math.max(limit * 2, 25))) {
+    if (!rowsById.has(row.id)) rowsById.set(row.id, row);
+  }
+  for (const row of searchNodesLikeRelaxed(search, filters, Math.max(limit * 2, 25))) {
+    if (!rowsById.has(row.id)) rowsById.set(row.id, row);
+  }
+
+  return Array.from(rowsById.values())
+    .map(row => ({ row, score: scoreNodeSearchMatch(row, search) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(entry => mapNodeRow(entry.row));
+}
+
+function searchNodesFts(search, filters, limit) {
+  const db = getDb();
+  const ftsQuery = sanitizeFtsQuery(search);
+  if (!ftsQuery) return [];
+
+  const ftsExists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes_fts'").get();
+  if (!ftsExists) return [];
+
+  const { clauses, params } = buildNodeFilterClauses(filters);
+  const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+
+  try {
+    return query(`
+      WITH fts_matches AS (
+        SELECT rowid, rank
+        FROM nodes_fts
+        WHERE nodes_fts MATCH ?
+        LIMIT ?
+      )
+      SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
+             n.created_at, n.updated_at,
+             fm.rank
+      FROM fts_matches fm
+      JOIN nodes n ON n.id = fm.rowid
+      ${whereClause}
+      ORDER BY fm.rank
+      LIMIT ?
+    `, [ftsQuery, Math.max(limit * 2, 50), ...params, limit]);
+  } catch {
+    return [];
+  }
+}
+
+function searchNodesLike(search, filters, limit) {
+  const words = search.split(/\s+/).filter(Boolean);
+  const { clauses, params } = buildNodeFilterClauses(filters);
+  let sql = `
+    SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
+           n.created_at, n.updated_at
+    FROM nodes n
+    WHERE 1=1
+  `;
+  const queryParams = [...params];
+
+  if (clauses.length > 0) {
+    sql += ` AND ${clauses.join(' AND ')}`;
+  }
+
+  for (const word of words) {
+    sql += ` AND (n.title LIKE ? COLLATE NOCASE OR n.description LIKE ? COLLATE NOCASE OR n.source LIKE ? COLLATE NOCASE)`;
+    queryParams.push(`%${word}%`, `%${word}%`, `%${word}%`);
+  }
+
+  sql += ` ORDER BY
+    CASE WHEN LOWER(n.title) = LOWER(?) THEN 1 ELSE 6 END,
+    CASE WHEN LOWER(n.title) LIKE LOWER(?) THEN 2 ELSE 6 END,
+    CASE WHEN n.title LIKE ? COLLATE NOCASE THEN 3 ELSE 6 END,
+    CASE WHEN n.description LIKE ? COLLATE NOCASE THEN 4 ELSE 6 END,
+    CASE WHEN n.source LIKE ? COLLATE NOCASE THEN 5 ELSE 6 END,
+    n.updated_at DESC
+    LIMIT ?`;
+
+  queryParams.push(search, `${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, limit);
+  return query(sql, queryParams);
+}
+
+function searchNodesLikeRelaxed(search, filters, limit) {
+  const terms = extractRelaxedSearchTerms(search);
+  if (terms.length === 0) return [];
+
+  const { clauses, params } = buildNodeFilterClauses(filters);
+  let sql = `
+    SELECT n.id, n.title, n.description, n.source, n.link, n.event_date, n.metadata,
+           n.created_at, n.updated_at
+    FROM nodes n
+    WHERE 1=1
+  `;
+  const queryParams = [...params];
+
+  if (clauses.length > 0) {
+    sql += ` AND ${clauses.join(' AND ')}`;
+  }
+
+  const termClauses = [];
+  for (const term of terms) {
+    termClauses.push(`n.title LIKE ? COLLATE NOCASE`);
+    termClauses.push(`n.description LIKE ? COLLATE NOCASE`);
+    termClauses.push(`n.source LIKE ? COLLATE NOCASE`);
+    queryParams.push(`%${term}%`, `%${term}%`, `%${term}%`);
+  }
+
+  sql += ` AND (${termClauses.join(' OR ')})`;
+
+  const scoreClauses = [];
+  const scoreParams = [];
+  for (const term of terms) {
+    scoreClauses.push(`CASE WHEN n.title LIKE ? COLLATE NOCASE THEN 3 ELSE 0 END`);
+    scoreClauses.push(`CASE WHEN n.description LIKE ? COLLATE NOCASE THEN 2 ELSE 0 END`);
+    scoreClauses.push(`CASE WHEN n.source LIKE ? COLLATE NOCASE THEN 1 ELSE 0 END`);
+    scoreParams.push(`%${term}%`, `%${term}%`, `%${term}%`);
+  }
+
+  sql += ` ORDER BY
+    (${scoreClauses.join(' + ')}) DESC,
+    CASE WHEN LOWER(n.title) LIKE LOWER(?) THEN 0 ELSE 1 END,
+    n.updated_at DESC
+    LIMIT ?`;
+
+  queryParams.push(...scoreParams, `%${search}%`, limit);
+  return query(sql, queryParams);
+}
+
 /**
  * Get nodes with optional filtering.
  */
@@ -103,16 +364,6 @@ function getNodes(filters = {}) {
   const rows = query(sql, params);
 
   return rows.map(mapNodeRow);
-}
-
-/**
- * Search nodes using the same filter object as getNodes.
- */
-function searchNodes(filters = {}) {
-  if (typeof filters === 'string') {
-    return getNodes({ search: filters });
-  }
-  return getNodes(filters);
 }
 
 /**

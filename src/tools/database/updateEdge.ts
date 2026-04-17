@@ -4,7 +4,7 @@ import { edgeService } from '@/services/database/edges';
 import { validateEdgeExplanation } from '@/services/database/quality';
 
 export const updateEdgeTool = tool({
-  description: 'Update an edge explanation and/or source only after the user explicitly confirmed the corrected relationship. Explanations must explicitly state the relationship.',
+  description: 'Update an existing edge only after the user explicitly confirmed the corrected relationship. Use this when the connection already exists and only the explanation or classification needs to change. Explanations must explicitly state why the relationship exists.',
   inputSchema: z.object({
     confirmed_by_user: z.boolean().describe('Must be true. Reject the edge update otherwise.'),
     edge_id: z.number().describe('The ID of the edge to update'),

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readSkill, writeSkill, deleteSkill } from '@/services/skills/skillService';
+import { readSkill, deleteSkill } from '@/services/skills/skillService';
 
 export const runtime = 'nodejs';
 
@@ -46,53 +46,6 @@ export async function DELETE(
     console.error('[API /skills/[name] DELETE] error:', error);
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Failed to delete skill' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ name: string }> }
-) {
-  try {
-    const { name } = await params;
-    const body = await request.json();
-    const description = typeof body?.description === 'string' ? body.description.trim() : '';
-    const content = typeof body?.content === 'string' ? body.content : '';
-
-    const safeName = name.trim();
-    if (!safeName) {
-      return NextResponse.json(
-        { success: false, error: 'Skill name is required' },
-        { status: 400 }
-      );
-    }
-
-    const safeDescription = description.replace(/\r?\n/g, ' ').trim();
-    const frontmatter = [
-      '---',
-      `name: ${safeName}`,
-      `description: ${safeDescription}`,
-      '---',
-      '',
-      content.trim(),
-      '',
-    ].join('\n');
-
-    const result = writeSkill(safeName, frontmatter);
-    if (!result.success) {
-      return NextResponse.json(
-        { success: false, error: result.error },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json({ success: true, message: `Skill "${safeName}" saved` });
-  } catch (error) {
-    console.error('[API /skills/[name] PUT] error:', error);
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Failed to save skill' },
       { status: 500 }
     );
   }

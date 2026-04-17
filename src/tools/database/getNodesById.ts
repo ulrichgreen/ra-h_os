@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { nodeService } from '@/services/database/nodes';
 
 export const getNodesByIdTool = tool({
-  description: 'Load full node records by IDs',
+  description: 'Load full node records by IDs. Use this before rewriting an existing node source when the focused-node excerpt is insufficient, because it returns the current description, source text, metadata, and timestamps needed for disciplined updates.',
   inputSchema: z.object({
     nodeIds: z.array(z.number().int().positive()).min(1).max(10).describe('List of node IDs to load'),
-    includeSourcePreview: z.boolean().default(true).describe('Whether to return a trimmed source preview for each node'),
+    includeSource: z.boolean().default(true).describe('Whether to return source text for each node'),
+    sourceCharLimit: z.number().int().min(200).max(20000).default(10000).describe('Max source characters per node before truncation metadata is added'),
   }),
-  execute: async ({ nodeIds, includeSourcePreview }) => {
+  execute: async ({ nodeIds, includeSource, sourceCharLimit }) => {
     const uniqueIds = Array.from(new Set(nodeIds.filter(id => Number.isFinite(id) && id > 0)));
     if (uniqueIds.length === 0) {
       return {
@@ -23,23 +24,25 @@ export const getNodesByIdTool = tool({
         try {
           const node = await nodeService.getNodeById(id);
           if (!node) return null;
-          const preview = includeSourcePreview
-            ? (node.source || node.description || '')
-                .split(/\s+/)
-                .slice(0, 80)
-                .join(' ')
-                .trim()
-            : undefined;
+          const rawSource = typeof node.source === 'string' ? node.source : '';
+          const source = includeSource
+            ? rawSource.slice(0, sourceCharLimit).trim() || null
+            : null;
+          const sourceLength = rawSource.length;
+          const sourceTruncated = includeSource ? sourceLength > sourceCharLimit : false;
 
           return {
             id: node.id,
             title: node.title,
+            description: node.description ?? null,
+            source,
+            source_length: sourceLength,
+            source_truncated: sourceTruncated,
             link: node.link,
             event_date: node.event_date ?? null,
             chunk_status: node.chunk_status || 'unknown',
             created_at: node.created_at,
             updated_at: node.updated_at,
-            source_preview: preview || null,
             metadata: node.metadata ?? null,
           };
         } catch (error) {

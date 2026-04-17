@@ -21,7 +21,9 @@
     "sqlite:restore": "bash scripts/database/sqlite-restore.sh",
     "test": "vitest run",
     "test:watch": "vitest",
-    "evals": "cross-env RAH_EVALS_LOG=1 RAH_EVALS_TIMEOUT_MS=60000 tsx tests/evals/runner.ts"
+    "evals": "cross-env RAH_EVALS_LOG=1 RAH_EVALS_TIMEOUT_MS=60000 tsx tests/evals/runner.ts",
+    "skills:sync": "node scripts/dev/sync-skills.mjs",
+    "skills:lint": "node scripts/dev/sync-skills.mjs --check"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.7",

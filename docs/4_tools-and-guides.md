@@ -60,27 +60,31 @@ Metadata note for `createNode` / `updateNode`:
 Skills are markdown instruction documents shared by internal and external agents.
 
 Seeded defaults:
-- `db-operations`
-- `create-skill`
-- `audit`
-- `traverse`
 - `onboarding`
-- `persona`
-- `calibration`
-- `connect`
+- `create-skill`
+- `refine`
 
 Storage:
 - live skills: `~/Library/Application Support/RA-H/skills/`
 - bundled defaults: `src/config/skills/`
 
+## Memory-File Reinforcement
+
+Optional memory files like `AGENTS.md` or `CLAUDE.md` can reinforce the graph contract, but they should stay short and should not contradict the MCP docs or tool descriptions.
+
+Keep the reinforcement focused on:
+- `queryNodes` for direct node lookup
+- `retrieveQueryContext` for broader graph grounding
+- search before create
+- clear `description` quality
+- preserving user wording in `source` when capturing user-authored ideas
+
 ## API Surfaces
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/api/skills` | GET | List skills |
-| `/api/skills/[name]` | GET/PUT/DELETE | Skill CRUD |
-| `/api/guides` | GET | Legacy compatibility alias to skills |
-| `/api/guides/[name]` | GET/PUT/DELETE | Legacy compatibility alias to skills |
+| `/api/skills` | GET/POST | List skills or write a skill |
+| `/api/skills/[name]` | GET/DELETE | Read or delete a specific skill |
 
 ## Key Files
 

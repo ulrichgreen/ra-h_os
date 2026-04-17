@@ -18,7 +18,7 @@
 | [Tools & Skills](./4_tools-and-guides.md) | MCP tools and skill system |
 | [Logging & Evals](./5_logging-and-evals.md) | Logs, evals, and debugging surfaces |
 | [UI](./6_ui.md) | Current pane and focus model |
-| [MCP](./8_mcp.md) | Full standalone MCP install and behavior guide |
+| [MCP](./8_mcp.md) | Full standalone MCP install, behavior guide, and memory-file guidance |
 | [Open Source](./9_open-source.md) | Scope, support boundary, contributor reality |
 | [Full Local](./10_full-local.md) | Supported local path vs community patterns |
 | [Troubleshooting](./TROUBLESHOOTING.md) | Common issues and fixes |

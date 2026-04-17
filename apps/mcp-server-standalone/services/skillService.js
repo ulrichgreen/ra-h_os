@@ -17,18 +17,6 @@ const LEGACY_GUIDES_DIR = path.join(
 const BUNDLED_SKILLS_DIR = path.join(__dirname, '..', 'skills');
 const SEED_MIGRATION_FLAG = path.join(SKILLS_DIR, '.seed-migrated-2026-03-07-skills-overhaul');
 
-const SEEDED_SKILL_IDS = new Set([
-  'db-operations',
-  'create-skill',
-  'audit',
-  'traverse',
-  'onboarding',
-  'persona',
-  'calibration',
-  'connect',
-  'node-context-enrichment',
-]);
-
 const DEPRECATED_SKILL_IDS = new Set([
   'start-here',
   'schema',
@@ -46,6 +34,14 @@ const DEPRECATED_SKILL_IDS = new Set([
   'research',
   'survey',
   'traverse-graph',
+  'context-capsule',
+  'audit',
+  'calibration',
+  'connect',
+  'db-operations',
+  'node-context-enrichment',
+  'persona',
+  'traverse',
 ]);
 
 function parseFrontmatter(raw) {
@@ -97,6 +93,16 @@ function listMarkdownFiles(dir) {
   return fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
 }
 
+function getBundledSkillFiles() {
+  const bundledById = new Map();
+
+  for (const file of listMarkdownFiles(BUNDLED_SKILLS_DIR)) {
+    bundledById.set(normalizeSkillId(file), path.join(BUNDLED_SKILLS_DIR, file));
+  }
+
+  return bundledById;
+}
+
 function ensureSkillsDir() {
   if (!fs.existsSync(SKILLS_DIR)) {
     fs.mkdirSync(SKILLS_DIR, { recursive: true });
@@ -116,15 +122,8 @@ function migrateLegacyGuides() {
 function seedSkills() {
   ensureSkillsDir();
 
-  const bundledFiles = listMarkdownFiles(BUNDLED_SKILLS_DIR);
-  const bundledById = new Map();
-  for (const file of bundledFiles) {
-    bundledById.set(normalizeSkillId(file), path.join(BUNDLED_SKILLS_DIR, file));
-  }
-
-  for (const skillId of SEEDED_SKILL_IDS) {
-    const source = bundledById.get(skillId);
-    if (!source) continue;
+  const bundledById = getBundledSkillFiles();
+  for (const [skillId, source] of bundledById.entries()) {
     const dest = path.join(SKILLS_DIR, `${skillId}.md`);
     if (!fs.existsSync(dest)) {
       fs.copyFileSync(source, dest);
@@ -137,15 +136,8 @@ function migrateSeededBaseline() {
     return;
   }
 
-  const bundledFiles = listMarkdownFiles(BUNDLED_SKILLS_DIR);
-  const bundledById = new Map();
-  for (const file of bundledFiles) {
-    bundledById.set(normalizeSkillId(file), path.join(BUNDLED_SKILLS_DIR, file));
-  }
-
-  for (const skillId of SEEDED_SKILL_IDS) {
-    const source = bundledById.get(skillId);
-    if (!source) continue;
+  const bundledById = getBundledSkillFiles();
+  for (const [skillId, source] of bundledById.entries()) {
     const dest = path.join(SKILLS_DIR, `${skillId}.md`);
     fs.copyFileSync(source, dest);
   }

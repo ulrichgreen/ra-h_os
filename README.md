@@ -132,11 +132,25 @@ If you publish a newer MCP release and want clients to use it immediately, bump 
 
 **What happens:** Once connected, the agent should use `queryNodes` for specific existing-node lookup, `retrieveQueryContext` when broader graph grounding would help, and `getContext` only for orientation. It should search before creating, propose durable writeback selectively instead of pestering, and treat the graph itself as the source of grounding rather than a separate contexts layer. The MCP server stores source on the node. The app later turns that source into chunks and embeddings.
 
+**Recommended memory file:** If you use Claude Code or another coding agent, add one short repo-level memory file (`AGENTS.md` or `CLAUDE.md`) that reinforces the core graph behavior. Keep it simple and do not maintain conflicting versions across multiple files.
+
+Suggested snippet:
+
+```md
+You are helping build a thoughtful graph of atomic units of context.
+
+- Use `queryNodes` for direct lookup of a specific existing node.
+- Use `retrieveQueryContext` when broader graph context would help with the current turn.
+- Search before creating. Prefer updating the same artifact when it is clearly the same thing.
+- `description` should state plainly what the thing is first, then why it belongs and current status.
+- Preserve the user's wording in `source` for user-authored ideas unless they explicitly want a rewrite.
+```
+
 Available tools:
 
 | Tool | What it does |
 |------|--------------|
-| `getContext` | Get graph overview — stats, hub nodes, guides, and orientation signals |
+| `getContext` | Get graph overview — stats, hub nodes, skills, and orientation signals |
 | `retrieveQueryContext` | Pull relevant graph context for a broader current-turn task |
 | `queryNodes` | Find nodes by keyword |
 | `createNode` | Create a new node |

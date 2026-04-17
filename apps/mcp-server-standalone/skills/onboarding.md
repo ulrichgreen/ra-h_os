@@ -7,7 +7,7 @@ description: "Use for new-user setup, empty or near-empty graphs, or major reset
 
 ## Your Job
 
-Three things: help the user understand the basic structure of the system, help them start building useful graph data in it, and get them to a useful starter graph quickly.
+Three things: help the user understand the basic structure of the system, help them start building useful graph data in it, and turn early useful context into strong nodes and edges.
 
 Adapt to the user.
 
@@ -89,18 +89,19 @@ Work these in naturally when they are relevant:
 Do your best to build the graph as useful context emerges.
 
 - Add nodes when the user mentions concrete things worth keeping.
-- Add edges when relationships are clear enough to explain well.
+- Surface likely edges when relationships are clear enough to explain well, but create them only after the user confirms.
 - Explain what you're adding in plain language so the user understands the structure as it develops.
+- During normal conversation outside explicit onboarding capture, do not keep asking to save every useful statement. Only suggest a save when the context is unusually durable and valuable, and keep the prompt brief.
 
 When the graph is empty or nearly empty, bias toward creating a small, clean starter set rather than over-modeling everything.
 
 ## Write Standards
 
-Before writing anything, call `readSkill('db-operations')` for full quality standards. Key points that matter most here:
+Before writing anything, rely on the direct graph tools and their descriptions. If the user shifts from onboarding into cleanup of an existing node or small node set, call `readSkill('refine')`. Key points that matter most here:
 
 - Search before creating — avoid duplicates from day one
 - Every description must be concrete: what it IS and why it matters to them, not what it "explores" or "discusses"
-- Every edge needs an explicit explanation sentence
+- Every edge needs an explicit explanation sentence, and agent-driven edge creation should only happen after confirmation
 
 ## Propose Before Writing
 
