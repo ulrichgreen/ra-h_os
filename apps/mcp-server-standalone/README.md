@@ -14,13 +14,13 @@ Other useful commands:
 
 ```bash
 npx -y ra-h-mcp-server@latest setup --client cursor --yes
-npx -y ra-h-mcp-server@latest setup --client codex
+npx -y ra-h-mcp-server@latest setup --client codex --yes
 npx -y ra-h-mcp-server@latest init-db
 npx -y ra-h-mcp-server@latest doctor
 npx -y ra-h-mcp-server@latest print-config --client claude-code
 ```
 
-`--yes` lets the installer write supported JSON client config automatically. Codex uses TOML config, so the installer prints the block to add.
+`--yes` lets the installer write supported client config automatically. Codex uses TOML config, so the installer writes `CODEX_HOME/config.toml` or `~/.codex/config.toml`.
 
 Important contract:
 - `@latest` is the default user-facing install path

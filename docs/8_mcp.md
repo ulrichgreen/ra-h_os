@@ -14,10 +14,10 @@ Other clients:
 
 ```bash
 npx -y ra-h-mcp-server@latest setup --client cursor --yes
-npx -y ra-h-mcp-server@latest setup --client codex
+npx -y ra-h-mcp-server@latest setup --client codex --yes
 ```
 
-`--yes` lets the installer write supported JSON client config automatically. Codex uses TOML config, so the installer prints the block to add.
+`--yes` lets the installer write supported client config automatically. Codex uses TOML config, so the installer writes `CODEX_HOME/config.toml` or `~/.codex/config.toml`.
 
 Verify the install:
 

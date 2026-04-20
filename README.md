@@ -85,12 +85,12 @@ Other clients:
 
 ```bash
 npx -y ra-h-mcp-server@latest setup --client cursor --yes
-npx -y ra-h-mcp-server@latest setup --client codex
+npx -y ra-h-mcp-server@latest setup --client codex --yes
 ```
 
 Notes:
 - `--yes` lets the installer write supported client config automatically.
-- Codex uses TOML config, so the installer prints the block to add.
+- Codex uses TOML config, so the installer writes `CODEX_HOME/config.toml` or `~/.codex/config.toml`.
 - The MCP-only path does not clone this repo and does not start the browser UI.
 - The installer defaults to the latest published MCP package. For release/debug reproducibility, pin an exact version intentionally.
 

@@ -261,11 +261,11 @@ function clientConfig(client, args, dbPath) {
 
   if (client === 'codex') {
     return {
-      type: 'toml',
-      path: path.join(os.homedir(), '.codex', 'config.toml'),
+      type: 'toml-merge',
+      path: path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml'),
       snippet: `[mcp_servers.ra-h]\ncommand = "npx"\nargs = ["-y", "${packageSpec(args)}"]\n\n[mcp_servers.ra-h.env]\nRAH_DB_PATH = "${dbPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\n`,
-      writable: false,
-      note: 'Codex config is TOML; this installer prints the block instead of mutating existing config.',
+      writable: true,
+      note: 'Codex config is TOML; pass --yes to merge this block into the Codex config file.',
     };
   }
 
@@ -304,6 +304,32 @@ function writeJsonMerge(config) {
 
   fs.mkdirSync(path.dirname(config.path), { recursive: true });
   fs.writeFileSync(config.path, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+function removeTomlTables(raw, tableNames) {
+  const tables = new Set(tableNames);
+  const lines = raw.split(/\r?\n/);
+  const kept = [];
+  let skipping = false;
+
+  for (const line of lines) {
+    const match = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (match) {
+      skipping = tables.has(match[1]);
+    }
+    if (!skipping) kept.push(line);
+  }
+
+  return kept.join('\n').trimEnd();
+}
+
+function writeTomlMerge(config) {
+  const current = fs.existsSync(config.path) ? fs.readFileSync(config.path, 'utf8') : '';
+  const withoutRah = removeTomlTables(current, ['mcp_servers.ra-h', 'mcp_servers.ra-h.env']);
+  const next = `${withoutRah ? `${withoutRah}\n\n` : ''}${config.snippet.trimEnd()}\n`;
+
+  fs.mkdirSync(path.dirname(config.path), { recursive: true });
+  fs.writeFileSync(config.path, next);
 }
 
 function formatSnippet(snippet) {
@@ -404,9 +430,13 @@ function commandSetup(args) {
   if (config.path) log(`MCP config target: ${config.path}`);
   if (config.note) log(config.note);
 
-  const canWrite = config.writable && config.type === 'json-merge' && config.path;
+  const canWrite = config.writable && ['json-merge', 'toml-merge'].includes(config.type) && config.path;
   if (canWrite && args.yes && !args.printOnly) {
-    writeJsonMerge(config);
+    if (config.type === 'toml-merge') {
+      writeTomlMerge(config);
+    } else {
+      writeJsonMerge(config);
+    }
     log(`Updated ${config.path}`);
   } else if (canWrite) {
     log('Pass --yes to write this config automatically.');
