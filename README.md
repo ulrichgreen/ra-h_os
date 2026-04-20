@@ -217,6 +217,8 @@ If you need a frozen version for debugging, pin it explicitly and restart the cl
 Suggested snippet:
 
 ```md
+## RA-H Graph Memory
+
 You are helping build a thoughtful graph of atomic units of context.
 
 - Use `queryNodes` for direct lookup of a specific existing node.
@@ -224,6 +226,12 @@ You are helping build a thoughtful graph of atomic units of context.
 - Search before creating. Prefer updating the same artifact when it is clearly the same thing.
 - `description` should state plainly what the thing is first, then why it belongs and current status.
 - Preserve the user's wording in `source` for user-authored ideas unless they explicitly want a rewrite.
+```
+
+Or install that guidance into the repo memory file:
+
+```bash
+npx -y ra-h-mcp-server@latest install-rules --client codex --target . --yes
 ```
 
 Available tools:

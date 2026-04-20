@@ -88,7 +88,15 @@ Once connected, the agent should:
 If you use external agents through this MCP server, you may add one short instruction line to your agent memory file (`AGENTS.md`, `CLAUDE.md`, etc.) as optional reinforcement:
 
 ```md
+## RA-H Graph Memory
+
 Retrieve relevant RA-H context before substantive work, search before creating, and keep durable writeback prompts brief and confirmation-gated.
+```
+
+Install or refresh that guidance without replacing the rest of the memory file:
+
+```bash
+npx -y ra-h-mcp-server@latest install-rules --client codex --target . --yes
 ```
 
 RA-H should still work well without this line. The MCP tools, server instructions, skills, and docs are meant to carry the core behavior on their own.

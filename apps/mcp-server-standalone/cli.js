@@ -344,7 +344,9 @@ function validateClient(client) {
 }
 
 function rulesSnippet() {
-  return `You are helping build a thoughtful graph of atomic units of context.
+  return `## RA-H Graph Memory
+
+You are helping build a thoughtful graph of atomic units of context.
 
 - Before substantive work that touches the user's projects, ideas, people, decisions, or prior context, retrieve relevant graph context from RA-H.
 - Use queryNodes for direct lookup of a specific existing node.
@@ -354,6 +356,19 @@ function rulesSnippet() {
 - Do not pester. Ask at most once per turn, and drop it if the user moves on.
 - Preserve the user's wording in source for user-authored ideas unless they explicitly want a rewrite.
 `;
+}
+
+function mergeRulesFile(existing, content) {
+  const start = '<!-- RA-H_GRAPH_MEMORY_START -->';
+  const end = '<!-- RA-H_GRAPH_MEMORY_END -->';
+  const block = `${start}\n${content.trimEnd()}\n${end}`;
+  const pattern = new RegExp(`${start}[\\s\\S]*?${end}`);
+
+  if (pattern.test(existing)) {
+    return `${existing.replace(pattern, block).trimEnd()}\n`;
+  }
+
+  return `${existing.trimEnd()}${existing.trim() ? '\n\n' : ''}${block}\n`;
 }
 
 function rulesTarget(client, target) {
@@ -415,8 +430,9 @@ function commandInstallRules(args) {
   }
 
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.writeFileSync(targetPath, content);
-  log(`Wrote rules to ${targetPath}`);
+  const existing = fs.existsSync(targetPath) ? fs.readFileSync(targetPath, 'utf8') : '';
+  fs.writeFileSync(targetPath, mergeRulesFile(existing, content));
+  log(`Updated rules in ${targetPath}`);
 }
 
 function commandSetup(args) {

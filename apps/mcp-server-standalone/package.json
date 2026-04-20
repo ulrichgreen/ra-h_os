@@ -1,6 +1,6 @@
 {
   "name": "ra-h-mcp-server",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "Connect Claude Code/Desktop to your RA-H knowledge base. Direct SQLite access to an existing RA-H database.",
   "main": "index.js",
   "bin": {
