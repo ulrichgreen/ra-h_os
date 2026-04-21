@@ -11,7 +11,7 @@
 
 **TL;DR:** Use the MCP quick install if you want Claude Code, Cursor, Codex, or another agent to read and write your local graph. Clone this repository only if you also want the local browser UI.
 
-[![Watch the demo](https://img.youtube.com/vi/IA02YB8mInM/hqdefault.jpg)](https://youtu.be/IA02YB8mInM?si=WoWpNE9QZEKEukvZ)
+[![Watch the setup walkthrough](https://img.youtube.com/vi/YyUCGigZIZE/hqdefault.jpg)](https://youtu.be/YyUCGigZIZE?si=USYgvmwtdGpgGdwu)
 
 > **Cross-platform local runtime:** macOS works out of the box. Windows and Linux are now being hardened for the core local/web app flow, but semantic/vector search still depends on either sqlite-vec for your platform or a later Qdrant setup.
 
