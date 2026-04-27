@@ -235,6 +235,10 @@ function log(...args) {
   console.error('[ra-h-standalone]', ...args);
 }
 
+function withVisibleJson(summary, payload) {
+  return `${summary}\n\n${JSON.stringify(payload, null, 2)}`;
+}
+
 async function main() {
   // Initialize database
   try {
@@ -307,7 +311,7 @@ async function main() {
         : result.reason;
 
       return {
-        content: [{ type: 'text', text: summary }],
+        content: [{ type: 'text', text: result.shouldRetrieve ? withVisibleJson(summary, result) : summary }],
         structuredContent: result
       };
     }
@@ -363,26 +367,28 @@ async function main() {
         eventBefore: event_before,
       });
 
+      const mappedNodes = result.nodes.map((node) => ({
+        id: node.id,
+        title: node.title,
+        source: node.source ?? null,
+        description: node.description ?? null,
+        link: node.link ?? null,
+        created_at: node.created_at,
+        updated_at: node.updated_at,
+        event_date: node.event_date ?? null,
+      }));
+      const payload = {
+        count: result.count,
+        filters_applied: result.filtersApplied,
+        nodes: mappedNodes
+      };
       const summary = result.count === 0
         ? 'No nodes found matching that query.'
         : `Found ${result.count} node(s).`;
 
       return {
-        content: [{ type: 'text', text: summary }],
-        structuredContent: {
-          count: result.count,
-          filters_applied: result.filtersApplied,
-          nodes: result.nodes.map((node) => ({
-            id: node.id,
-            title: node.title,
-            source: node.source ?? null,
-            description: node.description ?? null,
-            link: node.link ?? null,
-            created_at: node.created_at,
-            updated_at: node.updated_at,
-            event_date: node.event_date ?? null,
-          }))
-        }
+        content: [{ type: 'text', text: result.count === 0 ? summary : withVisibleJson(summary, payload) }],
+        structuredContent: payload
       };
     }
   );

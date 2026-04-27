@@ -335,6 +335,10 @@ async function callRaHApi(pathname, options = {}) {
   return body;
 }
 
+function withVisibleJson(summary, payload) {
+  return `${summary}\n\n${JSON.stringify(payload, null, 2)}`;
+}
+
 server.registerTool(
   'rah_add_node',
   {
@@ -397,20 +401,22 @@ server.registerTool(
       nodes.length === 0
         ? 'No existing RA-H nodes mention that topic yet.'
         : `Found ${nodes.length} node(s) mentioning that topic.`;
+    const mappedNodes = nodes.map((node) => ({
+      id: node.id,
+      title: node.title,
+      source: node.source ?? null,
+      description: node.description ?? null,
+      link: node.link ?? null,
+      updated_at: node.updated_at
+    }));
+    const payload = {
+      count: nodes.length,
+      nodes: mappedNodes
+    };
 
     return {
-      content: [{ type: 'text', text: summary }],
-      structuredContent: {
-        count: nodes.length,
-        nodes: nodes.map((node) => ({
-          id: node.id,
-          title: node.title,
-          source: node.source ?? null,
-          description: node.description ?? null,
-          link: node.link ?? null,
-          updated_at: node.updated_at
-        }))
-      }
+      content: [{ type: 'text', text: nodes.length === 0 ? summary : withVisibleJson(summary, payload) }],
+      structuredContent: payload
     };
   }
 );
@@ -433,9 +439,14 @@ server.registerTool(
       })
     });
 
+    const data = result.data;
+    const summary = data.shouldRetrieve
+      ? `Retrieved ${data.nodes.length} node(s) and ${data.chunks.length} chunk(s) for this turn.`
+      : data.reason;
+
     return {
-      content: [{ type: 'text', text: result.data.shouldRetrieve ? `Retrieved ${result.data.nodes.length} node(s) and ${result.data.chunks.length} chunk(s) for this turn.` : result.data.reason }],
-      structuredContent: result.data
+      content: [{ type: 'text', text: data.shouldRetrieve ? withVisibleJson(summary, data) : summary }],
+      structuredContent: data
     };
   }
 );
